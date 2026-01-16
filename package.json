@@ -1,0 +1,53 @@
+{
+  "name": "n8n-nodes-blumira",
+  "version": "0.1.0",
+  "description": "Blumira community node for n8n.",
+  "license": "MIT",
+  "author": "mkellar",
+  "homepage": "https://gitlab.com/mkellar/cursor#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/mkellar/cursor.git"
+  },
+  "bugs": {
+    "url": "https://gitlab.com/mkellar/cursor/issues"
+  },
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n",
+    "blumira"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-icons.js",
+    "lint": "eslint \"src/**/*.ts\"",
+    "prepublishOnly": "npm run build && npm run lint"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/BlumiraApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Blumira/Blumira.node.js"
+    ]
+  },
+  "dependencies": {
+    "n8n-workflow": "^1.120.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.9",
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-n8n-nodes-base": "^1.16.4",
+    "typescript": "^5.9.3"
+  }
+}
