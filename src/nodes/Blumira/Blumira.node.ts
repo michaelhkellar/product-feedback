@@ -44,6 +44,17 @@ function addIfDefined(target: IDataObject, key: string, value: unknown) {
 	}
 }
 
+function addIfDefinedNonZeroNumber(target: IDataObject, key: string, value: unknown) {
+	if (typeof value === 'number') {
+		if (value !== 0) {
+			target[key] = value;
+		}
+		return;
+	}
+
+	addIfDefined(target, key, value);
+}
+
 function buildPaginationParameters(options: IDataObject): IDataObject {
 	const qs: IDataObject = {};
 	addIfDefined(qs, 'order_by', options.orderBy);
@@ -55,7 +66,7 @@ function buildPaginationParameters(options: IDataObject): IDataObject {
 function buildFindingFilters(filters: IDataObject): IDataObject {
 	const qs: IDataObject = {};
 	addIfDefined(qs, 'blocked', filters.blocked);
-	addIfDefined(qs, 'category', filters.category);
+	addIfDefinedNonZeroNumber(qs, 'category', filters.category);
 	addIfDefined(qs, 'created_after', filters.createdAfter);
 	addIfDefined(qs, 'created_before', filters.createdBefore);
 	addIfDefined(qs, 'created_by', filters.createdBy);
@@ -63,11 +74,11 @@ function buildFindingFilters(filters: IDataObject): IDataObject {
 	addIfDefined(qs, 'modified_before', filters.modifiedBefore);
 	addIfDefined(qs, 'modified_by', filters.modifiedBy);
 	addIfDefined(qs, 'name', filters.name);
-	addIfDefined(qs, 'priority', filters.priority);
-	addIfDefined(qs, 'resolution', filters.resolution);
-	addIfDefined(qs, 'status', filters.status);
+	addIfDefinedNonZeroNumber(qs, 'priority', filters.priority);
+	addIfDefinedNonZeroNumber(qs, 'resolution', filters.resolution);
+	addIfDefinedNonZeroNumber(qs, 'status', filters.status);
 	addIfDefined(qs, 'status_modified_by', filters.statusModifiedBy);
-	addIfDefined(qs, 'type', filters.type);
+	addIfDefinedNonZeroNumber(qs, 'type', filters.type);
 	return qs;
 }
 
@@ -128,7 +139,7 @@ async function blumiraApiRequestAllItems(
 			| string
 			| undefined;
 		const itemsReturned = Array.isArray(responseItems) ? responseItems.length : 0;
-		if (!nextLink || itemsReturned < pageSize) {
+		if (!nextLink || itemsReturned === 0) {
 			break;
 		}
 
@@ -150,6 +161,30 @@ async function assertAccessToken(this: IExecuteFunctions, itemIndex: number) {
 			{ itemIndex },
 		);
 	}
+}
+
+function formatError(error: unknown): IDataObject {
+	const formattedError: IDataObject = {
+		message: error instanceof Error ? error.message : 'Unknown error',
+	};
+
+	if (typeof error === 'object' && error !== null) {
+		const errorData = error as IDataObject;
+		addIfDefined(formattedError, 'httpCode', errorData.httpCode);
+		addIfDefined(formattedError, 'statusCode', errorData.statusCode);
+		addIfDefined(formattedError, 'description', errorData.description);
+		addIfDefined(formattedError, 'context', errorData.context);
+
+		if (typeof errorData.response === 'object' && errorData.response !== null) {
+			const responseData = errorData.response as IDataObject;
+			addIfDefined(formattedError, 'responseStatus', responseData.status);
+			addIfDefined(formattedError, 'responseStatusText', responseData.statusText);
+			addIfDefined(formattedError, 'responseBody', responseData.body);
+			addIfDefined(formattedError, 'responseData', responseData.data);
+		}
+	}
+
+	return formattedError;
 }
 
 export class Blumira implements INodeType {
@@ -570,18 +605,35 @@ export class Blumira implements INodeType {
 					},
 				},
 				options: [
+			{
+				displayName: 'Blocked',
+				name: 'blocked',
+				type: 'options',
+				default: '',
+				description: 'Filter by blocked status.',
+				options: [
 					{
-						displayName: 'Blocked',
-						name: 'blocked',
-						type: 'boolean',
-						default: false,
-						description: 'Filter by blocked status.',
+						name: 'Any',
+						value: '',
 					},
+					{
+						name: 'True',
+						value: true,
+					},
+					{
+						name: 'False',
+						value: false,
+					},
+				],
+			},
 					{
 						displayName: 'Category ID',
 						name: 'category',
 						type: 'number',
-						default: 0,
+				default: 0,
+				typeOptions: {
+					minValue: 1,
+				},
 					},
 					{
 						displayName: 'Created After',
@@ -636,21 +688,31 @@ export class Blumira implements INodeType {
 						displayName: 'Priority',
 						name: 'priority',
 						type: 'number',
-						default: 0,
+				default: 0,
+				typeOptions: {
+					minValue: 1,
+					maxValue: 5,
+				},
 						description: 'Priority number.',
 					},
 					{
 						displayName: 'Resolution',
 						name: 'resolution',
 						type: 'number',
-						default: 0,
+				default: 0,
+				typeOptions: {
+					minValue: 1,
+				},
 						description: 'Resolution ID.',
 					},
 					{
 						displayName: 'Status',
 						name: 'status',
 						type: 'number',
-						default: 0,
+				default: 0,
+				typeOptions: {
+					minValue: 1,
+				},
 						description: 'Status ID.',
 					},
 					{
@@ -664,7 +726,10 @@ export class Blumira implements INodeType {
 						displayName: 'Type',
 						name: 'type',
 						type: 'number',
-						default: 0,
+				default: 0,
+				typeOptions: {
+					minValue: 1,
+				},
 						description: 'Type ID.',
 					},
 				],
@@ -1072,7 +1137,7 @@ export class Blumira implements INodeType {
 				if (this.continueOnFail()) {
 					returnData.push({
 						json: {
-							error: (error as Error).message,
+							error: formatError(error),
 						},
 					});
 					continue;
