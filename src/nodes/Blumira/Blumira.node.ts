@@ -6,7 +6,7 @@ import type {
 	INodeTypeDescription,
 	IHttpRequestOptions,
 } from 'n8n-workflow';
-import { NodeOperationError } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 
 const BASE_URL = 'https://api.blumira.com/public-api/v1';
 
@@ -159,12 +159,14 @@ export class Blumira implements INodeType {
 		icon: 'file:blumira.svg',
 		group: ['transform'],
 		version: 1,
+		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Interact with the Blumira public API',
 		defaults: {
 			name: 'Blumira',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
+		usableAsTool: true,
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
 		credentials: [
 			{
 				name: 'blumiraApi',
@@ -176,6 +178,7 @@ export class Blumira implements INodeType {
 				displayName: 'Resource',
 				name: 'resource',
 				type: 'options',
+				noDataExpression: true,
 				options: [
 					{
 						name: 'Account (MSP)',
@@ -204,6 +207,7 @@ export class Blumira implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
 						resource: ['health'],
@@ -223,6 +227,7 @@ export class Blumira implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
 						resource: ['account'],
@@ -296,6 +301,7 @@ export class Blumira implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
 						resource: ['agentDevice'],
@@ -321,6 +327,7 @@ export class Blumira implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
 						resource: ['agentKey'],
@@ -346,6 +353,7 @@ export class Blumira implements INodeType {
 				displayName: 'Operation',
 				name: 'operation',
 				type: 'options',
+				noDataExpression: true,
 				displayOptions: {
 					show: {
 						resource: ['finding'],
@@ -497,6 +505,7 @@ export class Blumira implements INodeType {
 				default: 50,
 				typeOptions: {
 					minValue: 1,
+					maxValue: 5000,
 				},
 				displayOptions: {
 					show: {
@@ -668,396 +677,409 @@ export class Blumira implements INodeType {
 		const returnData: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i += 1) {
-			const resource = this.getNodeParameter('resource', i) as string;
-			const operation = this.getNodeParameter('operation', i) as string;
+			try {
+				const resource = this.getNodeParameter('resource', i) as string;
+				const operation = this.getNodeParameter('operation', i) as string;
 
-			if (resource === 'health') {
+				if (resource === 'health') {
+					await assertAccessToken.call(this, i);
+					const responseData = await blumiraApiRequest.call(this, 'GET', '/health');
+					returnData.push({ json: responseData });
+					continue;
+				}
+
 				await assertAccessToken.call(this, i);
-				const responseData = await blumiraApiRequest.call(this, 'GET', '/health');
-				returnData.push({ json: responseData });
-				continue;
+
+				if (resource === 'account') {
+					if (operation === 'getMany') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/msp/accounts',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/msp/accounts',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'get') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/msp/accounts/${accountId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'getFindingsAll') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
+						const qs = {
+							...buildPaginationParameters(options),
+							...buildFindingFilters(filters),
+						};
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/msp/accounts/findings',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/msp/accounts/findings',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'getFindings') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
+						const qs = {
+							...buildPaginationParameters(options),
+							...buildFindingFilters(filters),
+						};
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								`/msp/accounts/${accountId}/findings`,
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								`/msp/accounts/${accountId}/findings`,
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'getFinding') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/msp/accounts/${accountId}/findings/${findingId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'getFindingComments') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/msp/accounts/${accountId}/findings/${findingId}/comments`,
+						);
+						const responseItems = (responseData.data ?? responseData) as
+							| IDataObject
+							| IDataObject[];
+						returnData.push(...this.helpers.returnJsonArray(responseItems));
+					}
+
+					if (operation === 'getAgentDevices') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								`/msp/accounts/${accountId}/agents/devices`,
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								`/msp/accounts/${accountId}/agents/devices`,
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'getAgentDevice') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const deviceId = this.getNodeParameter('deviceId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/msp/accounts/${accountId}/agents/devices/${deviceId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'getAgentKeys') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								`/msp/accounts/${accountId}/agents/keys`,
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								`/msp/accounts/${accountId}/agents/keys`,
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'getAgentKey') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const keyId = this.getNodeParameter('keyId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/msp/accounts/${accountId}/agents/keys/${keyId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					continue;
+				}
+
+				if (resource === 'agentDevice') {
+					if (operation === 'getMany') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/org/agents/devices',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/org/agents/devices',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'get') {
+						const deviceId = this.getNodeParameter('deviceId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/org/agents/devices/${deviceId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					continue;
+				}
+
+				if (resource === 'agentKey') {
+					if (operation === 'getMany') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/org/agents/keys',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/org/agents/keys',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'get') {
+						const keyId = this.getNodeParameter('keyId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/org/agents/keys/${keyId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					continue;
+				}
+
+				if (resource === 'finding') {
+					if (operation === 'getManyFindings') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
+						const qs = {
+							...buildPaginationParameters(options),
+							...buildFindingFilters(filters),
+						};
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/org/findings',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/org/findings',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
+					if (operation === 'get') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/org/findings/${findingId}`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'getComments') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/org/findings/${findingId}/comments`,
+						);
+						const responseItems = (responseData.data ?? responseData) as
+							| IDataObject
+							| IDataObject[];
+						returnData.push(...this.helpers.returnJsonArray(responseItems));
+					}
+
+					if (operation === 'getDetails') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'GET',
+							`/org/findings/${findingId}/details`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					continue;
+				}
+
+				throw new NodeOperationError(
+					this.getNode(),
+					`The operation "${operation}" is not supported for resource "${resource}".`,
+					{ itemIndex: i },
+				);
+			} catch (error) {
+				if (this.continueOnFail()) {
+					returnData.push({
+						json: {
+							error: (error as Error).message,
+						},
+					});
+					continue;
+				}
+
+				throw error;
 			}
-
-			await assertAccessToken.call(this, i);
-
-			if (resource === 'account') {
-				if (operation === 'getMany') {
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const qs = buildPaginationParameters(options);
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							'/msp/accounts',
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							'/msp/accounts',
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'get') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/msp/accounts/${accountId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				if (operation === 'getFindingsAll') {
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
-					const qs = {
-						...buildPaginationParameters(options),
-						...buildFindingFilters(filters),
-					};
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							'/msp/accounts/findings',
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							'/msp/accounts/findings',
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'getFindings') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
-					const qs = {
-						...buildPaginationParameters(options),
-						...buildFindingFilters(filters),
-					};
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							`/msp/accounts/${accountId}/findings`,
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							`/msp/accounts/${accountId}/findings`,
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'getFinding') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const findingId = this.getNodeParameter('findingId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/msp/accounts/${accountId}/findings/${findingId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				if (operation === 'getFindingComments') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const findingId = this.getNodeParameter('findingId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/msp/accounts/${accountId}/findings/${findingId}/comments`,
-					);
-					const responseItems = (responseData.data ?? responseData) as
-						| IDataObject
-						| IDataObject[];
-					returnData.push(...this.helpers.returnJsonArray(responseItems));
-				}
-
-				if (operation === 'getAgentDevices') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const qs = buildPaginationParameters(options);
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							`/msp/accounts/${accountId}/agents/devices`,
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							`/msp/accounts/${accountId}/agents/devices`,
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'getAgentDevice') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const deviceId = this.getNodeParameter('deviceId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/msp/accounts/${accountId}/agents/devices/${deviceId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				if (operation === 'getAgentKeys') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const qs = buildPaginationParameters(options);
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							`/msp/accounts/${accountId}/agents/keys`,
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							`/msp/accounts/${accountId}/agents/keys`,
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'getAgentKey') {
-					const accountId = this.getNodeParameter('accountId', i) as string;
-					const keyId = this.getNodeParameter('keyId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/msp/accounts/${accountId}/agents/keys/${keyId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				continue;
-			}
-
-			if (resource === 'agentDevice') {
-				if (operation === 'getMany') {
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const qs = buildPaginationParameters(options);
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							'/org/agents/devices',
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							'/org/agents/devices',
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'get') {
-					const deviceId = this.getNodeParameter('deviceId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/org/agents/devices/${deviceId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				continue;
-			}
-
-			if (resource === 'agentKey') {
-				if (operation === 'getMany') {
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const qs = buildPaginationParameters(options);
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							'/org/agents/keys',
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							'/org/agents/keys',
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'get') {
-					const keyId = this.getNodeParameter('keyId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/org/agents/keys/${keyId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				continue;
-			}
-
-			if (resource === 'finding') {
-				if (operation === 'getManyFindings') {
-					const returnAll = this.getNodeParameter('returnAll', i) as boolean;
-					const options = this.getNodeParameter('options', i, {}) as IDataObject;
-					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
-					const qs = {
-						...buildPaginationParameters(options),
-						...buildFindingFilters(filters),
-					};
-
-					if (returnAll) {
-						const responseItems = await blumiraApiRequestAllItems.call(
-							this,
-							'/org/findings',
-							qs,
-						);
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					} else {
-						const limit = this.getNodeParameter('limit', i) as number;
-						qs.limit = limit;
-						const responseData = await blumiraApiRequest.call(
-							this,
-							'GET',
-							'/org/findings',
-							qs,
-						);
-						const responseItems = (responseData.data ?? responseData) as
-							| IDataObject
-							| IDataObject[];
-						returnData.push(...this.helpers.returnJsonArray(responseItems));
-					}
-				}
-
-				if (operation === 'get') {
-					const findingId = this.getNodeParameter('findingId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/org/findings/${findingId}`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				if (operation === 'getComments') {
-					const findingId = this.getNodeParameter('findingId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/org/findings/${findingId}/comments`,
-					);
-					const responseItems = (responseData.data ?? responseData) as
-						| IDataObject
-						| IDataObject[];
-					returnData.push(...this.helpers.returnJsonArray(responseItems));
-				}
-
-				if (operation === 'getDetails') {
-					const findingId = this.getNodeParameter('findingId', i) as string;
-					const responseData = await blumiraApiRequest.call(
-						this,
-						'GET',
-						`/org/findings/${findingId}/details`,
-					);
-					const responseItem = (responseData.data ?? responseData) as IDataObject;
-					returnData.push({ json: responseItem });
-				}
-
-				continue;
-			}
-
-			throw new NodeOperationError(
-				this.getNode(),
-				`The operation "${operation}" is not supported for resource "${resource}".`,
-				{ itemIndex: i },
-			);
 		}
 
 		return [returnData];
