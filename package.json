@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "description": "Blumira community node for n8n.",
   "license": "MIT",
-  "author": "mkellar",
-  "homepage": "https://gitlab.com/mkellar/cursor#readme",
+  "author": "mkellar@blumira.com",
+  "homepage": "https://www.blumira.com",
   "repository": {
     "type": "git",
     "url": "git+https://gitlab.com/mkellar/cursor.git"
