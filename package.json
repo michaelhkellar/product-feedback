@@ -1,16 +1,16 @@
 {
   "name": "n8n-nodes-blumira",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Blumira community node for n8n.",
   "license": "MIT",
   "author": "mkellar@blumira.com",
   "homepage": "https://www.blumira.com",
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/mkellar/cursor.git"
+    "url": "git+https://gitlab.com/mkellar/n8n.git"
   },
   "bugs": {
-    "url": "https://gitlab.com/mkellar/cursor/issues"
+    "url": "https://gitlab.com/mkellar/n8n/issues"
   },
   "keywords": [
     "n8n-community-node-package",
