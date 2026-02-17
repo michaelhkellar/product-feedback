@@ -27,13 +27,28 @@ const accountScopedOperations = [
 	'getFindings',
 	'getFinding',
 	'getFindingComments',
+	'addFindingComment',
+	'assignFindingOwners',
+	'resolveFinding',
 	'getAgentDevices',
 	'getAgentDevice',
 	'getAgentKeys',
 	'getAgentKey',
 ];
 
-const findingScopedOperations = ['getFinding', 'getFindingComments', 'getDetails', 'get'];
+const findingScopedOperations = [
+	'getFinding',
+	'getFindingComments',
+	'addFindingComment',
+	'assignFindingOwners',
+	'resolveFinding',
+	'getDetails',
+	'get',
+	'addComment',
+	'assignOwners',
+	'resolve',
+	'getComments',
+];
 
 const agentDeviceScopedOperations = ['getAgentDevice', 'get'];
 
@@ -271,6 +286,18 @@ export class Blumira implements INodeType {
 				},
 				options: [
 					{
+						name: 'Add Finding Comment',
+						value: 'addFindingComment',
+						description: 'Add a comment to a finding for an MSP account',
+						action: 'Add finding comment',
+					},
+					{
+						name: 'Assign Finding Owners',
+						value: 'assignFindingOwners',
+						description: 'Assign owners to a finding for an MSP account',
+						action: 'Assign finding owners',
+					},
+					{
 						name: 'Get',
 						value: 'get',
 						description: 'Get a single MSP account',
@@ -329,6 +356,12 @@ export class Blumira implements INodeType {
 						value: 'getMany',
 						description: 'List MSP accounts',
 						action: 'List accounts',
+					},
+					{
+						name: 'Resolve Finding',
+						value: 'resolveFinding',
+						description: 'Resolve a finding for an MSP account',
+						action: 'Resolve finding',
 					},
 				],
 				default: 'getMany',
@@ -397,6 +430,18 @@ export class Blumira implements INodeType {
 				},
 				options: [
 					{
+						name: 'Add Comment',
+						value: 'addComment',
+						description: 'Add a comment to a finding',
+						action: 'Add comment to finding',
+					},
+					{
+						name: 'Assign Owners',
+						value: 'assignOwners',
+						description: 'Assign owners to a finding',
+						action: 'Assign finding owners',
+					},
+					{
 						name: 'Get',
 						value: 'get',
 						description: 'Get a finding',
@@ -419,6 +464,12 @@ export class Blumira implements INodeType {
 						value: 'getManyFindings',
 						description: 'List findings',
 						action: 'List findings',
+					},
+					{
+						name: 'Resolve',
+						value: 'resolve',
+						description: 'Resolve a finding',
+						action: 'Resolve finding',
 					},
 				],
 				default: 'getManyFindings',
@@ -447,7 +498,7 @@ export class Blumira implements INodeType {
 				displayOptions: {
 					show: {
 						resource: ['account'],
-						operation: ['getFinding', 'getFindingComments'],
+						operation: ['getFinding', 'getFindingComments', 'addFindingComment', 'assignFindingOwners', 'resolveFinding'],
 					},
 				},
 			},
@@ -735,6 +786,254 @@ export class Blumira implements INodeType {
 					},
 				],
 			},
+			// POST: Comment body
+			{
+				displayName: 'Comment Body',
+				name: 'commentBody',
+				type: 'string',
+				typeOptions: {
+					rows: 4,
+				},
+				default: '',
+				required: true,
+				description: 'Comment text. May contain HTML.',
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['addFindingComment'],
+					},
+				},
+			},
+			{
+				displayName: 'Comment Body',
+				name: 'commentBody',
+				type: 'string',
+				typeOptions: {
+					rows: 4,
+				},
+				default: '',
+				required: true,
+				description: 'Comment text. May contain HTML.',
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['addComment'],
+					},
+				},
+			},
+			// POST: Sender UUID
+			{
+				displayName: 'Sender ID',
+				name: 'sender',
+				type: 'string',
+				default: '',
+				required: true,
+				description: 'UUID of the person creating the comment. Obtain from user endpoints.',
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['addFindingComment'],
+					},
+				},
+			},
+			{
+				displayName: 'Sender ID',
+				name: 'sender',
+				type: 'string',
+				default: '',
+				required: true,
+				description: 'UUID of the person creating the comment. Obtain from user endpoints.',
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['addComment'],
+					},
+				},
+			},
+			// POST: Owners (array of UUIDs)
+			{
+				displayName: 'Owner IDs',
+				name: 'owners',
+				type: 'string',
+				default: '',
+				required: true,
+				description: 'Comma-separated list of person UUIDs to assign as owners. Send empty to clear owners for the specified type.',
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['assignFindingOwners'],
+					},
+				},
+			},
+			{
+				displayName: 'Owner IDs',
+				name: 'owners',
+				type: 'string',
+				default: '',
+				required: true,
+				description: 'Comma-separated list of person UUIDs to assign as owners. Send empty to clear owners for the specified type.',
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['assignOwners'],
+					},
+				},
+			},
+			// POST: Owner Type
+			{
+				displayName: 'Owner Type',
+				name: 'ownerType',
+				type: 'options',
+				default: 'responder',
+				required: true,
+				description: 'Type of owners to assign.',
+				options: [
+					{
+						name: 'Responder',
+						value: 'responder',
+					},
+					{
+						name: 'Analyst',
+						value: 'analyst',
+					},
+					{
+						name: 'Manager',
+						value: 'manager',
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['assignFindingOwners'],
+					},
+				},
+			},
+			{
+				displayName: 'Owner Type',
+				name: 'ownerType',
+				type: 'options',
+				default: 'responder',
+				required: true,
+				description: 'Type of owners to assign.',
+				options: [
+					{
+						name: 'Responder',
+						value: 'responder',
+					},
+					{
+						name: 'Analyst',
+						value: 'analyst',
+					},
+					{
+						name: 'Manager',
+						value: 'manager',
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['assignOwners'],
+					},
+				},
+			},
+			// POST: Resolution
+			{
+				displayName: 'Resolution',
+				name: 'resolution',
+				type: 'options',
+				default: 10,
+				required: true,
+				description: 'Resolution to apply to the finding.',
+				options: [
+					{
+						name: 'Valid (10)',
+						value: 10,
+					},
+					{
+						name: 'False Positive (20)',
+						value: 20,
+					},
+					{
+						name: 'No Action Needed (30)',
+						value: 30,
+					},
+					{
+						name: 'Risk Accepted (40)',
+						value: 40,
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['resolveFinding'],
+					},
+				},
+			},
+			{
+				displayName: 'Resolution',
+				name: 'resolution',
+				type: 'options',
+				default: 10,
+				required: true,
+				description: 'Resolution to apply to the finding.',
+				options: [
+					{
+						name: 'Valid (10)',
+						value: 10,
+					},
+					{
+						name: 'False Positive (20)',
+						value: 20,
+					},
+					{
+						name: 'No Action Needed (30)',
+						value: 30,
+					},
+					{
+						name: 'Risk Accepted (40)',
+						value: 40,
+					},
+				],
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['resolve'],
+					},
+				},
+			},
+			// POST: Resolution Notes (optional)
+			{
+				displayName: 'Resolution Notes',
+				name: 'resolutionNotes',
+				type: 'string',
+				typeOptions: {
+					rows: 4,
+				},
+				default: '',
+				description: 'Optional notes related to the resolution.',
+				displayOptions: {
+					show: {
+						resource: ['account'],
+						operation: ['resolveFinding'],
+					},
+				},
+			},
+			{
+				displayName: 'Resolution Notes',
+				name: 'resolutionNotes',
+				type: 'string',
+				typeOptions: {
+					rows: 4,
+				},
+				default: '',
+				description: 'Optional notes related to the resolution.',
+				displayOptions: {
+					show: {
+						resource: ['finding'],
+						operation: ['resolve'],
+					},
+				},
+			},
 		],
 	};
 
@@ -885,6 +1184,68 @@ export class Blumira implements INodeType {
 							| IDataObject
 							| IDataObject[];
 						returnData.push(...this.helpers.returnJsonArray(responseItems));
+					}
+
+					if (operation === 'addFindingComment') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const commentBody = this.getNodeParameter('commentBody', i) as string;
+						const sender = this.getNodeParameter('sender', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/msp/accounts/${accountId}/findings/${findingId}/comments`,
+							{},
+							{
+								body: commentBody,
+								sender,
+							},
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'assignFindingOwners') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const ownersRaw = this.getNodeParameter('owners', i) as string;
+						const ownerType = this.getNodeParameter('ownerType', i) as string;
+						const owners = ownersRaw
+							.split(',')
+							.map((o) => o.trim())
+							.filter((o) => o.length > 0);
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/msp/accounts/${accountId}/findings/${findingId}/assign`,
+							{},
+							{
+								owners,
+								owner_type: ownerType,
+							},
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'resolveFinding') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const resolution = this.getNodeParameter('resolution', i) as number;
+						const resolutionNotes = this.getNodeParameter('resolutionNotes', i, '') as string;
+						const body: IDataObject = { resolution };
+						if (resolutionNotes) {
+							body.resolution_notes = resolutionNotes;
+						}
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/msp/accounts/${accountId}/findings/${findingId}/resolve`,
+							{},
+							body,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
 					}
 
 					if (operation === 'getAgentDevices') {
@@ -1121,6 +1482,65 @@ export class Blumira implements INodeType {
 							this,
 							'GET',
 							`/org/findings/${findingId}/details`,
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'addComment') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const commentBody = this.getNodeParameter('commentBody', i) as string;
+						const sender = this.getNodeParameter('sender', i) as string;
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/org/findings/${findingId}/comments`,
+							{},
+							{
+								body: commentBody,
+								sender,
+							},
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'assignOwners') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const ownersRaw = this.getNodeParameter('owners', i) as string;
+						const ownerType = this.getNodeParameter('ownerType', i) as string;
+						const owners = ownersRaw
+							.split(',')
+							.map((o) => o.trim())
+							.filter((o) => o.length > 0);
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/org/findings/${findingId}/assign`,
+							{},
+							{
+								owners,
+								owner_type: ownerType,
+							},
+						);
+						const responseItem = (responseData.data ?? responseData) as IDataObject;
+						returnData.push({ json: responseItem });
+					}
+
+					if (operation === 'resolve') {
+						const findingId = this.getNodeParameter('findingId', i) as string;
+						const resolution = this.getNodeParameter('resolution', i) as number;
+						const resolutionNotes = this.getNodeParameter('resolutionNotes', i, '') as string;
+						const body: IDataObject = { resolution };
+						if (resolutionNotes) {
+							body.resolution_notes = resolutionNotes;
+						}
+						const responseData = await blumiraApiRequest.call(
+							this,
+							'POST',
+							`/org/findings/${findingId}/resolve`,
+							{},
+							body,
 						);
 						const responseItem = (responseData.data ?? responseData) as IDataObject;
 						returnData.push({ json: responseItem });
