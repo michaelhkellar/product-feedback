@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { findWorkingModel } from "@/lib/gemini";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,10 +11,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ valid: false, error: "No key provided" });
       }
       try {
-        const genAI = new GoogleGenerativeAI(key);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        await model.generateContent("Say OK");
-        return NextResponse.json({ valid: true });
+        const model = await findWorkingModel(key);
+        if (model) {
+          return NextResponse.json({ valid: true, model });
+        }
+        return NextResponse.json({ valid: false, error: "No compatible Gemini model found" });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Invalid key";
         return NextResponse.json({ valid: false, error: message });
