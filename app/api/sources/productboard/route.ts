@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
 
   const [features, notes] = await Promise.all([
     getFeatures(overrideKey, useDemoFallback),
-    getNotes(overrideKey, useDemoFallback),
+    getNotes(overrideKey, useDemoFallback, 1000),
   ]);
 
   return NextResponse.json({
