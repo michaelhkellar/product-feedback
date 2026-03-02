@@ -7,7 +7,10 @@ Community node for the Blumira Public API in n8n.
 - Health checks for the Blumira API
 - MSP account listing and details
 - MSP account findings, comments, agent devices, and agent keys
+- MSP account user listing (for retrieving sender/owner UUIDs)
 - Organization findings, comments, details, agent devices, and agent keys
+- Organization user listing
+- Resolution options lookup
 - Add comments to findings (MSP and Org)
 - Assign owners to findings (MSP and Org)
 - Resolve findings with configurable resolution types (MSP and Org)
@@ -75,6 +78,8 @@ Create a `Blumira API` credential with the following field:
 
 - [Blumira Public API](https://api.blumira.com/public-api/v1/ui/)
 - [n8n community nodes documentation](https://docs.n8n.io/integrations/community-nodes/)
+- [npm package](https://www.npmjs.com/package/n8n-nodes-blumira)
+- [GitHub mirror](https://github.com/mkellar-blumira/n8n-nodes-blumira)
 
 ## Development
 
