@@ -44,6 +44,7 @@ Create a `Blumira API` credential with the following field:
   - Get Agent Device
   - Get Agent Keys
   - Get Agent Key
+  - Get Users
 - Agent Device (Org)
   - Get
   - Get Many
@@ -60,6 +61,10 @@ Create a `Blumira API` credential with the following field:
   - Resolve (POST)
 - Health
   - Get
+- Resolution
+  - Get Many
+- User (Org)
+  - Get Many
 
 ## Compatibility
 

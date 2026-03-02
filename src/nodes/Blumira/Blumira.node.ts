@@ -18,6 +18,8 @@ const listOperations = [
 	'getFindingsAll',
 	'getAgentDevices',
 	'getAgentKeys',
+	'getUsers',
+	'getManyUsers',
 ];
 
 const findingsListOperations = ['getFindings', 'getFindingsAll', 'getManyFindings'];
@@ -34,6 +36,7 @@ const accountScopedOperations = [
 	'getAgentDevice',
 	'getAgentKeys',
 	'getAgentKey',
+	'getUsers',
 ];
 
 const findingScopedOperations = [
@@ -251,6 +254,14 @@ export class Blumira implements INodeType {
 						name: 'Health',
 						value: 'health',
 					},
+					{
+						name: 'Resolution',
+						value: 'resolution',
+					},
+					{
+						name: 'User (Org)',
+						value: 'user',
+					},
 				],
 				default: 'finding',
 			},
@@ -356,6 +367,12 @@ export class Blumira implements INodeType {
 						value: 'getMany',
 						description: 'List MSP accounts',
 						action: 'List accounts',
+					},
+					{
+						name: 'Get Users',
+						value: 'getUsers',
+						description: 'List users for an MSP account',
+						action: 'List users',
 					},
 					{
 						name: 'Resolve Finding',
@@ -475,6 +492,46 @@ export class Blumira implements INodeType {
 				default: 'getManyFindings',
 			},
 			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: {
+					show: {
+						resource: ['resolution'],
+					},
+				},
+				options: [
+					{
+						name: 'Get Many',
+						value: 'getMany',
+						description: 'List available resolution options',
+						action: 'List resolutions',
+					},
+				],
+				default: 'getMany',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: {
+					show: {
+						resource: ['user'],
+					},
+				},
+				options: [
+					{
+						name: 'Get Many',
+						value: 'getManyUsers',
+						description: 'List users for the organization',
+						action: 'List users',
+					},
+				],
+				default: 'getManyUsers',
+			},
+			{
 				displayName: 'Account ID',
 				name: 'accountId',
 				type: 'string',
@@ -579,7 +636,7 @@ export class Blumira implements INodeType {
 				default: false,
 				displayOptions: {
 					show: {
-						resource: ['account', 'agentDevice', 'agentKey', 'finding'],
+						resource: ['account', 'agentDevice', 'agentKey', 'finding', 'user'],
 						operation: listOperations,
 					},
 				},
@@ -596,7 +653,7 @@ export class Blumira implements INodeType {
 				},
 				displayOptions: {
 					show: {
-						resource: ['account', 'agentDevice', 'agentKey', 'finding'],
+						resource: ['account', 'agentDevice', 'agentKey', 'finding', 'user'],
 						operation: listOperations,
 						returnAll: [false],
 					},
@@ -611,7 +668,7 @@ export class Blumira implements INodeType {
 				default: {},
 				displayOptions: {
 					show: {
-						resource: ['account', 'agentDevice', 'agentKey', 'finding'],
+						resource: ['account', 'agentDevice', 'agentKey', 'finding', 'user'],
 						operation: listOperations,
 					},
 				},
@@ -1330,6 +1387,35 @@ export class Blumira implements INodeType {
 						returnData.push({ json: responseItem });
 					}
 
+					if (operation === 'getUsers') {
+						const accountId = this.getNodeParameter('accountId', i) as string;
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								`/msp/accounts/${accountId}/users`,
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								`/msp/accounts/${accountId}/users`,
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
+					}
+
 					continue;
 				}
 
@@ -1414,6 +1500,53 @@ export class Blumira implements INodeType {
 						);
 						const responseItem = (responseData.data ?? responseData) as IDataObject;
 						returnData.push({ json: responseItem });
+					}
+
+					continue;
+				}
+
+				if (resource === 'resolution') {
+					const responseData = await blumiraApiRequest.call(
+						this,
+						'GET',
+						'/resolutions',
+					);
+					const responseItems = (responseData.data ?? responseData) as
+						| IDataObject
+						| IDataObject[];
+					returnData.push(...this.helpers.returnJsonArray(
+						Array.isArray(responseItems) ? responseItems : [responseItems],
+					));
+					continue;
+				}
+
+				if (resource === 'user') {
+					if (operation === 'getManyUsers') {
+						const returnAll = this.getNodeParameter('returnAll', i) as boolean;
+						const options = this.getNodeParameter('options', i, {}) as IDataObject;
+						const qs = buildPaginationParameters(options);
+
+						if (returnAll) {
+							const responseItems = await blumiraApiRequestAllItems.call(
+								this,
+								'/org/users',
+								qs,
+							);
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						} else {
+							const limit = this.getNodeParameter('limit', i) as number;
+							qs.limit = limit;
+							const responseData = await blumiraApiRequest.call(
+								this,
+								'GET',
+								'/org/users',
+								qs,
+							);
+							const responseItems = (responseData.data ?? responseData) as
+								| IDataObject
+								| IDataObject[];
+							returnData.push(...this.helpers.returnJsonArray(responseItems));
+						}
 					}
 
 					continue;
