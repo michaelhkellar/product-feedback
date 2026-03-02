@@ -21,9 +21,11 @@ function cacheKey(
   pbKey: string | undefined,
   attKey: string | undefined,
   atlDomain: string | undefined,
-  demo: boolean
+  demo: boolean,
+  atlJiraFilter?: string,
+  atlConfluenceFilter?: string
 ): string {
-  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${atlDomain ? "atl" : ""}:${demo}`;
+  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${atlDomain ? "atl" : ""}:${demo}:${atlJiraFilter || ""}:${atlConfluenceFilter || ""}`;
 }
 
 async function fetchLiveData(
@@ -32,7 +34,9 @@ async function fetchLiveData(
   atlDomain: string | undefined,
   atlEmail: string | undefined,
   atlToken: string | undefined,
-  useDemoFallback: boolean
+  useDemoFallback: boolean,
+  atlJiraFilter?: string,
+  atlConfluenceFilter?: string
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -73,8 +77,8 @@ async function fetchLiveData(
     fetches.push(
       (async () => {
         const [jiraResult, confResult] = await Promise.all([
-          getJiraIssues(atlDomain, atlEmail, atlToken),
-          getConfluencePages(atlDomain, atlEmail, atlToken),
+          getJiraIssues(atlDomain, atlEmail, atlToken, atlJiraFilter),
+          getConfluencePages(atlDomain, atlEmail, atlToken, atlConfluenceFilter),
         ]);
         if (jiraResult.data.length > 0) jiraIssues = jiraResult.data;
         if (confResult.data.length > 0) confluencePages = confResult.data;
@@ -93,7 +97,9 @@ export async function getData(
   useDemoData: boolean,
   atlDomain?: string,
   atlEmail?: string,
-  atlToken?: string
+  atlToken?: string,
+  atlJiraFilter?: string,
+  atlConfluenceFilter?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
@@ -105,11 +111,11 @@ export async function getData(
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [] };
   }
 
-  const key = cacheKey(pbKey, attKey, atlDomain, useDemoData);
+  const key = cacheKey(pbKey, attKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, atlDomain, atlEmail, atlToken, useDemoData);
+  const data = await fetchLiveData(pbKey, attKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter);
   dataCache.set(key, { data, timestamp: Date.now() });
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;

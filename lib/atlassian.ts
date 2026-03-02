@@ -27,6 +27,24 @@ function authHeader(auth: AtlassianAuth): string {
   return `Basic ${encoded}`;
 }
 
+function parseFilterList(filter: string | undefined): string[] {
+  if (!filter) return [];
+  return filter
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function buildJiraJql(projectFilter: string | undefined): string {
+  const projects = parseFilterList(projectFilter);
+  if (projects.length === 0) return "ORDER BY updated DESC";
+  const quoted = projects.map((p) => {
+    if (/^[A-Z][A-Z0-9_]+$/.test(p)) return p;
+    return `"${p.replace(/"/g, '\\"')}"`;
+  });
+  return `project IN (${quoted.join(", ")}) ORDER BY updated DESC`;
+}
+
 async function jiraFetch(auth: AtlassianAuth, path: string) {
   const url = `https://${auth.domain}.atlassian.net/rest/api/3${path}`;
   const res = await fetch(url, {
@@ -61,16 +79,17 @@ async function confluenceFetch(auth: AtlassianAuth, path: string) {
 export async function getJiraIssues(
   overrideDomain?: string,
   overrideEmail?: string,
-  overrideToken?: string
+  overrideToken?: string,
+  projectFilter?: string
 ): Promise<{ data: JiraIssue[]; isDemo: boolean }> {
   const auth = getAuth(overrideDomain, overrideEmail, overrideToken);
   if (!auth) return { data: [], isDemo: false };
 
   const allIssues: JiraIssue[] = [];
   let startAt = 0;
+  const jql = encodeURIComponent(buildJiraJql(projectFilter));
 
   while (allIssues.length < MAX_RESULTS) {
-    const jql = encodeURIComponent("ORDER BY updated DESC");
     const data = await jiraFetch(
       auth,
       `/search?jql=${jql}&maxResults=${PAGE_SIZE}&startAt=${startAt}&fields=summary,description,status,issuetype,priority,assignee,reporter,labels,created,updated,project,resolution`
@@ -101,54 +120,94 @@ export async function getJiraIssues(
     startAt += PAGE_SIZE;
   }
 
-  console.log(`Jira: fetched ${allIssues.length} issues`);
+  const filterDesc = projectFilter ? ` (filter: ${projectFilter})` : "";
+  console.log(`Jira: fetched ${allIssues.length} issues${filterDesc}`);
   return { data: allIssues, isDemo: false };
 }
 
 export async function getConfluencePages(
   overrideDomain?: string,
   overrideEmail?: string,
-  overrideToken?: string
+  overrideToken?: string,
+  spaceFilter?: string
 ): Promise<{ data: ConfluencePage[]; isDemo: boolean }> {
   const auth = getAuth(overrideDomain, overrideEmail, overrideToken);
   if (!auth) return { data: [], isDemo: false };
 
+  const spaces = parseFilterList(spaceFilter);
   const allPages: ConfluencePage[] = [];
-  let start = 0;
   const limit = Math.min(PAGE_SIZE, 50);
 
-  while (allPages.length < 500) {
-    const data = await confluenceFetch(
-      auth,
-      `/content?type=page&orderby=lastmodified desc&limit=${limit}&start=${start}&expand=space,version,body.view`
-    );
-    if (!data || !data.results) break;
-
-    for (const page of data.results) {
-      const body = page.body?.view?.value || "";
-      const excerpt = body
-        .replace(/<[^>]*>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 500);
-
-      allPages.push({
-        id: page.id,
-        title: page.title || "Untitled",
-        excerpt,
-        space: page.space?.name || page.space?.key || "",
-        lastModified: page.version?.when || "",
-        author: page.version?.by?.displayName || "",
-        url: `https://${auth.domain}.atlassian.net/wiki${page._links?.webui || ""}`,
-      });
+  if (spaces.length > 0) {
+    for (const space of spaces) {
+      let start = 0;
+      while (allPages.length < 500) {
+        const data = await confluenceFetch(
+          auth,
+          `/content?type=page&spaceKey=${encodeURIComponent(space)}&orderby=lastmodified desc&limit=${limit}&start=${start}&expand=space,version,body.view`
+        );
+        if (!data || !data.results) {
+          const cqlData = await confluenceFetch(
+            auth,
+            `/content/search?cql=${encodeURIComponent(`space.title = "${space}" ORDER BY lastmodified DESC`)}&limit=${limit}&start=${start}&expand=space,version,body.view`
+          );
+          if (cqlData?.results) {
+            for (const page of cqlData.results) {
+              addPage(allPages, page, auth.domain);
+            }
+          }
+          break;
+        }
+        for (const page of data.results) {
+          addPage(allPages, page, auth.domain);
+        }
+        if (data.results.length < limit) break;
+        start += limit;
+      }
     }
-
-    if (data.results.length < limit) break;
-    start += limit;
+  } else {
+    let start = 0;
+    while (allPages.length < 500) {
+      const data = await confluenceFetch(
+        auth,
+        `/content?type=page&orderby=lastmodified desc&limit=${limit}&start=${start}&expand=space,version,body.view`
+      );
+      if (!data || !data.results) break;
+      for (const page of data.results) {
+        addPage(allPages, page, auth.domain);
+      }
+      if (data.results.length < limit) break;
+      start += limit;
+    }
   }
 
-  console.log(`Confluence: fetched ${allPages.length} pages`);
+  const filterDesc = spaceFilter ? ` (filter: ${spaceFilter})` : "";
+  console.log(`Confluence: fetched ${allPages.length} pages${filterDesc}`);
   return { data: allPages, isDemo: false };
+}
+
+function addPage(allPages: ConfluencePage[], page: Record<string, unknown>, domain: string) {
+  const body = ((page.body as Record<string, unknown>)?.view as Record<string, unknown>)?.value as string || "";
+  const excerpt = body
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+
+  const space = page.space as Record<string, unknown> | undefined;
+  const version = page.version as Record<string, unknown> | undefined;
+  const links = page._links as Record<string, unknown> | undefined;
+  const by = version?.by as Record<string, unknown> | undefined;
+
+  allPages.push({
+    id: page.id as string,
+    title: (page.title as string) || "Untitled",
+    excerpt,
+    space: (space?.name as string) || (space?.key as string) || "",
+    lastModified: (version?.when as string) || "",
+    author: (by?.displayName as string) || "",
+    url: `https://${domain}.atlassian.net/wiki${(links?.webui as string) || ""}`,
+  });
 }
 
 function extractTextFromADF(adf: unknown): string {

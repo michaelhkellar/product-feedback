@@ -25,7 +25,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ insights: [], isDemo: false });
     }
 
-    const data = await getData(pbKey, attKey, useDemoData, atlDomain, atlEmail, atlToken);
+    const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
+    const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
+    const data = await getData(pbKey, attKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter);
     const insights = await generateInsights(data, geminiKey);
 
     return NextResponse.json({ insights, isDemo: false });

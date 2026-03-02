@@ -27,7 +27,9 @@ export async function POST(req: NextRequest) {
       useDemoData !== false,
       keys.atlassianDomain,
       keys.atlassianEmail,
-      keys.atlassianToken
+      keys.atlassianToken,
+      req.headers.get("x-atlassian-jira-filter") || undefined,
+      req.headers.get("x-atlassian-confluence-filter") || undefined
     );
 
     if (data.insights.length === 0 && (data.feedback.length > 0 || data.features.length > 0 || data.jiraIssues.length > 0)) {

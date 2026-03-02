@@ -27,6 +27,7 @@ export function useApiKeys(): ApiKeyContextValue {
 const EMPTY: ApiKeyState = {
   geminiKey: "", productboardKey: "", attentionKey: "",
   atlassianDomain: "", atlassianEmail: "", atlassianToken: "",
+  atlassianJiraFilter: "", atlassianConfluenceFilter: "",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {

@@ -5,6 +5,8 @@ export interface ApiKeyState {
   atlassianDomain: string;
   atlassianEmail: string;
   atlassianToken: string;
+  atlassianJiraFilter: string;
+  atlassianConfluenceFilter: string;
 }
 
 export interface ApiKeyStatus {
@@ -23,6 +25,8 @@ const EMPTY_KEYS: ApiKeyState = {
   atlassianDomain: "",
   atlassianEmail: "",
   atlassianToken: "",
+  atlassianJiraFilter: "",
+  atlassianConfluenceFilter: "",
 };
 
 export function loadKeys(): ApiKeyState {
@@ -38,6 +42,8 @@ export function loadKeys(): ApiKeyState {
       atlassianDomain: parsed.atlassianDomain || "",
       atlassianEmail: parsed.atlassianEmail || "",
       atlassianToken: parsed.atlassianToken || "",
+      atlassianJiraFilter: parsed.atlassianJiraFilter || "",
+      atlassianConfluenceFilter: parsed.atlassianConfluenceFilter || "",
     };
   } catch {
     return { ...EMPTY_KEYS };
@@ -68,6 +74,8 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.atlassianDomain) headers["x-atlassian-domain"] = keys.atlassianDomain;
   if (keys.atlassianEmail) headers["x-atlassian-email"] = keys.atlassianEmail;
   if (keys.atlassianToken) headers["x-atlassian-token"] = keys.atlassianToken;
+  if (keys.atlassianJiraFilter) headers["x-atlassian-jira-filter"] = keys.atlassianJiraFilter;
+  if (keys.atlassianConfluenceFilter) headers["x-atlassian-confluence-filter"] = keys.atlassianConfluenceFilter;
   return headers;
 }
 

@@ -22,11 +22,18 @@ const SIMPLE_KEYS: { id: keyof ApiKeyState; label: string; placeholder: string; 
   { id: "attentionKey", label: "Attention API Key", placeholder: "att_...", description: "Fetches call recordings from Attention" },
 ];
 
-const ATLASSIAN_FIELDS: { id: keyof ApiKeyState; label: string; placeholder: string; type: string }[] = [
+const ATLASSIAN_AUTH_FIELDS: { id: keyof ApiKeyState; label: string; placeholder: string; type: string }[] = [
   { id: "atlassianDomain", label: "Domain", placeholder: "mycompany (or mycompany.atlassian.net)", type: "text" },
   { id: "atlassianEmail", label: "Email", placeholder: "you@company.com", type: "email" },
   { id: "atlassianToken", label: "API Token", placeholder: "Your Atlassian API token", type: "password" },
 ];
+
+const ATLASSIAN_FILTER_FIELDS: { id: keyof ApiKeyState; label: string; placeholder: string; help: string }[] = [
+  { id: "atlassianJiraFilter", label: "Jira Projects", placeholder: "PROD, ENG, SUP", help: "Comma-separated project keys or names. Leave blank for all." },
+  { id: "atlassianConfluenceFilter", label: "Confluence Spaces", placeholder: "PROD, ENG, KB", help: "Comma-separated space keys. Leave blank for all." },
+];
+
+const ATLASSIAN_FIELDS = [...ATLASSIAN_AUTH_FIELDS, ...ATLASSIAN_FILTER_FIELDS.map((f) => ({ ...f, type: "text" }))];
 
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const { keys, status, setKey, removeKey, clearAllKeys, useDemoData, setUseDemoData, refreshStatus } = useApiKeys();
@@ -225,7 +232,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground">One Atlassian API token connects both Jira and Confluence. Create a token at id.atlassian.com/manage-profile/security/api-tokens</p>
-            {ATLASSIAN_FIELDS.map((af) => {
+            {ATLASSIAN_AUTH_FIELDS.map((af) => {
               const field = fields[af.id];
               if (!field) return null;
               return (
@@ -248,6 +255,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
               );
             })}
+
+            <div className="mt-2 p-2.5 rounded-lg bg-muted/30 border border-border space-y-2">
+              <p className="text-[10px] font-medium text-muted-foreground">Scope to specific projects/spaces</p>
+              {ATLASSIAN_FILTER_FIELDS.map((ff) => {
+                const field = fields[ff.id];
+                if (!field) return null;
+                return (
+                  <div key={ff.id} className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground font-medium">{ff.label}</label>
+                    <input
+                      type="text"
+                      value={field.value}
+                      onChange={(e) => updateField(ff.id, { value: e.target.value, dirty: true })}
+                      placeholder={ff.placeholder}
+                      className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
+                    />
+                    <p className="text-[9px] text-muted-foreground">{ff.help}</p>
+                  </div>
+                );
+              })}
+            </div>
             <div className="flex items-center gap-2">
               <button onClick={handleSaveAtlassian} disabled={!atlDirty && atlConfigured}
                 className={cn("px-3 py-1.5 rounded-lg text-[10px] font-medium flex items-center gap-1.5 transition-colors",

@@ -10,9 +10,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ connected: false, jiraIssues: [], confluencePages: [] });
   }
 
+  const jiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
+  const confluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
+
   const [jira, confluence] = await Promise.all([
-    getJiraIssues(domain, email, token),
-    getConfluencePages(domain, email, token),
+    getJiraIssues(domain, email, token, jiraFilter),
+    getConfluencePages(domain, email, token, confluenceFilter),
   ]);
 
   return NextResponse.json({
