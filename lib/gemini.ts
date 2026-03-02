@@ -23,7 +23,7 @@ export async function generateWithGemini(
 
   try {
     const model = client.getGenerativeModel({
-      model: "gemini-3.0-flash",
+      model: "gemini-2.5-flash",
       systemInstruction: systemPrompt,
     });
 
