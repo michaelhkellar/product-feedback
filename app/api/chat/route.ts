@@ -4,7 +4,7 @@ import { chat } from "@/lib/agent";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { message, history } = body;
+    const { message, history, useDemoData } = body;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json(
@@ -13,9 +13,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const keys = {
+      geminiKey: req.headers.get("x-gemini-key") || undefined,
+      productboardKey: req.headers.get("x-productboard-key") || undefined,
+      attentionKey: req.headers.get("x-attention-key") || undefined,
+    };
+
     const result = await chat(
       message,
-      Array.isArray(history) ? history : []
+      Array.isArray(history) ? history : [],
+      keys,
+      useDemoData !== false
     );
 
     return NextResponse.json(result);

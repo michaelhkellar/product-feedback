@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useApiKeys } from "./api-key-provider";
 import { Insight } from "@/lib/types";
 import { DEMO_INSIGHTS } from "@/lib/demo-data";
 import {
@@ -14,6 +15,7 @@ import {
   Shield,
   ArrowUpRight,
   X,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +25,11 @@ const INSIGHT_CONFIG: Record<
 > = {
   trend: { icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
   risk: { icon: AlertTriangle, color: "text-red-500", bg: "bg-red-500/10" },
-  recommendation: { icon: Lightbulb, color: "text-amber-500", bg: "bg-amber-500/10" },
+  recommendation: {
+    icon: Lightbulb,
+    color: "text-amber-500",
+    bg: "bg-amber-500/10",
+  },
   theme: { icon: Target, color: "text-green-500", bg: "bg-green-500/10" },
   anomaly: { icon: Zap, color: "text-purple-500", bg: "bg-purple-500/10" },
 };
@@ -33,11 +39,44 @@ interface InsightsPanelProps {
   onQueryInsight?: (query: string) => void;
 }
 
-export function InsightsPanel({ className, onQueryInsight }: InsightsPanelProps) {
+export function InsightsPanel({
+  className,
+  onQueryInsight,
+}: InsightsPanelProps) {
+  const { useDemoData, keyHeaders } = useApiKeys();
+
+  const [insights, setInsights] = useState<Insight[]>([]);
+  const [isDemo, setIsDemo] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
   const [filter, setFilter] = useState<string>("all");
 
-  const insights = DEMO_INSIGHTS;
+  const loadInsights = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/insights", {
+        headers: {
+          ...keyHeaders,
+          "x-use-demo": useDemoData ? "true" : "false",
+        },
+      });
+      const data = await res.json();
+      setInsights(data.insights || []);
+      setIsDemo(data.isDemo);
+    } catch {
+      if (useDemoData) {
+        setInsights(DEMO_INSIGHTS);
+        setIsDemo(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [keyHeaders, useDemoData]);
+
+  useEffect(() => {
+    loadInsights();
+  }, [loadInsights]);
+
   const filtered =
     filter === "all" ? insights : insights.filter((i) => i.type === filter);
 
@@ -55,9 +94,16 @@ export function InsightsPanel({ className, onQueryInsight }: InsightsPanelProps)
             <Flame className="w-4 h-4 text-orange-500" />
             Live Insights
           </h2>
-          <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-            {insights.length} active
-          </span>
+          <div className="flex items-center gap-2">
+            {isDemo && (
+              <span className="text-[9px] bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded-full font-medium">
+                Demo
+              </span>
+            )}
+            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+              {insights.length} active
+            </span>
+          </div>
         </div>
 
         <div className="flex gap-1">
@@ -83,76 +129,114 @@ export function InsightsPanel({ className, onQueryInsight }: InsightsPanelProps)
         </div>
       </div>
 
-      <div className="px-4 py-3 border-b border-border">
-        <div className="grid grid-cols-3 gap-2">
-          <div className="text-center px-2 py-1.5 rounded-lg bg-red-500/5">
-            <div className="text-lg font-bold text-red-500">{impactCounts.high}</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wide">High Impact</div>
-          </div>
-          <div className="text-center px-2 py-1.5 rounded-lg bg-amber-500/5">
-            <div className="text-lg font-bold text-amber-500">{impactCounts.medium}</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Medium</div>
-          </div>
-          <div className="text-center px-2 py-1.5 rounded-lg bg-green-500/5">
-            <div className="text-lg font-bold text-green-500">{impactCounts.low}</div>
-            <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Low</div>
+      {insights.length > 0 && (
+        <div className="px-4 py-3 border-b border-border">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="text-center px-2 py-1.5 rounded-lg bg-red-500/5">
+              <div className="text-lg font-bold text-red-500">
+                {impactCounts.high}
+              </div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
+                High Impact
+              </div>
+            </div>
+            <div className="text-center px-2 py-1.5 rounded-lg bg-amber-500/5">
+              <div className="text-lg font-bold text-amber-500">
+                {impactCounts.medium}
+              </div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
+                Medium
+              </div>
+            </div>
+            <div className="text-center px-2 py-1.5 rounded-lg bg-green-500/5">
+              <div className="text-lg font-bold text-green-500">
+                {impactCounts.low}
+              </div>
+              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
+                Low
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {filtered.map((insight) => {
-          const config = INSIGHT_CONFIG[insight.type] || INSIGHT_CONFIG.theme;
-          const Icon = config.icon;
-          return (
-            <button
-              key={insight.id}
-              onClick={() => setSelectedInsight(insight)}
-              className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
-            >
-              <div className="flex items-start gap-2.5">
-                <div
-                  className={cn(
-                    "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center",
-                    config.bg
-                  )}
-                >
-                  <Icon className={cn("w-3.5 h-3.5", config.color)} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 mb-0.5">
-                    <span
-                      className={cn(
-                        "text-[9px] font-semibold uppercase tracking-wider",
-                        config.color
-                      )}
-                    >
-                      {insight.type}
-                    </span>
-                    {insight.impact === "high" && (
-                      <Shield className="w-3 h-3 text-red-400" />
+        {loading && (
+          <div className="flex items-center justify-center py-8 text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+            <span className="text-xs">Loading insights...</span>
+          </div>
+        )}
+
+        {!loading && insights.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">
+            <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+            <p className="text-xs mb-1">No insights available</p>
+            <p className="text-[10px]">
+              Connect API keys or enable demo data in Settings
+            </p>
+          </div>
+        )}
+
+        {!loading &&
+          filtered.map((insight) => {
+            const config =
+              INSIGHT_CONFIG[insight.type] || INSIGHT_CONFIG.theme;
+            const Icon = config.icon;
+            return (
+              <button
+                key={insight.id}
+                onClick={() => setSelectedInsight(insight)}
+                className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
+              >
+                <div className="flex items-start gap-2.5">
+                  <div
+                    className={cn(
+                      "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center",
+                      config.bg
                     )}
+                  >
+                    <Icon className={cn("w-3.5 h-3.5", config.color)} />
                   </div>
-                  <h3 className="text-xs font-medium leading-snug line-clamp-2">
-                    {insight.title}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className={cn("h-full rounded-full", config.bg.replace("/10", "/40"))}
-                        style={{ width: `${insight.confidence * 100}%` }}
-                      />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <span
+                        className={cn(
+                          "text-[9px] font-semibold uppercase tracking-wider",
+                          config.color
+                        )}
+                      >
+                        {insight.type}
+                      </span>
+                      {insight.impact === "high" && (
+                        <Shield className="w-3 h-3 text-red-400" />
+                      )}
                     </div>
-                    <span className="text-[9px] text-muted-foreground">
-                      {(insight.confidence * 100).toFixed(0)}%
-                    </span>
+                    <h3 className="text-xs font-medium leading-snug line-clamp-2">
+                      {insight.title}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className={cn(
+                            "h-full rounded-full",
+                            config.bg.replace("/10", "/40")
+                          )}
+                          style={{
+                            width: `${insight.confidence * 100}%`,
+                          }}
+                        />
+                      </div>
+                      <span className="text-[9px] text-muted-foreground">
+                        {(insight.confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
                   </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
                 </div>
-                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
-              </div>
-            </button>
-          );
-        })}
+              </button>
+            );
+          })}
       </div>
 
       {selectedInsight && (
@@ -161,7 +245,8 @@ export function InsightsPanel({ className, onQueryInsight }: InsightsPanelProps)
             <div className="flex items-center gap-2">
               {(() => {
                 const config =
-                  INSIGHT_CONFIG[selectedInsight.type] || INSIGHT_CONFIG.theme;
+                  INSIGHT_CONFIG[selectedInsight.type] ||
+                  INSIGHT_CONFIG.theme;
                 const Icon = config.icon;
                 return (
                   <div

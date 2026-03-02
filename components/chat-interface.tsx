@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useApiKeys } from "./api-key-provider";
 import { ChatMessage } from "@/lib/types";
 import {
   Send,
@@ -13,7 +14,6 @@ import {
   MessageSquare,
   BarChart3,
   AlertTriangle,
-  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -50,26 +50,43 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ className }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: `Welcome! I'm your **Customer Feedback Intelligence Agent**. I have access to your complete feedback database across all channels:
+  const { keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
 
-- **12 feedback items** from Zendesk, Intercom, Slack, Productboard & more
-- **8 Productboard features** with votes and status
-- **4 Attention call recordings** with summaries and key moments
-- **6 pre-computed insights** including risks, trends, and recommendations
-
-Ask me anything — I can analyze themes, identify churn risks, surface opportunities, and cross-reference data across all sources. Try one of the suggested queries below to get started.`,
-      timestamp: new Date().toISOString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const configuredSources: string[] = [];
+    if (status.geminiKey.configured) configuredSources.push("Gemini AI");
+    if (status.productboardKey.configured)
+      configuredSources.push("Productboard");
+    if (status.attentionKey.configured) configuredSources.push("Attention");
+
+    const sourceInfo =
+      configuredSources.length > 0
+        ? `\n\nConnected sources: **${configuredSources.join(", ")}**`
+        : "";
+    const demoInfo = useDemoData
+      ? "\n\n*Currently showing demo data. You can manage API keys and data settings via the gear icon in the header.*"
+      : !hasAnyKey
+        ? "\n\n*No API keys configured and demo data is off. Open Settings (gear icon) to add keys or enable demo data.*"
+        : "";
+
+    setMessages([
+      {
+        id: "welcome",
+        role: "assistant",
+        content: `Welcome! I'm your **Customer Feedback Intelligence Agent**. I can analyze themes, identify churn risks, surface opportunities, and cross-reference data across all your feedback sources.${sourceInfo}${demoInfo}
+
+Try one of the suggested queries below to get started.`,
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+  }, [status, useDemoData, hasAnyKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,12 +119,18 @@ Ask me anything — I can analyze themes, identify churn risks, surface opportun
     try {
       const history = messages
         .filter((m) => m.role !== "system")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+        .map((m) => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
 
       const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content, history }),
+        headers: {
+          "Content-Type": "application/json",
+          ...keyHeaders,
+        },
+        body: JSON.stringify({ message: content, history, useDemoData }),
       });
 
       const data = await res.json();
@@ -194,10 +217,14 @@ Ask me anything — I can analyze themes, identify churn risks, surface opportun
                       key={i}
                       className={cn(
                         "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium",
-                        src.type === "feedback" && "bg-blue-500/10 text-blue-600",
-                        src.type === "feature" && "bg-green-500/10 text-green-600",
-                        src.type === "call" && "bg-amber-500/10 text-amber-600",
-                        src.type === "insight" && "bg-purple-500/10 text-purple-600"
+                        src.type === "feedback" &&
+                          "bg-blue-500/10 text-blue-600",
+                        src.type === "feature" &&
+                          "bg-green-500/10 text-green-600",
+                        src.type === "call" &&
+                          "bg-amber-500/10 text-amber-600",
+                        src.type === "insight" &&
+                          "bg-purple-500/10 text-purple-600"
                       )}
                     >
                       <Search className="w-2.5 h-2.5" />
@@ -290,7 +317,11 @@ Ask me anything — I can analyze themes, identify churn risks, surface opportun
             </button>
           </div>
           <p className="text-center text-[10px] text-muted-foreground mt-2">
-            Powered by {process.env.NEXT_PUBLIC_HAS_GEMINI === "true" ? "Gemini AI" : "built-in intelligence"} · Analyzing feedback from Productboard, Attention & more
+            Powered by{" "}
+            {status.geminiKey.configured
+              ? "Gemini AI"
+              : "built-in intelligence"}{" "}
+            · Analyzing feedback from Productboard, Attention & more
           </p>
         </div>
       </div>

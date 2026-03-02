@@ -1,25 +1,25 @@
 "use client";
 
 import { useState, useRef } from "react";
+import { ApiKeyProvider } from "@/components/api-key-provider";
 import { ChatInterface } from "@/components/chat-interface";
 import { InsightsPanel } from "@/components/insights-panel";
 import { SourcePanel } from "@/components/source-panel";
+import { SettingsDialog } from "@/components/settings-dialog";
 import {
   Bot,
-  Database,
-  Flame,
   PanelLeftClose,
   PanelRightClose,
   PanelLeft,
   PanelRight,
-  Sparkles,
-  Activity,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export default function Home() {
+function AppContent() {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const chatRef = useRef<{ sendMessage: (msg: string) => void }>(null);
 
   function handleQueryFromPanel(query: string) {
@@ -32,7 +32,6 @@ export default function Home() {
       nativeInputValueSetter?.call(textarea, query);
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
       setTimeout(() => {
-        const form = textarea.closest("form");
         const sendBtn = textarea
           .closest("div")
           ?.querySelector("button:last-child");
@@ -58,17 +57,15 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-3 text-[10px] text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <Activity className="w-3 h-3 text-green-500" />
-              <span>12 feedback items</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3 h-3 text-purple-500" />
-              <span>6 insights</span>
-            </div>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+            title="API Key Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+          <div className="w-px h-5 bg-border" />
           <div className="flex items-center gap-1">
             <button
               onClick={() => setLeftOpen(!leftOpen)}
@@ -106,6 +103,7 @@ export default function Home() {
           <SourcePanel
             className="w-80"
             onQuerySource={handleQueryFromPanel}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
         </div>
 
@@ -125,6 +123,19 @@ export default function Home() {
           />
         </div>
       </div>
+
+      <SettingsDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <ApiKeyProvider>
+      <AppContent />
+    </ApiKeyProvider>
   );
 }
