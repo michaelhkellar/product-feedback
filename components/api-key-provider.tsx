@@ -24,17 +24,21 @@ export function useApiKeys(): ApiKeyContextValue {
   return ctx;
 }
 
+const EMPTY: ApiKeyState = {
+  geminiKey: "", productboardKey: "", attentionKey: "",
+  atlassianDomain: "", atlassianEmail: "", atlassianToken: "",
+};
+
+const EMPTY_STATUS: ApiKeyStatus = {
+  geminiKey: { configured: false, source: null },
+  productboardKey: { configured: false, source: null },
+  attentionKey: { configured: false, source: null },
+  atlassianKey: { configured: false, source: null },
+};
+
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
-  const [keys, setKeys] = useState<ApiKeyState>({
-    geminiKey: "",
-    productboardKey: "",
-    attentionKey: "",
-  });
-  const [status, setStatus] = useState<ApiKeyStatus>({
-    geminiKey: { configured: false, source: null },
-    productboardKey: { configured: false, source: null },
-    attentionKey: { configured: false, source: null },
-  });
+  const [keys, setKeys] = useState<ApiKeyState>({ ...EMPTY });
+  const [status, setStatus] = useState<ApiKeyStatus>({ ...EMPTY_STATUS });
   const [useDemoData, setUseDemoData] = useState(true);
   const [loaded, setLoaded] = useState(false);
 
@@ -46,16 +50,12 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/settings/status", {
-        headers: buildKeyHeaders(keys),
-      });
+      const res = await fetch("/api/settings/status", { headers: buildKeyHeaders(keys) });
       if (res.ok) {
         const data = await res.json();
         setStatus(data.status);
       }
-    } catch {
-      // keep current status
-    }
+    } catch { /* keep current */ }
   }, [keys]);
 
   useEffect(() => {
@@ -79,27 +79,19 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearAllKeysHandler = useCallback(() => {
-    const empty: ApiKeyState = { geminiKey: "", productboardKey: "", attentionKey: "" };
-    setKeys(empty);
+    setKeys({ ...EMPTY });
     clearKeys();
   }, []);
 
   const keyHeaders = buildKeyHeaders(keys);
-  const hasAnyKey = !!(keys.geminiKey || keys.productboardKey || keys.attentionKey);
+  const hasAnyKey = !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.atlassianToken);
 
   return (
     <ApiKeyContext.Provider
       value={{
-        keys,
-        status,
-        useDemoData,
-        setKey,
-        removeKey,
-        clearAllKeys: clearAllKeysHandler,
-        setUseDemoData,
-        refreshStatus,
-        keyHeaders,
-        hasAnyKey,
+        keys, status, useDemoData,
+        setKey, removeKey, clearAllKeys: clearAllKeysHandler, setUseDemoData,
+        refreshStatus, keyHeaders, hasAnyKey,
       }}
     >
       {children}

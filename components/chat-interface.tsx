@@ -65,6 +65,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     if (status.productboardKey.configured)
       configuredSources.push("Productboard");
     if (status.attentionKey.configured) configuredSources.push("Attention");
+    if (status.atlassianKey?.configured) configuredSources.push("Jira + Confluence");
 
     const sourceInfo =
       configuredSources.length > 0

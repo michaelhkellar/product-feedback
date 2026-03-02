@@ -1,4 +1,4 @@
-export type FeedbackSource = "productboard" | "attention" | "zendesk" | "slack" | "intercom" | "manual";
+export type FeedbackSource = "productboard" | "attention" | "zendesk" | "slack" | "intercom" | "jira" | "confluence" | "manual";
 export type Sentiment = "positive" | "negative" | "neutral" | "mixed";
 export type Priority = "critical" | "high" | "medium" | "low";
 export type InsightType = "trend" | "theme" | "anomaly" | "recommendation" | "risk";
@@ -37,6 +37,33 @@ export interface AttentionCall {
   keyMoments: { timestamp: string; text: string; sentiment: Sentiment }[];
   actionItems: string[];
   themes: string[];
+}
+
+export interface JiraIssue {
+  id: string;
+  key: string;
+  summary: string;
+  description: string;
+  status: string;
+  issueType: string;
+  priority: string;
+  assignee: string;
+  reporter: string;
+  labels: string[];
+  created: string;
+  updated: string;
+  project: string;
+  resolution: string;
+}
+
+export interface ConfluencePage {
+  id: string;
+  title: string;
+  excerpt: string;
+  space: string;
+  lastModified: string;
+  author: string;
+  url: string;
 }
 
 export interface Insight {

@@ -1,6 +1,7 @@
 import { AgentData, getDemoData } from "./agent";
 import { getFeatures, getNotes, isProductboardConfigured } from "./productboard";
 import { getCalls, isAttentionConfigured } from "./attention";
+import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atlassian";
 import {
   DEMO_FEEDBACK,
   DEMO_PRODUCTBOARD_FEATURES,
@@ -16,93 +17,103 @@ interface CachedData {
 const dataCache = new Map<string, CachedData>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-function cacheKey(pbKey: string | undefined, attKey: string | undefined, demo: boolean): string {
-  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${demo}`;
+function cacheKey(
+  pbKey: string | undefined,
+  attKey: string | undefined,
+  atlDomain: string | undefined,
+  demo: boolean
+): string {
+  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${atlDomain ? "atl" : ""}:${demo}`;
 }
 
 async function fetchLiveData(
   pbKey: string | undefined,
   attKey: string | undefined,
+  atlDomain: string | undefined,
+  atlEmail: string | undefined,
+  atlToken: string | undefined,
   useDemoFallback: boolean
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
   let calls = useDemoFallback ? [...DEMO_ATTENTION_CALLS] : [];
   const insights = useDemoFallback ? [...DEMO_INSIGHTS] : [];
-
-  const hasPb = isProductboardConfigured(pbKey);
-  const hasAtt = isAttentionConfigured(attKey);
+  let jiraIssues: AgentData["jiraIssues"] = [];
+  let confluencePages: AgentData["confluencePages"] = [];
 
   const fetches: Promise<void>[] = [];
 
-  if (hasPb) {
+  if (isProductboardConfigured(pbKey)) {
     fetches.push(
       (async () => {
         const [featResult, notesResult] = await Promise.all([
           getFeatures(pbKey, false),
           getNotes(pbKey, false, 1000),
         ]);
-        if (!featResult.isDemo && featResult.data.length > 0) {
-          features = featResult.data;
-        }
+        if (!featResult.isDemo && featResult.data.length > 0) features = featResult.data;
         if (!notesResult.isDemo && notesResult.data.length > 0) {
           for (const note of notesResult.data) {
-            if (!feedback.some((f) => f.id === note.id)) {
-              feedback.push(note);
-            }
+            if (!feedback.some((f) => f.id === note.id)) feedback.push(note);
           }
         }
       })()
     );
   }
 
-  if (hasAtt) {
+  if (isAttentionConfigured(attKey)) {
     fetches.push(
       (async () => {
         const callResult = await getCalls(attKey, false);
-        if (!callResult.isDemo && callResult.data.length > 0) {
-          calls = callResult.data;
-        }
+        if (!callResult.isDemo && callResult.data.length > 0) calls = callResult.data;
       })()
     );
   }
 
-  if (fetches.length > 0) {
-    await Promise.allSettled(fetches);
+  if (isAtlassianConfigured(atlDomain, atlEmail, atlToken)) {
+    fetches.push(
+      (async () => {
+        const [jiraResult, confResult] = await Promise.all([
+          getJiraIssues(atlDomain, atlEmail, atlToken),
+          getConfluencePages(atlDomain, atlEmail, atlToken),
+        ]);
+        if (jiraResult.data.length > 0) jiraIssues = jiraResult.data;
+        if (confResult.data.length > 0) confluencePages = confResult.data;
+      })()
+    );
   }
 
-  return { feedback, features, calls, insights };
+  if (fetches.length > 0) await Promise.allSettled(fetches);
+
+  return { feedback, features, calls, insights, jiraIssues, confluencePages };
 }
 
 export async function getData(
   pbKey: string | undefined,
   attKey: string | undefined,
-  useDemoData: boolean
+  useDemoData: boolean,
+  atlDomain?: string,
+  atlEmail?: string,
+  atlToken?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
-  const hasAnyLiveKey = hasPb || hasAtt;
+  const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
+  const hasAnyLiveKey = hasPb || hasAtt || hasAtl;
 
-  if (!hasAnyLiveKey && useDemoData) {
-    return getDemoData();
-  }
-
+  if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
-    return { feedback: [], features: [], calls: [], insights: [] };
+    return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [] };
   }
 
-  const key = cacheKey(pbKey, attKey, useDemoData);
+  const key = cacheKey(pbKey, attKey, atlDomain, useDemoData);
   const cached = dataCache.get(key);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return cached.data;
-  }
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, useDemoData);
-
+  const data = await fetchLiveData(pbKey, attKey, atlDomain, atlEmail, atlToken, useDemoData);
   dataCache.set(key, { data, timestamp: Date.now() });
 
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length;
-  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.insights.length} insights)`);
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
+  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.confluencePages.length} confluence, ${data.insights.length} insights)`);
 
   return data;
 }

@@ -1,8 +1,8 @@
-import { FeedbackItem, ProductboardFeature, AttentionCall, Insight } from "./types";
+import { FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage } from "./types";
 
 interface VectorDocument {
   id: string;
-  type: "feedback" | "feature" | "call" | "insight";
+  type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence";
   text: string;
   themes: string[];
   metadata: Record<string, string>;
@@ -82,6 +82,41 @@ export class InMemoryVectorStore {
         text: `${i.title} ${i.description} ${i.themes.join(" ")}`,
         themes: i.themes,
         metadata: { type: i.type, impact: i.impact },
+      });
+    }
+  }
+
+  addJiraIssues(issues: JiraIssue[]) {
+    for (const issue of issues) {
+      this.documents.push({
+        id: issue.id,
+        type: "jira",
+        text: `${issue.key} ${issue.summary} ${issue.description} ${issue.labels.join(" ")} ${issue.project} ${issue.issueType} ${issue.status}`,
+        themes: issue.labels,
+        metadata: {
+          key: issue.key,
+          status: issue.status,
+          type: issue.issueType,
+          priority: issue.priority,
+          project: issue.project,
+          assignee: issue.assignee,
+        },
+      });
+    }
+  }
+
+  addConfluencePages(pages: ConfluencePage[]) {
+    for (const page of pages) {
+      this.documents.push({
+        id: page.id,
+        type: "confluence",
+        text: `${page.title} ${page.excerpt} ${page.space}`,
+        themes: [],
+        metadata: {
+          space: page.space,
+          author: page.author,
+          url: page.url,
+        },
       });
     }
   }
@@ -174,6 +209,8 @@ export class InMemoryVectorStore {
       features: this.documents.filter((d) => d.type === "feature").length,
       calls: this.documents.filter((d) => d.type === "call").length,
       insights: this.documents.filter((d) => d.type === "insight").length,
+      jira: this.documents.filter((d) => d.type === "jira").length,
+      confluence: this.documents.filter((d) => d.type === "confluence").length,
     };
   }
 }

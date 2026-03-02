@@ -1,4 +1,4 @@
-import { Insight, FeedbackItem, ProductboardFeature, AttentionCall } from "./types";
+import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue } from "./types";
 import { AgentData } from "./agent";
 import { generateWithGemini, isGeminiConfigured } from "./gemini";
 
@@ -73,6 +73,10 @@ function generateProgrammaticInsights(data: AgentData): Insight[] {
 
   if (data.features.length > 0 && data.feedback.length > 0) {
     insights.push(...gapInsights(data.features, data.feedback, now));
+  }
+
+  if (data.jiraIssues.length > 0) {
+    insights.push(...jiraInsights(data.jiraIssues, now));
   }
 
   return insights;
@@ -359,9 +363,75 @@ function gapInsights(features: ProductboardFeature[], feedback: FeedbackItem[], 
   return insights;
 }
 
+function jiraInsights(issues: JiraIssue[], now: string): Insight[] {
+  const insights: Insight[] = [];
+  const byStatus: Record<string, number> = {};
+  const byType: Record<string, number> = {};
+  for (const j of issues) {
+    byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+    byType[j.issueType] = (byType[j.issueType] || 0) + 1;
+  }
+
+  const inProgress = issues.filter((j) => {
+    const s = j.status.toLowerCase();
+    return s.includes("progress") || s.includes("review") || s.includes("dev");
+  });
+  const backlog = issues.filter((j) => {
+    const s = j.status.toLowerCase();
+    return s.includes("backlog") || s.includes("to do") || s.includes("todo") || s.includes("open");
+  });
+  const bugs = issues.filter((j) => j.issueType.toLowerCase() === "bug");
+  const highPriority = issues.filter((j) => {
+    const p = j.priority.toLowerCase();
+    return p.includes("highest") || p.includes("critical") || p.includes("blocker");
+  });
+
+  insights.push({
+    id: "gen-jira-overview",
+    type: "trend",
+    title: `Jira: ${inProgress.length} In Flight, ${backlog.length} Backlog, ${bugs.length} Bugs`,
+    description: `Across ${issues.length} Jira issues: ${Object.entries(byStatus).sort(([,a],[,b]) => b - a).slice(0, 5).map(([s, c]) => `${s}: ${c}`).join(", ")}. Types: ${Object.entries(byType).sort(([,a],[,b]) => b - a).slice(0, 4).map(([t, c]) => `${t}: ${c}`).join(", ")}.`,
+    confidence: 0.95,
+    relatedFeedbackIds: inProgress.slice(0, 5).map((j) => j.id),
+    themes: ["jira", "engineering"],
+    impact: highPriority.length > 5 ? "high" : "medium",
+    createdAt: now,
+  });
+
+  if (highPriority.length > 0) {
+    insights.push({
+      id: "gen-jira-critical",
+      type: "risk",
+      title: `${highPriority.length} Critical/Blocker Jira Issues`,
+      description: `High-priority items: ${highPriority.slice(0, 4).map((j) => `${j.key} "${j.summary}" (${j.status})`).join("; ")}${highPriority.length > 4 ? ` and ${highPriority.length - 4} more` : ""}.`,
+      confidence: 0.92,
+      relatedFeedbackIds: highPriority.slice(0, 10).map((j) => j.id),
+      themes: ["blockers", "urgency"],
+      impact: "high",
+      createdAt: now,
+    });
+  }
+
+  if (bugs.length > issues.length * 0.3 && bugs.length > 10) {
+    insights.push({
+      id: "gen-jira-bug-ratio",
+      type: "risk",
+      title: `${Math.round(bugs.length / issues.length * 100)}% of Jira Issues Are Bugs (${bugs.length} total)`,
+      description: `Bug-to-feature ratio is high. This may indicate quality issues or technical debt. Consider a bug bash or dedicated stability sprint.`,
+      confidence: 0.85,
+      relatedFeedbackIds: bugs.slice(0, 5).map((j) => j.id),
+      themes: ["quality", "technical-debt"],
+      impact: "medium",
+      createdAt: now,
+    });
+  }
+
+  return insights;
+}
+
 async function generateAIInsights(data: AgentData, geminiKey?: string): Promise<Insight[]> {
   const summaryParts: string[] = [];
-  summaryParts.push(`Data: ${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls.`);
+  summaryParts.push(`Data: ${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} Jira issues.`);
 
   const activeFeatures = data.features.filter((f) => f.status !== "done" && f.status !== "new");
   if (activeFeatures.length > 0) {
@@ -374,6 +444,11 @@ async function generateAIInsights(data: AgentData, geminiKey?: string): Promise<
 
   if (data.calls.length > 0) {
     summaryParts.push(`\nRecent 5 calls:\n${data.calls.slice(0, 5).map((c) => `- ${c.title} (${c.date}) — ${c.summary.slice(0, 120)}`).join("\n")}`);
+  }
+
+  if (data.jiraIssues.length > 0) {
+    const highPri = data.jiraIssues.filter((j) => j.priority.toLowerCase().includes("high") || j.priority.toLowerCase().includes("critical"));
+    summaryParts.push(`\nJira (${data.jiraIssues.length} issues, ${highPri.length} high/critical):\n${data.jiraIssues.slice(0, 10).map((j) => `- ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}]`).join("\n")}`);
   }
 
   const prompt = `Analyze this customer feedback data and generate 3-5 actionable insights. Focus on real product trends, risks, and opportunities — NOT ratings/stars/review scores.

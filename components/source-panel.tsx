@@ -12,6 +12,8 @@ import {
   FeedbackItem,
   ProductboardFeature,
   AttentionCall,
+  JiraIssue,
+  ConfluencePage,
   DataSourceStatus,
 } from "@/lib/types";
 import {
@@ -57,6 +59,8 @@ type DetailView =
   | { type: "feedback"; data: FeedbackItem }
   | { type: "feature"; data: ProductboardFeature }
   | { type: "call"; data: AttentionCall }
+  | { type: "jira"; data: JiraIssue }
+  | { type: "confluence"; data: ConfluencePage }
   | null;
 
 export function SourcePanel({
@@ -67,7 +71,7 @@ export function SourcePanel({
   const { keys, status, useDemoData, keyHeaders } = useApiKeys();
 
   const [activeTab, setActiveTab] = useState<
-    "sources" | "feedback" | "features" | "calls"
+    "sources" | "feedback" | "features" | "calls" | "jira" | "confluence"
   >("sources");
   const [detail, setDetail] = useState<DetailView>(null);
   const [loading, setLoading] = useState(false);
@@ -76,6 +80,8 @@ export function SourcePanel({
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [features, setFeatures] = useState<ProductboardFeature[]>([]);
   const [calls, setCalls] = useState<AttentionCall[]>([]);
+  const [jiraIssues, setJiraIssues] = useState<JiraIssue[]>([]);
+  const [confluencePages, setConfluencePages] = useState<ConfluencePage[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceStatus[]>([]);
   const [dataIsDemo, setDataIsDemo] = useState(true);
 
@@ -85,17 +91,21 @@ export function SourcePanel({
       const demoHeader = useDemoData ? "true" : "false";
       const headers = { ...keyHeaders, "x-use-demo": demoHeader };
 
-      const [pbRes, attRes] = await Promise.all([
+      const fetches = [
         fetch("/api/sources/productboard", { headers }).then((r) => r.json()),
         fetch("/api/sources/attention", { headers }).then((r) => r.json()),
-      ]);
+        fetch("/api/sources/atlassian", { headers }).then((r) => r.json()).catch(() => ({ connected: false, jiraIssues: [], confluencePages: [] })),
+      ];
+      const [pbRes, attRes, atlRes] = await Promise.all(fetches);
 
       const newFeatures: ProductboardFeature[] = pbRes.features || [];
       const newFeedback: FeedbackItem[] = pbRes.notes || [];
       const newCalls: AttentionCall[] = attRes.calls || [];
+      const newJira: JiraIssue[] = atlRes.jiraIssues || [];
+      const newConfluence: ConfluencePage[] = atlRes.confluencePages || [];
       const isDemo = pbRes.featuresIsDemo || attRes.callsIsDemo;
 
-      if (useDemoData && isDemo) {
+      if (useDemoData && isDemo && !atlRes.connected) {
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
@@ -104,32 +114,23 @@ export function SourcePanel({
         setFeatures(newFeatures);
         setCalls(newCalls);
       }
-
-      setDataIsDemo(isDemo && useDemoData);
+      setJiraIssues(newJira);
+      setConfluencePages(newConfluence);
+      setDataIsDemo(isDemo && useDemoData && !atlRes.connected);
 
       const sources: DataSourceStatus[] = [];
       if (status.productboardKey.configured) {
-        sources.push({
-          name: "Productboard",
-          source: "productboard",
-          connected: pbRes.connected,
-          lastSync: pbRes.connected ? "just now" : undefined,
-          itemCount: newFeatures.length + newFeedback.length,
-          icon: "clipboard-list",
-        });
+        sources.push({ name: "Productboard", source: "productboard", connected: pbRes.connected, lastSync: pbRes.connected ? "just now" : undefined, itemCount: newFeatures.length + newFeedback.length, icon: "clipboard-list" });
       }
       if (status.attentionKey.configured) {
-        sources.push({
-          name: "Attention",
-          source: "attention",
-          connected: attRes.connected,
-          lastSync: attRes.connected ? "just now" : undefined,
-          itemCount: newCalls.length,
-          icon: "phone",
-        });
+        sources.push({ name: "Attention", source: "attention", connected: attRes.connected, lastSync: attRes.connected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
+      }
+      if (status.atlassianKey?.configured || atlRes.connected) {
+        sources.push({ name: "Jira", source: "jira", connected: atlRes.connected, lastSync: atlRes.connected ? "just now" : undefined, itemCount: newJira.length, icon: "clipboard-list" });
+        sources.push({ name: "Confluence", source: "confluence", connected: atlRes.connected, lastSync: atlRes.connected ? "just now" : undefined, itemCount: newConfluence.length, icon: "clipboard-list" });
       }
 
-      if (useDemoData && isDemo) {
+      if (useDemoData && isDemo && sources.length === 0) {
         setDataSources(DEMO_DATA_SOURCES);
       } else if (sources.length > 0) {
         setDataSources(sources);
@@ -189,7 +190,31 @@ export function SourcePanel({
     );
   }, [calls, sq]);
 
-  const totalItems = feedback.length + features.length + calls.length;
+  const filteredJira = useMemo(() => {
+    if (!sq) return jiraIssues;
+    return jiraIssues.filter(
+      (j) =>
+        j.key.toLowerCase().includes(sq) ||
+        j.summary.toLowerCase().includes(sq) ||
+        j.status.toLowerCase().includes(sq) ||
+        j.issueType.toLowerCase().includes(sq) ||
+        j.project.toLowerCase().includes(sq) ||
+        j.assignee.toLowerCase().includes(sq) ||
+        j.labels.some((l) => l.toLowerCase().includes(sq))
+    );
+  }, [jiraIssues, sq]);
+
+  const filteredConfluence = useMemo(() => {
+    if (!sq) return confluencePages;
+    return confluencePages.filter(
+      (p) =>
+        p.title.toLowerCase().includes(sq) ||
+        p.excerpt.toLowerCase().includes(sq) ||
+        p.space.toLowerCase().includes(sq)
+    );
+  }, [confluencePages, sq]);
+
+  const totalItems = feedback.length + features.length + calls.length + jiraIssues.length + confluencePages.length;
 
   const sentimentIcon = (s: string) => {
     if (s === "positive")
@@ -220,14 +245,16 @@ export function SourcePanel({
             </span>
           </div>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           {(
             [
-              { key: "sources", label: "Connected" },
-              { key: "feedback", label: `Feedback (${feedback.length})` },
-              { key: "features", label: `Features (${features.length})` },
-              { key: "calls", label: `Calls (${calls.length})` },
-            ] as const
+              { key: "sources" as const, label: "Sources" },
+              { key: "feedback" as const, label: `Feedback (${feedback.length})` },
+              { key: "features" as const, label: `Features (${features.length})` },
+              ...(calls.length > 0 ? [{ key: "calls" as const, label: `Calls (${calls.length})` }] : []),
+              ...(jiraIssues.length > 0 ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
+              ...(confluencePages.length > 0 ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
+            ]
           ).map((tab) => (
             <button
               key={tab.key}
@@ -270,6 +297,8 @@ export function SourcePanel({
               {activeTab === "feedback" && `${filteredFeedback.length} of ${feedback.length} results`}
               {activeTab === "features" && `${filteredFeatures.length} of ${features.length} results`}
               {activeTab === "calls" && `${filteredCalls.length} of ${calls.length} results`}
+              {activeTab === "jira" && `${filteredJira.length} of ${jiraIssues.length} results`}
+              {activeTab === "confluence" && `${filteredConfluence.length} of ${confluencePages.length} results`}
             </p>
           )}
         </div>
@@ -352,11 +381,12 @@ export function SourcePanel({
                     : "Add API keys to connect live data"}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-2 text-[9px]">
+              <div className="flex items-center justify-center gap-2 text-[9px] flex-wrap">
                 {[
                   { label: "Gemini", configured: status.geminiKey.configured },
                   { label: "Productboard", configured: status.productboardKey.configured },
                   { label: "Attention", configured: status.attentionKey.configured },
+                  { label: "Atlassian", configured: status.atlassianKey?.configured },
                 ].map((s) => (
                   <span
                     key={s.label}
@@ -501,6 +531,64 @@ export function SourcePanel({
             )}
           </div>
         )}
+        {!loading && activeTab === "jira" && (
+          <div>
+            {filteredJira.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p className="text-xs mb-1">{sq ? "No matching issues" : "No Jira data"}</p>
+              </div>
+            ) : (
+              filteredJira.map((issue) => (
+                <button key={issue.id} onClick={() => setDetail({ type: "jira", data: issue })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                  <div className="flex items-start gap-2.5">
+                    <div className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
+                      issue.status.toLowerCase().includes("done") && "bg-green-500",
+                      issue.status.toLowerCase().includes("progress") && "bg-blue-500",
+                      !issue.status.toLowerCase().includes("done") && !issue.status.toLowerCase().includes("progress") && "bg-muted-foreground"
+                    )} />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-medium line-clamp-1"><span className="text-muted-foreground">{issue.key}</span> {issue.summary}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        <span>{issue.issueType}</span><span>·</span>
+                        <span>{issue.status}</span><span>·</span>
+                        <span>{issue.priority}</span>
+                        {issue.assignee !== "Unassigned" && <><span>·</span><span>{issue.assignee}</span></>}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        {!loading && activeTab === "confluence" && (
+          <div>
+            {filteredConfluence.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p className="text-xs mb-1">{sq ? "No matching pages" : "No Confluence data"}</p>
+              </div>
+            ) : (
+              filteredConfluence.map((page) => (
+                <button key={page.id} onClick={() => setDetail({ type: "confluence", data: page })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-xs font-medium line-clamp-1">{page.title}</h4>
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                      <span>{page.space}</span><span>·</span>
+                      <span>{page.author}</span>
+                      {page.lastModified && <><span>·</span><span>{new Date(page.lastModified).toLocaleDateString()}</span></>}
+                    </div>
+                    {page.excerpt && <p className="text-[10px] text-muted-foreground line-clamp-2 mt-1">{page.excerpt.slice(0, 120)}</p>}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {detail && (
@@ -603,12 +691,46 @@ export function SourcePanel({
                 )}
               </>
             )}
+            {detail.type === "jira" && (
+              <>
+                <h3 className="text-sm font-semibold"><span className="text-muted-foreground">{detail.data.key}</span> {detail.data.summary}</h3>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                  <span>{detail.data.issueType}</span><span>·</span>
+                  <span>{detail.data.status}</span><span>·</span>
+                  <span>{detail.data.priority}</span><span>·</span>
+                  <span>{detail.data.project}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div><span className="text-muted-foreground">Assignee:</span> {detail.data.assignee}</div>
+                  <div><span className="text-muted-foreground">Reporter:</span> {detail.data.reporter}</div>
+                </div>
+                {detail.data.description && <p className="text-xs text-muted-foreground leading-relaxed">{detail.data.description.slice(0, 500)}</p>}
+                {detail.data.labels.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {detail.data.labels.map((l) => <span key={l} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">{l}</span>)}
+                  </div>
+                )}
+              </>
+            )}
+            {detail.type === "confluence" && (
+              <>
+                <h3 className="text-sm font-semibold">{detail.data.title}</h3>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                  <span>{detail.data.space}</span><span>·</span><span>{detail.data.author}</span>
+                  {detail.data.lastModified && <><span>·</span><span>{new Date(detail.data.lastModified).toLocaleDateString()}</span></>}
+                </div>
+                {detail.data.excerpt && <p className="text-xs text-muted-foreground leading-relaxed">{detail.data.excerpt.slice(0, 800)}</p>}
+                {detail.data.url && <a href={detail.data.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Confluence</a>}
+              </>
+            )}
             {onQuerySource && (
               <button
                 onClick={() => {
                   const title =
                     detail.type === "feedback" ? detail.data.title
                     : detail.type === "feature" ? detail.data.name
+                    : detail.type === "jira" ? `${detail.data.key}: ${detail.data.summary}`
+                    : detail.type === "confluence" ? detail.data.title
                     : detail.data.title;
                   onQuerySource(`Tell me more about: ${title}`);
                   setDetail(null);

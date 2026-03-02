@@ -11,12 +11,17 @@ import {
   ProductboardFeature,
   AttentionCall,
   Insight,
+  JiraIssue,
+  ConfluencePage,
 } from "./types";
 
 export interface AgentKeys {
   geminiKey?: string;
   productboardKey?: string;
   attentionKey?: string;
+  atlassianDomain?: string;
+  atlassianEmail?: string;
+  atlassianToken?: string;
 }
 
 export interface AgentData {
@@ -24,6 +29,8 @@ export interface AgentData {
   features: ProductboardFeature[];
   calls: AttentionCall[];
   insights: Insight[];
+  jiraIssues: JiraIssue[];
+  confluencePages: ConfluencePage[];
 }
 
 function buildStore(data: AgentData): InMemoryVectorStore {
@@ -32,6 +39,8 @@ function buildStore(data: AgentData): InMemoryVectorStore {
   if (data.features.length) store.addFeatures(data.features);
   if (data.calls.length) store.addCalls(data.calls);
   if (data.insights.length) store.addInsights(data.insights);
+  if (data.jiraIssues.length) store.addJiraIssues(data.jiraIssues);
+  if (data.confluencePages.length) store.addConfluencePages(data.confluencePages);
   store.buildIndex();
   return store;
 }
@@ -42,160 +51,139 @@ export function getDemoData(): AgentData {
     features: DEMO_PRODUCTBOARD_FEATURES,
     calls: DEMO_ATTENTION_CALLS,
     insights: DEMO_INSIGHTS,
+    jiraIssues: [],
+    confluencePages: [],
   };
 }
 
 function lookupDetails(ids: string[], data: AgentData): string[] {
   const details: string[] = [];
-
   for (const id of ids) {
     const fb = data.feedback.find((f) => f.id === id);
-    if (fb) {
-      details.push(
-        `[Feedback: ${fb.title}] From ${fb.customer}${fb.company ? ` (${fb.company})` : ""} — ${fb.content.slice(0, 300)}`
-      );
-      continue;
-    }
-
+    if (fb) { details.push(`[Feedback: ${fb.title}] ${fb.customer}${fb.company ? ` (${fb.company})` : ""} — ${fb.content.slice(0, 200)}`); continue; }
     const feat = data.features.find((f) => f.id === id);
-    if (feat) {
-      details.push(
-        `[Feature: ${feat.name}] Status: ${feat.status}, Votes: ${feat.votes} — ${feat.description.slice(0, 300)}`
-      );
-      continue;
-    }
-
+    if (feat) { details.push(`[Feature: ${feat.name}] ${feat.status}, ${feat.votes} votes — ${feat.description.slice(0, 200)}`); continue; }
     const call = data.calls.find((c) => c.id === id);
-    if (call) {
-      details.push(
-        `[Call: ${call.title}] ${call.date} — ${call.summary.slice(0, 300)}`
-      );
-      continue;
-    }
-
+    if (call) { details.push(`[Call: ${call.title}] ${call.date} — ${call.summary.slice(0, 200)}`); continue; }
     const insight = data.insights.find((i) => i.id === id);
-    if (insight) {
-      details.push(
-        `[Insight: ${insight.title}] ${insight.description.slice(0, 300)}`
-      );
-    }
+    if (insight) { details.push(`[Insight: ${insight.title}] ${insight.description.slice(0, 200)}`); continue; }
+    const jira = data.jiraIssues.find((j) => j.id === id);
+    if (jira) { details.push(`[Jira ${jira.key}: ${jira.summary}] ${jira.status}, ${jira.issueType}, assigned: ${jira.assignee}`); continue; }
+    const page = data.confluencePages.find((p) => p.id === id);
+    if (page) { details.push(`[Confluence: ${page.title}] Space: ${page.space} — ${page.excerpt.slice(0, 200)}`); }
   }
-
   return details;
 }
 
-const SYSTEM_PROMPT = `You are an expert Customer Feedback Intelligence Agent for a SaaS company. You have access to:
+const SYSTEM_PROMPT = `You are an expert Customer Feedback Intelligence Agent for a SaaS company.
 
-- Customer feedback from multiple channels (Zendesk, Intercom, Slack, Productboard, Attention, manual)
-- Productboard features with status, votes, and customer requests
-- Attention call recordings with summaries, key moments, and action items
-- Pre-computed insights including trends, risks, and recommendations
+You have access to: customer feedback, Productboard features, Attention calls, Jira tickets, and Confluence pages.
 
-**FORMATTING RULES — follow these strictly for all responses:**
+**CRITICAL FORMATTING RULES — follow these on EVERY response:**
 
-1. **Start with a TL;DR** — 1-2 sentence executive summary at the top
-2. **Use clear section headers** (## and ###) to break up content
-3. **Use tables** for comparisons, account lists, or multi-dimensional data:
-   | Item | Status | Impact |
-   |------|--------|--------|
-4. **Use bullet points** for lists, keep each bullet to 1-2 lines max
-5. **Bold the key numbers and names** so they pop when scanning
-6. **End with a clear "Recommended Actions" section** using numbered steps with owners/timelines when possible
-7. **Keep paragraphs short** — max 2-3 sentences. Prefer structured data over prose.
-8. **Use horizontal rules** (---) to separate major sections for scannability
+1. **Start with a 2-sentence TL;DR** in bold
+2. **Keep total response under 600 words** — be ruthlessly concise
+3. **Use tables** for any list of 3+ items (accounts, issues, features)
+4. **Max 3 section headers** — don't over-segment
+5. **No item-by-item walkthroughs** — synthesize patterns, don't enumerate every data point
+6. **End with 3-5 numbered action items** — each one line with owner and timeline
+7. **Bold key numbers** ($revenue, counts, dates)
 
-When analyzing:
-- Be specific — cite actual feedback items, customer names, companies
-- Quantify impact ($, customer count, risk level)
-- Cross-reference data sources
-- Be proactive — surface related risks and opportunities the user may not have considered`;
+**Analysis approach:**
+- Synthesize themes across data points — don't list each item individually
+- Lead with the "so what" — impact and action, not description
+- Quantify: revenue at risk, customer count, time urgency
+- Cross-reference across sources (feedback → feature → Jira ticket)
+- Be opinionated about priorities`;
 
 function buildContextFromSearch(
   query: string,
   data: AgentData,
   store: InMemoryVectorStore
-): {
-  context: string;
-  sources: { type: string; id: string; title: string }[];
-} {
+): { context: string; sources: { type: string; id: string; title: string }[] } {
   const results = store.search(query, { limit: 15 });
-
   const sources: { type: string; id: string; title: string }[] = [];
   const contextParts: string[] = [];
 
   for (const r of results) {
     const doc = r.document;
     const fullDetails = lookupDetails([doc.id], data);
-    if (fullDetails.length > 0) {
-      contextParts.push(fullDetails[0]);
-    }
+    if (fullDetails.length > 0) contextParts.push(fullDetails[0]);
 
-    let title = "";
-    if (doc.type === "feedback") {
-      title = data.feedback.find((f) => f.id === doc.id)?.title || doc.id;
-    } else if (doc.type === "feature") {
-      title = data.features.find((f) => f.id === doc.id)?.name || doc.id;
-    } else if (doc.type === "call") {
-      title = data.calls.find((c) => c.id === doc.id)?.title || doc.id;
-    } else if (doc.type === "insight") {
-      title = data.insights.find((i) => i.id === doc.id)?.title || doc.id;
-    }
+    let title = doc.id;
+    if (doc.type === "feedback") title = data.feedback.find((f) => f.id === doc.id)?.title || title;
+    else if (doc.type === "feature") title = data.features.find((f) => f.id === doc.id)?.name || title;
+    else if (doc.type === "call") title = data.calls.find((c) => c.id === doc.id)?.title || title;
+    else if (doc.type === "insight") title = data.insights.find((i) => i.id === doc.id)?.title || title;
+    else if (doc.type === "jira") { const j = data.jiraIssues.find((j) => j.id === doc.id); title = j ? `${j.key}: ${j.summary}` : title; }
+    else if (doc.type === "confluence") title = data.confluencePages.find((p) => p.id === doc.id)?.title || title;
 
     sources.push({ type: doc.type, id: doc.id, title });
   }
 
-  return { context: contextParts.join("\n\n"), sources };
+  return { context: contextParts.join("\n"), sources };
 }
 
-function buildFullContext(data: AgentData): string {
-  const { feedback, features, calls, insights } = data;
-  const total = feedback.length + features.length + calls.length + insights.length;
-
-  if (total === 0) {
-    return "No data is currently loaded. The user needs to configure API keys to connect live data sources, or enable demo data to explore the platform.";
-  }
-
+function buildCompactContext(data: AgentData): string {
   const parts: string[] = [];
+  const { feedback, features, calls, insights, jiraIssues, confluencePages } = data;
+  const total = feedback.length + features.length + calls.length + insights.length + jiraIssues.length + confluencePages.length;
+
+  if (total === 0) return "No data loaded. User needs to configure API keys or enable demo data.";
+
+  parts.push(`**Data available:** ${feedback.length} feedback, ${features.length} features, ${calls.length} calls, ${jiraIssues.length} Jira issues, ${confluencePages.length} Confluence pages, ${insights.length} insights\n`);
 
   if (feedback.length > 0) {
-    parts.push(`## Customer Feedback (${feedback.length} items)\n`);
-    for (const fb of feedback) {
-      parts.push(
-        `- **${fb.title}** (${fb.source}, ${fb.sentiment}, ${fb.priority} priority)\n  From: ${fb.customer}${fb.company ? ` @ ${fb.company}` : ""}\n  ${fb.content}\n  Themes: ${fb.themes.join(", ")}`
-      );
+    parts.push(`## Recent Feedback (showing ${Math.min(feedback.length, 30)} of ${feedback.length})`);
+    for (const fb of feedback.slice(0, 30)) {
+      parts.push(`- **${fb.title}** [${fb.source}/${fb.priority}] ${fb.customer}${fb.company ? ` @ ${fb.company}` : ""}: ${fb.content.slice(0, 150)}`);
     }
   }
 
   if (features.length > 0) {
-    parts.push(`\n## Productboard Features (${features.length} items)\n`);
-    for (const f of features) {
-      parts.push(
-        `- **${f.name}** — Status: ${f.status}, Votes: ${f.votes}, Customer Requests: ${f.customerRequests}\n  ${f.description}\n  Themes: ${f.themes.join(", ")}`
-      );
+    const active = features.filter((f) => f.status === "in_progress" || f.status === "planned");
+    const topVoted = [...features].sort((a, b) => b.votes - a.votes).slice(0, 10);
+    parts.push(`\n## Features (${active.length} active of ${features.length} total)`);
+    parts.push("Top by votes:");
+    for (const f of topVoted) {
+      parts.push(`- **${f.name}** — ${f.status}, ${f.votes} votes`);
+    }
+  }
+
+  if (jiraIssues.length > 0) {
+    const byStatus: Record<string, number> = {};
+    const byType: Record<string, number> = {};
+    for (const j of jiraIssues) {
+      byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+      byType[j.issueType] = (byType[j.issueType] || 0) + 1;
+    }
+    parts.push(`\n## Jira (${jiraIssues.length} issues)`);
+    parts.push(`By status: ${Object.entries(byStatus).sort(([,a],[,b]) => b - a).slice(0, 8).map(([s, c]) => `${s}: ${c}`).join(", ")}`);
+    parts.push(`By type: ${Object.entries(byType).sort(([,a],[,b]) => b - a).map(([t, c]) => `${t}: ${c}`).join(", ")}`);
+    parts.push("Recent/important:");
+    for (const j of jiraIssues.slice(0, 15)) {
+      parts.push(`- **${j.key}** ${j.summary} [${j.status}/${j.issueType}/${j.priority}] → ${j.assignee}`);
     }
   }
 
   if (calls.length > 0) {
-    parts.push(`\n## Attention Call Notes (${calls.length} items)\n`);
-    for (const c of calls) {
-      const moments = c.keyMoments.length > 0
-        ? `\n  Key Moments:\n${c.keyMoments.map((m) => `    - [${m.timestamp}] "${m.text}" (${m.sentiment})`).join("\n")}`
-        : "";
-      const actions = c.actionItems.length > 0
-        ? `\n  Action Items: ${c.actionItems.join("; ")}`
-        : "";
-      parts.push(
-        `- **${c.title}** (${c.date}, ${c.duration})\n  Participants: ${c.participants.join(", ")}\n  Summary: ${c.summary}${moments}${actions}\n  Themes: ${c.themes.join(", ")}`
-      );
+    parts.push(`\n## Calls (${calls.length})`);
+    for (const c of calls.slice(0, 5)) {
+      parts.push(`- **${c.title}** (${c.date}) — ${c.summary.slice(0, 120)}`);
+    }
+  }
+
+  if (confluencePages.length > 0) {
+    parts.push(`\n## Confluence (${confluencePages.length} pages)`);
+    for (const p of confluencePages.slice(0, 10)) {
+      parts.push(`- **${p.title}** [${p.space}] — ${p.excerpt.slice(0, 100)}`);
     }
   }
 
   if (insights.length > 0) {
-    parts.push(`\n## Pre-Computed Insights (${insights.length} items)\n`);
-    for (const i of insights) {
-      parts.push(
-        `- **[${i.type.toUpperCase()}] ${i.title}** (Confidence: ${(i.confidence * 100).toFixed(0)}%, Impact: ${i.impact})\n  ${i.description}\n  Themes: ${i.themes.join(", ")}`
-      );
+    parts.push(`\n## Insights (${insights.length})`);
+    for (const i of insights.slice(0, 5)) {
+      parts.push(`- [${i.type}/${i.impact}] **${i.title}**: ${i.description.slice(0, 120)}`);
     }
   }
 
@@ -213,63 +201,45 @@ export async function chat(
 }> {
   const store = buildStore(data);
   const { context: searchContext, sources } = buildContextFromSearch(userMessage, data, store);
-  const fullContext = buildFullContext(data);
-
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length;
+  const compactContext = buildCompactContext(data);
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
 
   const historyText = conversationHistory
-    .slice(-6)
-    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+    .slice(-4)
+    .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content.slice(0, 300)}`)
     .join("\n\n");
 
-  const enrichedPrompt = `Here is the complete customer feedback intelligence database you have access to (${total} total items):
+  const enrichedPrompt = `DATABASE (${total} items):
 
-${fullContext}
-
----
-
-Most relevant items for the current query (ranked by relevance):
-
-${searchContext || "(No matching items found in the current dataset)"}
+${compactContext}
 
 ---
+SEARCH RESULTS for "${userMessage}":
 
-Conversation history:
+${searchContext || "(No exact matches)"}
+
+---
+CONVERSATION:
 ${historyText}
 
 ---
+USER QUESTION: ${userMessage}
 
-User's current question: ${userMessage}
-
-Respond with a well-structured analysis. Start with a TL;DR, use tables for comparisons, bold key metrics, and end with numbered action items. Keep it scannable — an executive should be able to skim the headers and tables to get the picture.`;
+Remember: max 600 words, start with TL;DR, use tables, end with action items.`;
 
   if (isGeminiConfigured(keys.geminiKey)) {
-    const geminiResponse = await generateWithGemini(
-      SYSTEM_PROMPT,
-      enrichedPrompt,
-      keys.geminiKey
-    );
-    if (geminiResponse) {
-      return { response: geminiResponse, sources };
-    }
+    const geminiResponse = await generateWithGemini(SYSTEM_PROMPT, enrichedPrompt, keys.geminiKey);
+    if (geminiResponse) return { response: geminiResponse, sources };
   }
 
   if (total === 0) {
     return {
-      response: `I don't have any data loaded right now. To get started:
-
-1. **Add API keys** in Settings (gear icon in the header) to connect live data sources
-2. **Enable demo data** in Settings to explore the platform with sample data
-
-Once data is available, I can analyze themes, identify risks, surface opportunities, and much more.`,
+      response: `I don't have any data loaded right now. To get started:\n\n1. **Add API keys** in Settings (gear icon) to connect live data\n2. **Enable demo data** in Settings to explore with sample data`,
       sources: [],
     };
   }
 
-  return {
-    response: generateBuiltInResponse(userMessage, searchContext, sources, data),
-    sources,
-  };
+  return { response: generateBuiltInResponse(userMessage, searchContext, sources, data), sources };
 }
 
 function generateBuiltInResponse(
@@ -278,99 +248,23 @@ function generateBuiltInResponse(
   sources: { type: string; id: string; title: string }[],
   data: AgentData
 ): string {
-  const q = query.toLowerCase();
-  const { feedback, features, calls, insights } = data;
-  const total = feedback.length + features.length + calls.length + insights.length;
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
 
-  if (q.includes("churn") || q.includes("risk") || q.includes("at risk")) {
-    return `## Churn Risk Analysis
+  const searchResults = sources.slice(0, 8).map((s) => `| ${s.type} | ${s.title} |`).join("\n");
 
-Based on analysis across all feedback channels (${total} items), here are the accounts showing churn signals:
+  return `**Found ${sources.length} relevant items across ${total} total in your database.**
 
-### Critical Risk Accounts
+| Source | Item |
+|--------|------|
+${searchResults}
 
-**1. GlobalFinance** — $120k ARR (50 seats, potential 500)
-- SSO reliability issues mentioned 3x in the last month
-- However: VP has $600k budget approved for expansion *if* SSO is fixed
-- **Risk Level: High** | **Revenue at stake: $720k** (current + expansion)
-- *Source: Renewal call with Tom Bradley, Zendesk ticket from David Park*
+### Key Context
 
-**2. Acme Corp** — Enterprise Plan
-- Dashboard performance regression causing team to revert to spreadsheets
-- Hard deadline: March 10 board meeting requires working dashboards
-- Positive signal: Planning marketing team expansion if fixed
-- **Risk Level: Critical** | **Timeline: 10 days**
-- *Source: Support escalation call with Sarah Chen*
+${context.slice(0, 1500)}
 
-**3. SecureBank** — Enterprise Plan
-- Compliance data export blocker for SOC 2 audit
-- Q2 renewal at risk if not resolved
-- **Risk Level: High** | **Timeline: Q2 renewal**
-- *Source: Productboard note from Nina Kowalski*
+---
 
-### Recommended Actions
-1. **Immediate**: Performance hotfix for Acme Corp (deadline March 10)
-2. **This sprint**: SSO reliability fix (unlocks $600k GlobalFinance expansion)
-3. **This quarter**: Ship RBAC and compliance export (unblocks enterprise pipeline)
-
-> *Analysis based on ${sources.length} data sources across Zendesk, Attention calls, Productboard, and internal notes.*
-
-> *Tip: Connect your Gemini API key for deeper, AI-powered analysis of your ${total} items.*`;
-  }
-
-  if (q.includes("summary") || q.includes("overview") || q.includes("brief") || q.includes("what's happening") || q.includes("status")) {
-    return `## Executive Feedback Intelligence Brief
-
-### Pulse Check
-**${feedback.length} feedback items** | **${features.length} features** | **${calls.length} calls** | **${insights.length} insights**
-
-### Top Priorities
-
-**1. SSO Reliability Fix** — Critical
-- Revenue at risk: **$720k** (GlobalFinance current + expansion)
-- Status: In progress on Productboard
-
-**2. Dashboard Performance Hotfix** — Critical
-- Account at risk: Acme Corp (Enterprise)
-- Hard deadline: **March 10** (board meeting)
-
-**3. AI Feature Gap** — Strategic
-- Revenue lost: **~$255k** in competitive deals this month
-- Status: Planned on Productboard (#1 voted feature)
-
-### Key Opportunities
-- **GlobalFinance expansion**: 50 → 500 seats ($600k) if SSO + admin tools shipped
-- **RBAC upsell**: MidMarket Solutions willing to upgrade Pro → Enterprise
-- **AI differentiation**: Addressing the #1 competitive objection
-
-> *Generated from ${total} total items.*
-
-> *Tip: Connect your Gemini API key for deeper, AI-powered analysis.*`;
-  }
-
-  const searchResults = sources.slice(0, 8);
-  const resultsList = searchResults
-    .map((s) => `- **[${s.type}]** ${s.title}`)
-    .join("\n");
-
-  return `## Search Results for: "${query}"
-
-I found **${sources.length} relevant items** across your feedback intelligence database (${total} total items):
-
-${resultsList}
-
-### Analysis
-Based on the matching data:
-
-${context.slice(0, 2000)}
-
-### Want to go deeper?
-Try asking me about:
-- "What's the churn risk across our Enterprise accounts?"
-- "Give me an executive summary of the last 2 weeks"
-- "What are customers saying about [specific feature]?"
-
-> *Tip: Connect your Gemini API key in Settings for deeper, AI-powered analysis of your ${total} items.*`;
+**Next steps:** Connect your Gemini API key in Settings for deeper AI-powered analysis, or try more specific queries like "What Jira tickets are blocking?" or "Summarize recent customer churn signals."`;
 }
 
 export function getInsights(useDemoData = true): Insight[] {
@@ -385,26 +279,18 @@ export function searchFeedback(
   const store = buildStore(data);
   const results = store.search(query, {
     limit: options?.limit || 10,
-    type: options?.type as "feedback" | "feature" | "call" | "insight" | undefined,
+    type: options?.type as "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | undefined,
   });
 
   return results.map((r) => {
     let title = r.document.id;
-    if (r.document.type === "feedback") {
-      title = data.feedback.find((f) => f.id === r.document.id)?.title || title;
-    } else if (r.document.type === "feature") {
-      title = data.features.find((f) => f.id === r.document.id)?.name || title;
-    } else if (r.document.type === "call") {
-      title = data.calls.find((c) => c.id === r.document.id)?.title || title;
-    } else if (r.document.type === "insight") {
-      title = data.insights.find((i) => i.id === r.document.id)?.title || title;
-    }
+    if (r.document.type === "feedback") title = data.feedback.find((f) => f.id === r.document.id)?.title || title;
+    else if (r.document.type === "feature") title = data.features.find((f) => f.id === r.document.id)?.name || title;
+    else if (r.document.type === "call") title = data.calls.find((c) => c.id === r.document.id)?.title || title;
+    else if (r.document.type === "insight") title = data.insights.find((i) => i.id === r.document.id)?.title || title;
+    else if (r.document.type === "jira") { const j = data.jiraIssues.find((j) => j.id === r.document.id); title = j ? `${j.key}: ${j.summary}` : title; }
+    else if (r.document.type === "confluence") title = data.confluencePages.find((p) => p.id === r.document.id)?.title || title;
 
-    return {
-      type: r.document.type,
-      id: r.document.id,
-      title,
-      score: r.score,
-    };
+    return { type: r.document.type, id: r.document.id, title, score: r.score };
   });
 }
