@@ -1,87 +1,107 @@
-# n8n-nodes-blumira
+# Customer Feedback Intelligence Agent
 
-Community node for the Blumira Public API in n8n.
+An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard, Attention, Zendesk, Intercom, and Slack — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation).
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Next.js Frontend                      │
+│  ┌──────────┐  ┌────────────────┐  ┌──────────────────┐ │
+│  │  Source   │  │  Chat Agent    │  │  Insights Panel  │ │
+│  │  Panel    │  │  Interface     │  │  (Live Analysis) │ │
+│  └──────────┘  └────────────────┘  └──────────────────┘ │
+├─────────────────────────────────────────────────────────┤
+│                    API Layer                              │
+│  /api/chat  ·  /api/insights  ·  /api/sources/*         │
+├─────────────────────────────────────────────────────────┤
+│                Intelligence Layer                        │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────────────┐  │
+│  │ TF-IDF Vector│  │  Gemini   │  │  Built-in Agent  │  │
+│  │ Store (RAG)  │  │  LLM API  │  │  (Fallback)      │  │
+│  └──────────────┘  └───────────┘  └──────────────────┘  │
+├─────────────────────────────────────────────────────────┤
+│              Data Source Integrations                     │
+│  Productboard API  ·  Attention API  ·  Demo Data       │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Features
 
-- Health checks for the Blumira API
-- MSP account listing and details
-- MSP account findings, comments, agent devices, and agent keys
-- MSP account user listing (for retrieving sender/owner UUIDs)
-- Organization findings, comments, details, agent devices, and agent keys
-- Organization user listing
-- Resolution options lookup
-- Add comments to findings (MSP and Org)
-- Assign owners to findings (MSP and Org)
-- Resolve findings with configurable resolution types (MSP and Org)
+- **Three-Panel Layout**: Data sources (left), chat agent (center), live insights (right)
+- **RAG Agent**: TF-IDF vector store indexes all feedback, features, calls, and insights for semantic search
+- **Gemini Integration**: Connect your Gemini API key for deep, nuanced AI analysis; falls back to rich built-in intelligence
+- **Productboard Integration**: Pull features and notes directly from the Productboard API
+- **Attention Integration**: Pull call recordings, summaries, and action items from Attention
+- **Rich Demo Data**: 12 feedback items, 8 Productboard features, 4 Attention calls, 6 pre-computed insights — all ready to explore without any API keys
+- **Cross-Source Intelligence**: Links feedback to features to calls — surfaces revenue impact, churn risk, and competitive signals
+- **v0-Ready**: Built with Next.js 14 + Tailwind + shadcn-style components, designed to run in Vercel's v0
 
-## Installation
+## Quick Start
 
-Follow the [community node installation guide](https://docs.n8n.io/integrations/community-nodes/installation/).
+```bash
+npm install
+npm run dev
+```
 
-1. Install via npm in the same environment as n8n.
+Open [http://localhost:3000](http://localhost:3000). The app works immediately with demo data — no API keys required.
 
-   npm install n8n-nodes-blumira
+## Environment Variables
 
-2. Restart n8n.
+Copy `.env.example` to `.env.local` and add your keys:
 
-## Credentials
+```bash
+cp .env.example .env.local
+```
 
-Create a `Blumira API` credential with the following field:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GEMINI_API_KEY` | Optional | Enables Gemini-powered AI responses (falls back to built-in intelligence) |
+| `PRODUCTBOARD_API_TOKEN` | Optional | Pulls live features/notes from Productboard (falls back to demo data) |
+| `ATTENTION_API_KEY` | Optional | Pulls live call data from Attention (falls back to demo data) |
 
-- `Access Token`: JWT access token for Bearer authentication.
+## Deploying to v0 / Vercel
 
-## Resources and operations
+This project is structured as a standard Next.js 14 app and can be deployed directly:
 
-- Account (MSP)
-  - Get
-  - Get Many
-  - Get Findings
-  - Get Findings (All Accounts)
-  - Get Finding
-  - Get Finding Comments
-  - Add Finding Comment (POST)
-  - Assign Finding Owners (POST)
-  - Resolve Finding (POST)
-  - Get Agent Devices
-  - Get Agent Device
-  - Get Agent Keys
-  - Get Agent Key
-  - Get Users
-- Agent Device (Org)
-  - Get
-  - Get Many
-- Agent Key (Org)
-  - Get
-  - Get Many
-- Finding (Org)
-  - Get
-  - Get Many
-  - Get Comments
-  - Get Details
-  - Add Comment (POST)
-  - Assign Owners (POST)
-  - Resolve (POST)
-- Health
-  - Get
-- Resolution
-  - Get Many
-- User (Org)
-  - Get Many
+1. Push to GitHub
+2. Import into Vercel (or paste components into v0)
+3. Add environment variables in the Vercel dashboard
+4. Deploy
 
-## Compatibility
+## Try These Queries
 
-- Uses n8n nodes API version 1.
-- Requires the same Node.js version supported by your n8n instance.
+Once the app is running, try asking the agent:
 
-## Resources
+- "What accounts are at risk of churning?"
+- "Give me an executive summary of all feedback"
+- "What's happening with SSO — who's affected and what's the revenue impact?"
+- "Tell me about the AI competitive gap"
+- "How should we prioritize the next sprint?"
 
-- [Blumira Public API](https://api.blumira.com/public-api/v1/ui/)
-- [n8n community nodes documentation](https://docs.n8n.io/integrations/community-nodes/)
-- [npm package](https://www.npmjs.com/package/n8n-nodes-blumira)
-- [GitHub mirror](https://github.com/mkellar-blumira/n8n-nodes-blumira)
+## Project Structure
 
-## Development
-
-- Build: `npm run build`
-- Lint: `npm run lint`
+```
+├── app/
+│   ├── api/
+│   │   ├── chat/route.ts              # Chat endpoint (agent + RAG)
+│   │   ├── insights/route.ts          # Pre-computed insights
+│   │   └── sources/                   # Productboard & Attention APIs
+│   ├── layout.tsx
+│   ├── page.tsx                       # Three-panel layout
+│   └── globals.css                    # Tailwind + dark theme
+├── components/
+│   ├── chat-interface.tsx             # Full chat UX with suggestions
+│   ├── insights-panel.tsx             # Live insights with filtering
+│   └── source-panel.tsx               # Data sources browser
+├── lib/
+│   ├── agent.ts                       # Core agent logic + built-in responses
+│   ├── attention.ts                   # Attention API client
+│   ├── demo-data.ts                   # Rich demo dataset
+│   ├── gemini.ts                      # Gemini API client
+│   ├── productboard.ts               # Productboard API client
+│   ├── types.ts                       # TypeScript types
+│   ├── utils.ts                       # Tailwind utilities
+│   └── vector-store.ts               # In-memory TF-IDF vector store
+└── .env.example
+```

@@ -1,0 +1,46 @@
+import { AttentionCall } from "./types";
+import { DEMO_ATTENTION_CALLS } from "./demo-data";
+
+const API_BASE = "https://api.attention.tech/v1";
+
+async function attentionFetch(path: string) {
+  const key = process.env.ATTENTION_API_KEY;
+  if (!key) return null;
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    console.error(`Attention API error: ${res.status} ${res.statusText}`);
+    return null;
+  }
+  return res.json();
+}
+
+export async function getCalls(): Promise<AttentionCall[]> {
+  const data = await attentionFetch("/conversations");
+
+  if (!data) return DEMO_ATTENTION_CALLS;
+
+  return (data.conversations || []).map(
+    (c: Record<string, unknown>) => ({
+      id: c.id as string,
+      title: (c.title as string) || "Untitled Call",
+      date: (c.date as string) || new Date().toISOString(),
+      duration: (c.duration as string) || "Unknown",
+      participants: (c.participants as string[]) || [],
+      summary: (c.summary as string) || "",
+      keyMoments: [],
+      actionItems: (c.action_items as string[]) || [],
+      themes: [],
+    })
+  );
+}
+
+export function isAttentionConfigured(): boolean {
+  return !!process.env.ATTENTION_API_KEY;
+}
