@@ -2,12 +2,11 @@ import { ProductboardFeature, FeedbackItem } from "./types";
 import { DEMO_PRODUCTBOARD_FEATURES, DEMO_FEEDBACK } from "./demo-data";
 
 const API_BASE = "https://api.productboard.com";
+const MAX_ITEMS = 1000;
+const PAGE_SIZE = 100;
 
-async function pbFetch(path: string, overrideKey?: string) {
-  const token = overrideKey || process.env.PRODUCTBOARD_API_TOKEN;
-  if (!token) return null;
-
-  const res = await fetch(`${API_BASE}${path}`, {
+async function pbFetchPage(url: string, token: string) {
+  const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       "X-Version": "1",
@@ -22,13 +21,40 @@ async function pbFetch(path: string, overrideKey?: string) {
   return res.json();
 }
 
+async function pbFetchAll(path: string, overrideKey?: string): Promise<Record<string, unknown>[] | null> {
+  const token = overrideKey || process.env.PRODUCTBOARD_API_TOKEN;
+  if (!token) return null;
+
+  const allItems: Record<string, unknown>[] = [];
+  let url = `${API_BASE}${path}?pageLimit=${PAGE_SIZE}`;
+
+  while (url && allItems.length < MAX_ITEMS) {
+    const page = await pbFetchPage(url, token);
+    if (!page) return allItems.length > 0 ? allItems : null;
+
+    const items = page.data || [];
+    allItems.push(...items);
+
+    const nextLink = page.links?.next;
+    if (nextLink && items.length === PAGE_SIZE && allItems.length < MAX_ITEMS) {
+      url = typeof nextLink === "string" && nextLink.startsWith("http")
+        ? nextLink
+        : `${API_BASE}${nextLink}`;
+    } else {
+      break;
+    }
+  }
+
+  return allItems;
+}
+
 export async function getFeatures(
   overrideKey?: string,
   useDemoFallback = true
 ): Promise<{ data: ProductboardFeature[]; isDemo: boolean }> {
-  const data = await pbFetch("/features", overrideKey);
+  const items = await pbFetchAll("/features", overrideKey);
 
-  if (!data) {
+  if (!items) {
     return {
       data: useDemoFallback ? DEMO_PRODUCTBOARD_FEATURES : [],
       isDemo: useDemoFallback && DEMO_PRODUCTBOARD_FEATURES.length > 0,
@@ -36,7 +62,7 @@ export async function getFeatures(
   }
 
   return {
-    data: (data.data || []).map((f: Record<string, unknown>) => ({
+    data: items.map((f) => ({
       id: f.id as string,
       name: (f.name as string) || "Untitled Feature",
       description: (f.description as string) || "",
@@ -53,9 +79,9 @@ export async function getNotes(
   overrideKey?: string,
   useDemoFallback = true
 ): Promise<{ data: FeedbackItem[]; isDemo: boolean }> {
-  const data = await pbFetch("/notes", overrideKey);
+  const items = await pbFetchAll("/notes", overrideKey);
 
-  if (!data) {
+  if (!items) {
     const demoNotes = DEMO_FEEDBACK.filter((f) => f.source === "productboard");
     return {
       data: useDemoFallback ? demoNotes : [],
@@ -64,7 +90,7 @@ export async function getNotes(
   }
 
   return {
-    data: (data.data || []).map((n: Record<string, unknown>) => ({
+    data: items.map((n) => ({
       id: n.id as string,
       source: "productboard" as const,
       title: (n.title as string) || "Untitled Note",
