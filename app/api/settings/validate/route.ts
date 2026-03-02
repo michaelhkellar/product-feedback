@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       }
       try {
         const genAI = new GoogleGenerativeAI(key);
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-3.0-flash" });
         await model.generateContent("Say OK");
         return NextResponse.json({ valid: true });
       } catch (err: unknown) {
