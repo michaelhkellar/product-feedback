@@ -34,29 +34,26 @@ function basicAuthHeader(auth: AtlassianAuth): string {
 }
 
 async function resolveAuth(auth: AtlassianAuth): Promise<ResolvedAuth> {
-  const cacheKey = `${auth.domain}:${auth.email}:${auth.token.slice(0, 8)}`;
+  const cacheKey = `${auth.domain}:${auth.email.slice(0, 4)}`;
   const cached = resolvedAuthCache.get(cacheKey);
   if (cached) return cached;
+
+  let cloudId: string | null = null;
+  try {
+    const tenantRes = await fetch(`https://${auth.domain}.atlassian.net/_edge/tenant_info`);
+    if (tenantRes.ok) cloudId = ((await tenantRes.json()) as Record<string, string>).cloudId || null;
+  } catch { /* ignore */ }
 
   const classicRes = await fetch(`https://${auth.domain}.atlassian.net/rest/api/3/myself`, {
     headers: { Authorization: basicAuthHeader(auth), Accept: "application/json" },
   }).catch(() => null);
 
   if (classicRes?.ok) {
-    const resolved: ResolvedAuth = { ...auth, cloudId: null, useScoped: false };
+    const resolved: ResolvedAuth = { ...auth, cloudId, useScoped: false };
     resolvedAuthCache.set(cacheKey, resolved);
-    console.log(`Atlassian: using classic auth for ${auth.domain}`);
+    console.log(`Atlassian: classic auth OK for ${auth.domain}`);
     return resolved;
   }
-
-  let cloudId: string | null = null;
-  try {
-    const tenantRes = await fetch(`https://${auth.domain}.atlassian.net/_edge/tenant_info`);
-    if (tenantRes.ok) {
-      const tenant = await tenantRes.json();
-      cloudId = tenant.cloudId || null;
-    }
-  } catch { /* ignore */ }
 
   if (cloudId) {
     const scopedRes = await fetch(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`, {
@@ -66,29 +63,64 @@ async function resolveAuth(auth: AtlassianAuth): Promise<ResolvedAuth> {
     if (scopedRes?.ok) {
       const resolved: ResolvedAuth = { ...auth, cloudId, useScoped: true };
       resolvedAuthCache.set(cacheKey, resolved);
-      console.log(`Atlassian: using scoped auth for ${auth.domain} (cloudId: ${cloudId})`);
+      console.log(`Atlassian: scoped auth OK for ${auth.domain} (cloudId: ${cloudId})`);
       return resolved;
     }
   }
 
   const resolved: ResolvedAuth = { ...auth, cloudId, useScoped: false };
   resolvedAuthCache.set(cacheKey, resolved);
-  console.warn(`Atlassian: auth resolution failed for ${auth.domain}, will attempt classic as fallback`);
   return resolved;
 }
 
-function jiraBaseUrl(auth: ResolvedAuth): string {
-  if (auth.useScoped && auth.cloudId) {
-    return `https://api.atlassian.com/ex/jira/${auth.cloudId}/rest/api/3`;
-  }
+function jiraBase(auth: ResolvedAuth): string {
+  if (auth.useScoped && auth.cloudId) return `https://api.atlassian.com/ex/jira/${auth.cloudId}/rest/api/3`;
   return `https://${auth.domain}.atlassian.net/rest/api/3`;
 }
 
-function confluenceBaseUrl(auth: ResolvedAuth): string {
-  if (auth.useScoped && auth.cloudId) {
-    return `https://api.atlassian.com/ex/confluence/${auth.cloudId}/wiki/rest/api`;
-  }
+function confluenceV2Base(auth: ResolvedAuth): string {
+  if (auth.useScoped && auth.cloudId) return `https://api.atlassian.com/ex/confluence/${auth.cloudId}/wiki/api/v2`;
+  return `https://${auth.domain}.atlassian.net/wiki/api/v2`;
+}
+
+function confluenceV1Base(auth: ResolvedAuth): string {
+  if (auth.useScoped && auth.cloudId) return `https://api.atlassian.com/ex/confluence/${auth.cloudId}/wiki/rest/api`;
   return `https://${auth.domain}.atlassian.net/wiki/rest/api`;
+}
+
+function sanitizeErrorBody(text: string): string {
+  return text
+    .replace(/[A-Za-z0-9+/=]{20,}/g, "[REDACTED]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/Basic\s+\S+/gi, "Basic [REDACTED]")
+    .slice(0, 200);
+}
+
+async function atlFetch(url: string, auth: ResolvedAuth, method = "GET", body?: unknown): Promise<{ data: unknown; error: string | null }> {
+  try {
+    const opts: RequestInit = {
+      method,
+      headers: {
+        Authorization: basicAuthHeader(auth),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      const rawText = await res.text().catch(() => "");
+      const safeText = sanitizeErrorBody(rawText);
+      let hint = "";
+      if (res.status === 401 || res.status === 403) hint = " — Check token permissions/scopes.";
+      if (res.status === 410) hint = " — Endpoint deprecated.";
+      const msg = `${res.status} ${res.statusText}${hint}${safeText ? ` — ${safeText}` : ""}`;
+      return { data: null, error: msg };
+    }
+    return { data: await res.json(), error: null };
+  } catch (err) {
+    return { data: null, error: err instanceof Error ? err.message : "Connection failed" };
+  }
 }
 
 function parseFilterList(filter: string | undefined): string[] {
@@ -107,60 +139,78 @@ function buildJiraJql(projectFilter: string | undefined): string {
   return `project IN (${quoted.join(", ")}) ORDER BY updated DESC`;
 }
 
-async function atlFetch(url: string, auth: ResolvedAuth): Promise<{ data: unknown; error: string | null }> {
-  try {
-    const res = await fetch(url, {
-      headers: {
-        Authorization: basicAuthHeader(auth),
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let hint = "";
-      if (res.status === 401 || res.status === 403) {
-        hint = auth.useScoped
-          ? " — Scoped token may be missing required scopes (read:jira-work, read:confluence-content.all)"
-          : " — Check that your email and API token are correct. If using a scoped token, ensure it has read permissions.";
-      }
-      const msg = `${res.status} ${res.statusText}${hint}${body ? ` — ${body.slice(0, 150)}` : ""}`;
-      console.error(`Atlassian API error: ${msg} for ${url}`);
-      return { data: null, error: msg };
-    }
-    return { data: await res.json(), error: null };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Connection failed";
-    console.error(`Atlassian fetch error: ${msg} for ${url}`);
-    return { data: null, error: msg };
+export async function getJiraProjects(
+  overrideDomain?: string, overrideEmail?: string, overrideToken?: string
+): Promise<{ key: string; name: string }[]> {
+  const rawAuth = getAuth(overrideDomain, overrideEmail, overrideToken);
+  if (!rawAuth) return [];
+  const auth = await resolveAuth(rawAuth);
+  const { data, error } = await atlFetch(`${jiraBase(auth)}/project/search?maxResults=200&orderBy=name`, auth);
+  if (error || !data) return [];
+  const result = data as Record<string, unknown>;
+  const values = (result.values || result) as Record<string, unknown>[];
+  if (!Array.isArray(values)) return [];
+  return values.map((p) => ({ key: (p.key as string) || "", name: (p.name as string) || "" })).filter((p) => p.key);
+}
+
+export async function getConfluenceSpaces(
+  overrideDomain?: string, overrideEmail?: string, overrideToken?: string
+): Promise<{ key: string; name: string }[]> {
+  const rawAuth = getAuth(overrideDomain, overrideEmail, overrideToken);
+  if (!rawAuth) return [];
+  const auth = await resolveAuth(rawAuth);
+
+  const { data, error } = await atlFetch(`${confluenceV2Base(auth)}/spaces?limit=200&sort=name`, auth);
+  if (!error && data) {
+    const result = data as Record<string, unknown>;
+    const results = (result.results || []) as Record<string, unknown>[];
+    return results.map((s) => ({ key: (s.key as string) || "", name: (s.name as string) || "" })).filter((s) => s.key);
   }
+
+  const { data: v1Data } = await atlFetch(`${confluenceV1Base(auth)}/space?limit=200`, auth);
+  if (v1Data) {
+    const results = ((v1Data as Record<string, unknown>).results || []) as Record<string, unknown>[];
+    return results.map((s) => ({ key: (s.key as string) || "", name: (s.name as string) || "" })).filter((s) => s.key);
+  }
+
+  return [];
 }
 
 export async function getJiraIssues(
-  overrideDomain?: string,
-  overrideEmail?: string,
-  overrideToken?: string,
-  projectFilter?: string
+  overrideDomain?: string, overrideEmail?: string, overrideToken?: string, projectFilter?: string
 ): Promise<{ data: JiraIssue[]; isDemo: boolean; error?: string }> {
   const rawAuth = getAuth(overrideDomain, overrideEmail, overrideToken);
   if (!rawAuth) return { data: [], isDemo: false };
 
   const auth = await resolveAuth(rawAuth);
-  const base = jiraBaseUrl(auth);
+  const base = jiraBase(auth);
   const allIssues: JiraIssue[] = [];
   let startAt = 0;
-  const jql = encodeURIComponent(buildJiraJql(projectFilter));
+  const jqlStr = buildJiraJql(projectFilter);
   let lastError: string | null = null;
+  const fields = ["summary", "description", "status", "issuetype", "priority", "assignee", "reporter", "labels", "created", "updated", "project", "resolution"];
 
   while (allIssues.length < MAX_RESULTS) {
-    const { data, error } = await atlFetch(
-      `${base}/search?jql=${jql}&maxResults=${PAGE_SIZE}&startAt=${startAt}&fields=summary,description,status,issuetype,priority,assignee,reporter,labels,created,updated,project,resolution`,
-      auth
+    let result: Record<string, unknown> | null = null;
+
+    const { data: postData, error: postError } = await atlFetch(
+      `${base}/search/jql`, auth, "POST",
+      { jql: jqlStr, maxResults: PAGE_SIZE, startAt, fields }
     );
-    if (error) { lastError = error; break; }
-    const result = data as Record<string, unknown>;
-    const issues = result?.issues as Record<string, unknown>[];
-    if (!issues) break;
+    if (!postError && postData) {
+      result = postData as Record<string, unknown>;
+    } else {
+      const jql = encodeURIComponent(jqlStr);
+      const { data: getData, error: getError } = await atlFetch(
+        `${base}/search?jql=${jql}&maxResults=${PAGE_SIZE}&startAt=${startAt}&fields=${fields.join(",")}`, auth
+      );
+      if (getError) { lastError = getError; break; }
+      if (getData) result = getData as Record<string, unknown>;
+    }
+
+    if (!result) break;
+    const issues = result.issues as Record<string, unknown>[];
+    if (!issues || issues.length === 0) break;
 
     for (const issue of issues) {
       const f = (issue.fields || {}) as Record<string, unknown>;
@@ -182,93 +232,115 @@ export async function getJiraIssues(
       });
     }
 
-    const total = result?.total as number;
+    const total = result.total as number;
     if (issues.length < PAGE_SIZE || allIssues.length >= (total || MAX_RESULTS)) break;
     startAt += PAGE_SIZE;
   }
 
-  const mode = auth.useScoped ? "scoped" : "classic";
-  const filterDesc = projectFilter ? ` (filter: ${projectFilter})` : "";
-  console.log(`Jira [${mode}]: fetched ${allIssues.length} issues${filterDesc}${lastError ? ` [error: ${lastError.slice(0, 80)}]` : ""}`);
+  console.log(`Jira [${auth.useScoped ? "scoped" : "classic"}]: ${allIssues.length} issues${projectFilter ? ` (${projectFilter})` : ""}${lastError ? ` [err]` : ""}`);
   return { data: allIssues, isDemo: false, error: lastError || undefined };
 }
 
 export async function getConfluencePages(
-  overrideDomain?: string,
-  overrideEmail?: string,
-  overrideToken?: string,
-  spaceFilter?: string
+  overrideDomain?: string, overrideEmail?: string, overrideToken?: string, spaceFilter?: string
 ): Promise<{ data: ConfluencePage[]; isDemo: boolean; error?: string }> {
   const rawAuth = getAuth(overrideDomain, overrideEmail, overrideToken);
   if (!rawAuth) return { data: [], isDemo: false };
 
   const auth = await resolveAuth(rawAuth);
-  const base = confluenceBaseUrl(auth);
+  const v2Base = confluenceV2Base(auth);
   const spaces = parseFilterList(spaceFilter);
   const allPages: ConfluencePage[] = [];
-  const limit = 50;
   let lastError: string | null = null;
 
-  async function fetchPages(spaceKey?: string) {
-    let start = 0;
-    const spaceParam = spaceKey ? `&spaceKey=${encodeURIComponent(spaceKey.toUpperCase())}` : "";
-    while (allPages.length < 500) {
-      const { data, error } = await atlFetch(
-        `${base}/content?type=page${spaceParam}&orderby=lastmodified desc&limit=${limit}&start=${start}&expand=space,version,body.view`,
-        auth
-      );
-      if (error) {
-        lastError = error;
-        if (spaceKey) {
-          const { data: cqlData } = await atlFetch(
-            `${base}/content/search?cql=${encodeURIComponent(`space.title = "${spaceKey}" ORDER BY lastmodified DESC`)}&limit=${limit}&expand=space,version,body.view`,
-            auth
-          );
-          const results = (cqlData as Record<string, unknown>)?.results as Record<string, unknown>[];
-          if (results) for (const page of results) addPage(allPages, page, auth.domain);
+  let spaceIdMap: Record<string, string> = {};
+  if (spaces.length > 0) {
+    const { data: spacesData } = await atlFetch(`${v2Base}/spaces?limit=200`, auth);
+    if (spacesData) {
+      const results = ((spacesData as Record<string, unknown>).results || []) as Record<string, unknown>[];
+      for (const s of results) {
+        const key = ((s.key as string) || "").toUpperCase();
+        const name = ((s.name as string) || "").toLowerCase();
+        const id = String(s.id || "");
+        if (id) {
+          spaceIdMap[key] = id;
+          spaceIdMap[name] = id;
         }
-        return;
       }
-      const results = (data as Record<string, unknown>)?.results as Record<string, unknown>[];
-      if (!results) break;
-      for (const page of results) addPage(allPages, page, auth.domain);
-      if (results.length < limit) break;
-      start += limit;
     }
   }
 
-  if (spaces.length > 0) {
-    for (const space of spaces) await fetchPages(space);
-  } else {
-    await fetchPages();
+  async function fetchV2Pages(spaceId?: string) {
+    let cursor: string | null = null;
+    const spaceParam = spaceId ? `&space-id=${spaceId}` : "";
+    let page = 0;
+    while (allPages.length < 500 && page < 20) {
+      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const { data, error } = await atlFetch(
+        `${v2Base}/pages?limit=50&sort=-modified-date${spaceParam}${cursorParam}&body-format=storage`,
+        auth
+      );
+      if (error) { lastError = error; return false; }
+      const result = data as Record<string, unknown>;
+      const results = (result.results || []) as Record<string, unknown>[];
+      if (results.length === 0) break;
+
+      for (const p of results) {
+        const bodyObj = p.body as Record<string, unknown> | undefined;
+        const storageObj = bodyObj?.storage as Record<string, unknown> | undefined;
+        const rawBody = (storageObj?.value as string) || "";
+        const excerpt = rawBody.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+        const spaceRef = p.spaceId as string || "";
+        const version = p.version as Record<string, unknown> | undefined;
+
+        allPages.push({
+          id: String(p.id || ""),
+          title: (p.title as string) || "Untitled",
+          excerpt,
+          space: spaceRef,
+          lastModified: (version?.createdAt as string) || (p.createdAt as string) || "",
+          author: ((version?.authorId as string) || ""),
+          url: `https://${auth.domain}.atlassian.net/wiki${((p._links as Record<string, unknown>)?.webui as string) || ""}`,
+        });
+      }
+
+      const links = result._links as Record<string, unknown> | undefined;
+      const nextLink = links?.next as string | undefined;
+      if (nextLink) {
+        const match = nextLink.match(/cursor=([^&]+)/);
+        cursor = match ? decodeURIComponent(match[1]) : null;
+      } else {
+        break;
+      }
+      page++;
+    }
+    return true;
   }
 
-  const mode = auth.useScoped ? "scoped" : "classic";
-  const filterDesc = spaceFilter ? ` (filter: ${spaceFilter})` : "";
-  const errMsg = lastError ? ` [error: ${String(lastError).slice(0, 80)}]` : "";
-  console.log(`Confluence [${mode}]: fetched ${allPages.length} pages${filterDesc}${errMsg}`);
+  if (spaces.length > 0) {
+    for (const space of spaces) {
+      const upper = space.toUpperCase();
+      const lower = space.toLowerCase();
+      const spaceId = spaceIdMap[upper] || spaceIdMap[lower];
+      if (spaceId) {
+        await fetchV2Pages(spaceId);
+      } else {
+        const ok = await fetchV2Pages();
+        if (ok && allPages.length > 0) {
+          const filtered = allPages.filter((p) =>
+            p.space.toUpperCase() === upper || p.space.toLowerCase() === lower
+          );
+          allPages.length = 0;
+          allPages.push(...filtered);
+        }
+      }
+    }
+  } else {
+    await fetchV2Pages();
+  }
+
+  console.log(`Confluence [${auth.useScoped ? "scoped" : "classic"}]: ${allPages.length} pages${spaceFilter ? ` (${spaceFilter})` : ""}${lastError ? ` [err]` : ""}`);
   return { data: allPages, isDemo: false, error: lastError || undefined };
-}
-
-function addPage(allPages: ConfluencePage[], page: Record<string, unknown>, domain: string) {
-  const bodyObj = page.body as Record<string, unknown> | undefined;
-  const viewObj = bodyObj?.view as Record<string, unknown> | undefined;
-  const body = (viewObj?.value as string) || "";
-  const excerpt = body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
-  const space = page.space as Record<string, unknown> | undefined;
-  const version = page.version as Record<string, unknown> | undefined;
-  const links = page._links as Record<string, unknown> | undefined;
-  const by = version?.by as Record<string, unknown> | undefined;
-
-  allPages.push({
-    id: page.id as string,
-    title: (page.title as string) || "Untitled",
-    excerpt,
-    space: (space?.name as string) || (space?.key as string) || "",
-    lastModified: (version?.when as string) || "",
-    author: (by?.displayName as string) || "",
-    url: `https://${domain}.atlassian.net/wiki${(links?.webui as string) || ""}`,
-  });
 }
 
 function extractTextFromADF(adf: unknown): string {
@@ -284,10 +356,6 @@ function extractTextFromADF(adf: unknown): string {
   return text.trim();
 }
 
-export function isAtlassianConfigured(
-  overrideDomain?: string,
-  overrideEmail?: string,
-  overrideToken?: string
-): boolean {
-  return !!getAuth(overrideDomain, overrideEmail, overrideToken);
+export function isAtlassianConfigured(d?: string, e?: string, t?: string): boolean {
+  return !!getAuth(d, e, t);
 }

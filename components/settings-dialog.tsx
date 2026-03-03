@@ -35,10 +35,20 @@ const ATLASSIAN_FILTER_FIELDS: { id: keyof ApiKeyState; label: string; placehold
 
 const ATLASSIAN_FIELDS = [...ATLASSIAN_AUTH_FIELDS, ...ATLASSIAN_FILTER_FIELDS.map((f) => ({ ...f, type: "text" }))];
 
+interface AtlassianResource { key: string; name: string; }
+
+function parseFilterList(filter: string | undefined): string[] {
+  if (!filter) return [];
+  return filter.split(/[,;\n]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const { keys, status, setKey, removeKey, clearAllKeys, useDemoData, setUseDemoData, refreshStatus } = useApiKeys();
   const [fields, setFields] = useState<Record<string, KeyFieldState>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [jiraProjects, setJiraProjects] = useState<AtlassianResource[]>([]);
+  const [confluenceSpaces, setConfluenceSpaces] = useState<AtlassianResource[]>([]);
+  const [loadingResources, setLoadingResources] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -51,12 +61,31 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
       setFields(initial);
       setSaveMessage(null);
+      if (keys.atlassianDomain && keys.atlassianEmail && keys.atlassianToken) {
+        fetchAtlassianResources();
+      }
     }
   }, [open, keys]);
 
   const updateField = useCallback((id: string, updates: Partial<KeyFieldState>) => {
     setFields((prev) => ({ ...prev, [id]: { ...prev[id], ...updates } }));
   }, []);
+
+  async function fetchAtlassianResources(overrideKeys?: Partial<ApiKeyState>) {
+    setLoadingResources(true);
+    try {
+      const testKeys = { ...keys, ...overrideKeys };
+      const res = await fetch("/api/settings/atlassian-resources", {
+        headers: buildKeyHeaders(testKeys),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setJiraProjects(data.projects || []);
+        setConfluenceSpaces(data.spaces || []);
+      }
+    } catch { /* ignore */ }
+    setLoadingResources(false);
+  }
 
   function showSave(msg: string) {
     setSaveMessage(msg);
@@ -83,6 +112,14 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       });
       const data = await res.json();
       updateField(id, { validating: false, valid: data.valid, error: data.valid ? null : data.error || "Validation failed" });
+      if (data.valid && id.startsWith("atlassian")) {
+        const testKeys: Partial<ApiKeyState> = {};
+        for (const af of ATLASSIAN_FIELDS) {
+          const afField = fields[af.id];
+          if (afField) (testKeys as Record<string, string>)[af.id] = afField.value;
+        }
+        fetchAtlassianResources(testKeys);
+      }
     } catch {
       updateField(id, { validating: false, valid: false, error: "Could not reach validation endpoint" });
     }
@@ -256,25 +293,76 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               );
             })}
 
-            <div className="mt-2 p-2.5 rounded-lg bg-muted/30 border border-border space-y-2">
-              <p className="text-[10px] font-medium text-muted-foreground">Scope to specific projects/spaces</p>
-              {ATLASSIAN_FILTER_FIELDS.map((ff) => {
-                const field = fields[ff.id];
-                if (!field) return null;
-                return (
-                  <div key={ff.id} className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground font-medium">{ff.label}</label>
-                    <input
-                      type="text"
-                      value={field.value}
-                      onChange={(e) => updateField(ff.id, { value: e.target.value, dirty: true })}
-                      placeholder={ff.placeholder}
-                      className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
-                    />
-                    <p className="text-[9px] text-muted-foreground">{ff.help}</p>
+            <div className="mt-2 p-2.5 rounded-lg bg-muted/30 border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-medium text-muted-foreground">Scope to specific projects/spaces</p>
+                {loadingResources && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-muted-foreground font-medium">Jira Projects</label>
+                {jiraProjects.length > 0 ? (
+                  <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-card p-1.5 space-y-0.5">
+                    {jiraProjects.map((p) => {
+                      const selected = parseFilterList(fields.atlassianJiraFilter?.value).map((s) => s.toUpperCase()).includes(p.key.toUpperCase());
+                      return (
+                        <label key={p.key} className={cn("flex items-center gap-2 px-2 py-1 rounded text-xs cursor-pointer hover:bg-accent/50 transition-colors", selected && "bg-primary/10")}>
+                          <input type="checkbox" checked={selected} onChange={() => {
+                            const current = parseFilterList(fields.atlassianJiraFilter?.value);
+                            const upper = current.map((s) => s.toUpperCase());
+                            const next = selected
+                              ? current.filter((s) => s.toUpperCase() !== p.key.toUpperCase())
+                              : [...current, p.key];
+                            updateField("atlassianJiraFilter", { value: next.join(", "), dirty: true });
+                          }} className="rounded" />
+                          <span className="font-mono text-[10px] text-muted-foreground">{p.key}</span>
+                          <span className="truncate">{p.name}</span>
+                        </label>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ) : (
+                  <input type="text" value={fields.atlassianJiraFilter?.value || ""}
+                    onChange={(e) => updateField("atlassianJiraFilter", { value: e.target.value, dirty: true })}
+                    placeholder="PROD, ENG, SUP (or connect to see projects)"
+                    className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                )}
+                <p className="text-[9px] text-muted-foreground">
+                  {fields.atlassianJiraFilter?.value ? `Selected: ${fields.atlassianJiraFilter.value}` : "Leave blank for all projects"}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-muted-foreground font-medium">Confluence Spaces</label>
+                {confluenceSpaces.length > 0 ? (
+                  <div className="max-h-32 overflow-y-auto rounded-lg border border-border bg-card p-1.5 space-y-0.5">
+                    {confluenceSpaces.map((s) => {
+                      const selected = parseFilterList(fields.atlassianConfluenceFilter?.value).map((f) => f.toUpperCase()).includes(s.key.toUpperCase());
+                      return (
+                        <label key={s.key} className={cn("flex items-center gap-2 px-2 py-1 rounded text-xs cursor-pointer hover:bg-accent/50 transition-colors", selected && "bg-primary/10")}>
+                          <input type="checkbox" checked={selected} onChange={() => {
+                            const current = parseFilterList(fields.atlassianConfluenceFilter?.value);
+                            const next = selected
+                              ? current.filter((f) => f.toUpperCase() !== s.key.toUpperCase())
+                              : [...current, s.key];
+                            updateField("atlassianConfluenceFilter", { value: next.join(", "), dirty: true });
+                          }} className="rounded" />
+                          <span className="font-mono text-[10px] text-muted-foreground">{s.key}</span>
+                          <span className="truncate">{s.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <input type="text" value={fields.atlassianConfluenceFilter?.value || ""}
+                    onChange={(e) => updateField("atlassianConfluenceFilter", { value: e.target.value, dirty: true })}
+                    placeholder="PROD, ENG, KB (or connect to see spaces)"
+                    className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+                )}
+                <p className="text-[9px] text-muted-foreground">
+                  {fields.atlassianConfluenceFilter?.value ? `Selected: ${fields.atlassianConfluenceFilter.value}` : "Leave blank for all spaces"}
+                </p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={handleSaveAtlassian} disabled={!atlDirty && atlConfigured}

@@ -127,8 +127,8 @@ export function SourcePanel({
         sources.push({ name: "Attention", source: "attention", connected: attRes.connected, lastSync: attRes.connected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
       }
       if (status.atlassianKey?.configured || atlConnected) {
-        const jiraStatus = atlRes.jiraError ? `Error: ${atlRes.jiraError.slice(0, 60)}` : atlConnected ? "just now" : undefined;
-        const confStatus = atlRes.confluenceError ? `Error: ${atlRes.confluenceError.slice(0, 60)}` : atlConnected ? "just now" : undefined;
+        const jiraStatus = atlRes.jiraError ? `Error: ${String(atlRes.jiraError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
+        const confStatus = atlRes.confluenceError ? `Error: ${String(atlRes.confluenceError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
         sources.push({ name: "Jira", source: "jira", connected: atlConnected && !atlRes.jiraError, lastSync: jiraStatus, itemCount: newJira.length, icon: "clipboard-list" });
         sources.push({ name: "Confluence", source: "confluence", connected: atlConnected && !atlRes.confluenceError, lastSync: confStatus, itemCount: newConfluence.length, icon: "clipboard-list" });
       }
