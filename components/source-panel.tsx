@@ -103,9 +103,10 @@ export function SourcePanel({
       const newCalls: AttentionCall[] = attRes.calls || [];
       const newJira: JiraIssue[] = atlRes.jiraIssues || [];
       const newConfluence: ConfluencePage[] = atlRes.confluencePages || [];
+      const atlConnected = atlRes.connected === true;
       const isDemo = pbRes.featuresIsDemo || attRes.callsIsDemo;
 
-      if (useDemoData && isDemo && !atlRes.connected) {
+      if (useDemoData && isDemo && !atlConnected) {
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
@@ -116,7 +117,7 @@ export function SourcePanel({
       }
       setJiraIssues(newJira);
       setConfluencePages(newConfluence);
-      setDataIsDemo(isDemo && useDemoData && !atlRes.connected);
+      setDataIsDemo(isDemo && useDemoData && !atlConnected);
 
       const sources: DataSourceStatus[] = [];
       if (status.productboardKey.configured) {
@@ -125,9 +126,11 @@ export function SourcePanel({
       if (status.attentionKey.configured) {
         sources.push({ name: "Attention", source: "attention", connected: attRes.connected, lastSync: attRes.connected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
       }
-      if (status.atlassianKey?.configured || atlRes.connected) {
-        sources.push({ name: "Jira", source: "jira", connected: atlRes.connected, lastSync: atlRes.connected ? "just now" : undefined, itemCount: newJira.length, icon: "clipboard-list" });
-        sources.push({ name: "Confluence", source: "confluence", connected: atlRes.connected, lastSync: atlRes.connected ? "just now" : undefined, itemCount: newConfluence.length, icon: "clipboard-list" });
+      if (status.atlassianKey?.configured || atlConnected) {
+        const jiraStatus = atlRes.jiraError ? `Error: ${atlRes.jiraError.slice(0, 60)}` : atlConnected ? "just now" : undefined;
+        const confStatus = atlRes.confluenceError ? `Error: ${atlRes.confluenceError.slice(0, 60)}` : atlConnected ? "just now" : undefined;
+        sources.push({ name: "Jira", source: "jira", connected: atlConnected && !atlRes.jiraError, lastSync: jiraStatus, itemCount: newJira.length, icon: "clipboard-list" });
+        sources.push({ name: "Confluence", source: "confluence", connected: atlConnected && !atlRes.confluenceError, lastSync: confStatus, itemCount: newConfluence.length, icon: "clipboard-list" });
       }
 
       if (useDemoData && isDemo && sources.length === 0) {
@@ -252,8 +255,8 @@ export function SourcePanel({
               { key: "feedback" as const, label: `Feedback (${feedback.length})` },
               { key: "features" as const, label: `Features (${features.length})` },
               ...(calls.length > 0 ? [{ key: "calls" as const, label: `Calls (${calls.length})` }] : []),
-              ...(jiraIssues.length > 0 ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
-              ...(confluencePages.length > 0 ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
+              ...(jiraIssues.length > 0 || status.atlassianKey?.configured ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
+              ...(confluencePages.length > 0 || status.atlassianKey?.configured ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
             ]
           ).map((tab) => (
             <button
@@ -534,9 +537,12 @@ export function SourcePanel({
         {!loading && activeTab === "jira" && (
           <div>
             {filteredJira.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
-                <p className="text-xs mb-1">{sq ? "No matching issues" : "No Jira data"}</p>
+                <p className="text-xs mb-1">{sq ? "No matching issues" : "No Jira issues loaded"}</p>
+                {!sq && status.atlassianKey?.configured && (
+                  <p className="text-[10px]">Check your Jira project filter in Settings. Try leaving it blank to fetch all projects, or use exact project keys (e.g. PROD, ENG).</p>
+                )}
               </div>
             ) : (
               filteredJira.map((issue) => (
@@ -567,9 +573,12 @@ export function SourcePanel({
         {!loading && activeTab === "confluence" && (
           <div>
             {filteredConfluence.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
-                <p className="text-xs mb-1">{sq ? "No matching pages" : "No Confluence data"}</p>
+                <p className="text-xs mb-1">{sq ? "No matching pages" : "No Confluence pages loaded"}</p>
+                {!sq && status.atlassianKey?.configured && (
+                  <p className="text-[10px]">Check your Confluence space filter in Settings. Try leaving it blank to fetch all spaces, or use exact space keys (e.g. PROD, KB).</p>
+                )}
               </div>
             ) : (
               filteredConfluence.map((page) => (

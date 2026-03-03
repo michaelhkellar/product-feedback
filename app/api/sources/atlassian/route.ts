@@ -13,14 +13,26 @@ export async function GET(req: NextRequest) {
   const jiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
   const confluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
 
-  const [jira, confluence] = await Promise.all([
-    getJiraIssues(domain, email, token, jiraFilter),
-    getConfluencePages(domain, email, token, confluenceFilter),
-  ]);
+  try {
+    const [jira, confluence] = await Promise.all([
+      getJiraIssues(domain, email, token, jiraFilter),
+      getConfluencePages(domain, email, token, confluenceFilter),
+    ]);
 
-  return NextResponse.json({
-    connected: true,
-    jiraIssues: jira.data,
-    confluencePages: confluence.data,
-  });
+    return NextResponse.json({
+      connected: true,
+      jiraIssues: jira.data,
+      jiraError: jira.error || null,
+      confluencePages: confluence.data,
+      confluenceError: confluence.error || null,
+    });
+  } catch (err) {
+    console.error("Atlassian route error:", err);
+    return NextResponse.json({
+      connected: true,
+      jiraIssues: [],
+      confluencePages: [],
+      error: err instanceof Error ? err.message : "Failed to fetch Atlassian data",
+    });
+  }
 }
