@@ -211,10 +211,10 @@ Try one of the suggested queries below to get started.`,
             >
               <div
                 className={cn(
-                  "inline-block text-left rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                  "text-left rounded-2xl px-4 py-3 text-sm leading-relaxed",
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground rounded-tr-sm"
-                    : "bg-card border border-border rounded-tl-sm"
+                    ? "inline-block bg-primary text-primary-foreground rounded-tr-sm"
+                    : "bg-card border border-border rounded-tl-sm max-w-full overflow-x-auto"
                 )}
               >
                 <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">

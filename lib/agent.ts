@@ -174,6 +174,8 @@ function temporalSummary(items: Record<string, unknown>[], label: string): strin
   return `${label}: ${items.length} total (${parts.join(", ")}). Range: ${dateRange}. ${recentCount} in last 14 days.`;
 }
 
+const NOISE_THEMES = /^\d+(\.\d+)?\s*stars?$|^\d+\/\d+$|^(g2|capterra|trustpilot|review|reviews|rating|ratings|stars|n\/a|na|none|other|misc|general|unknown|yes|no)$/i;
+
 function topThemesRecent(feedback: FeedbackItem[], days: number): string {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
@@ -184,7 +186,10 @@ function topThemesRecent(feedback: FeedbackItem[], days: number): string {
     if (d && d >= cutoff) {
       count++;
       for (const t of fb.themes) {
-        if (t.length > 1 && t.length < 50) themes[t.toLowerCase()] = (themes[t.toLowerCase()] || 0) + 1;
+        const lower = t.toLowerCase().trim();
+        if (lower.length > 1 && lower.length < 50 && !NOISE_THEMES.test(lower)) {
+          themes[lower] = (themes[lower] || 0) + 1;
+        }
       }
     }
   }
@@ -387,9 +392,9 @@ USE THIS EXACT FORMAT:
 
 > "[direct customer quote if available in the data]" — Customer Name
 
-| Item | Detail | When |
+| Source | What | When |
 | --- | --- | --- |
-[max 5 rows, no empty cells]
+[max 5 rows. Source = where it came from (Productboard, Jira CX-123, etc). What = the actual request/issue. When = relative date.]
 
 ## Next Steps
 
