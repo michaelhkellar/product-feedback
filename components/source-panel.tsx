@@ -219,6 +219,37 @@ export function SourcePanel({
 
   const totalItems = feedback.length + features.length + calls.length + jiraIssues.length + confluencePages.length;
 
+  function formatDate(dateStr: string | undefined): string {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const diff = now.getTime() - d.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    if (days === 0) return "Today";
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
+  }
+
+  function getItemDate(item: Record<string, unknown>): number {
+    const str = (item.date || item.updated || item.created || item.lastModified || item.createdAt || "") as string;
+    if (!str) return 0;
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  function sortByDate<T>(items: T[]): T[] {
+    return [...items].sort((a, b) => getItemDate(b as unknown as Record<string, unknown>) - getItemDate(a as unknown as Record<string, unknown>));
+  }
+
+  const sortedFeedback = useMemo(() => sortByDate(filteredFeedback), [filteredFeedback]);
+  const sortedFeatures = useMemo(() => sortByDate(filteredFeatures), [filteredFeatures]);
+  const sortedCalls = useMemo(() => sortByDate(filteredCalls), [filteredCalls]);
+  const sortedJira = useMemo(() => sortByDate(filteredJira), [filteredJira]);
+  const sortedConfluence = useMemo(() => sortByDate(filteredConfluence), [filteredConfluence]);
+
   const sentimentIcon = (s: string) => {
     if (s === "positive")
       return <ThumbsUp className="w-3 h-3 text-green-500" />;
@@ -408,82 +439,58 @@ export function SourcePanel({
 
         {!loading && activeTab === "feedback" && (
           <div>
-            {filteredFeedback.length === 0 ? (
+            {sortedFeedback.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
                 <p className="text-xs mb-1">{sq ? "No matching feedback" : "No feedback data"}</p>
-                {!sq && (
-                  <p className="text-[10px]">
-                    Connect API keys or enable demo data in Settings
-                  </p>
-                )}
+                {!sq && <p className="text-[10px]">Connect API keys or enable demo data in Settings</p>}
               </div>
             ) : (
-              filteredFeedback.map((fb) => (
-                <button
-                  key={fb.id}
-                  onClick={() => setDetail({ type: "feedback", data: fb })}
-                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
-                >
-                  <div className="flex items-start gap-2.5">
-                    {sentimentIcon(fb.sentiment)}
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-medium line-clamp-1">
-                        {fb.title}
-                      </h4>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
-                        <span className="capitalize">{fb.source}</span>
-                        {fb.customer && <><span>·</span><span>{fb.customer}</span></>}
-                        {fb.company && <><span>·</span><span>{fb.company}</span></>}
+              sortedFeedback.map((fb) => {
+                const dt = formatDate(fb.date);
+                return (
+                  <button key={fb.id} onClick={() => setDetail({ type: "feedback", data: fb })}
+                    className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                    <div className="flex items-start gap-2.5">
+                      {sentimentIcon(fb.sentiment)}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-medium line-clamp-1">{fb.title}</h4>
+                        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                          {dt && <><span className="text-foreground/50">{dt}</span><span>·</span></>}
+                          <span className="capitalize">{fb.source}</span>
+                          {fb.customer && <><span>·</span><span>{fb.customer}</span></>}
+                        </div>
                       </div>
+                      <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
                     </div>
-                    <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         )}
 
         {!loading && activeTab === "features" && (
           <div>
-            {filteredFeatures.length === 0 ? (
+            {sortedFeatures.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
                 <p className="text-xs mb-1">{sq ? "No matching features" : "No feature data"}</p>
-                {!sq && (
-                  <p className="text-[10px]">
-                    Connect Productboard or enable demo data in Settings
-                  </p>
-                )}
+                {!sq && <p className="text-[10px]">Connect Productboard or enable demo data in Settings</p>}
               </div>
             ) : (
-              filteredFeatures.map((feat) => (
-                <button
-                  key={feat.id}
-                  onClick={() => setDetail({ type: "feature", data: feat })}
-                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
-                >
+              sortedFeatures.map((feat) => (
+                <button key={feat.id} onClick={() => setDetail({ type: "feature", data: feat })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
                   <div className="flex items-start gap-2.5">
-                    <div
-                      className={cn(
-                        "w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
-                        feat.status === "in_progress" && "bg-blue-500",
-                        feat.status === "planned" && "bg-amber-500",
-                        feat.status === "new" && "bg-muted-foreground",
-                        feat.status === "done" && "bg-green-500"
-                      )}
-                    />
+                    <div className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
+                      feat.status === "in_progress" && "bg-blue-500", feat.status === "planned" && "bg-amber-500",
+                      feat.status === "new" && "bg-muted-foreground", feat.status === "done" && "bg-green-500")} />
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-medium line-clamp-1">
-                        {feat.name}
-                      </h4>
+                      <h4 className="text-xs font-medium line-clamp-1">{feat.name}</h4>
                       <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                        <span className="capitalize">
-                          {feat.status.replace("_", " ")}
-                        </span>
+                        <span className="capitalize">{feat.status.replace("_", " ")}</span>
                         {feat.votes > 0 && <><span>·</span><span>{feat.votes} votes</span></>}
-                        {feat.customerRequests > 0 && <><span>·</span><span>{feat.customerRequests} requests</span></>}
                       </div>
                     </div>
                   </div>
@@ -495,7 +502,7 @@ export function SourcePanel({
 
         {!loading && activeTab === "calls" && (
           <div>
-            {filteredCalls.length === 0 ? (
+            {sortedCalls.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
                 <p className="text-xs mb-1">{sq ? "No matching calls" : "No call data"}</p>
@@ -506,37 +513,31 @@ export function SourcePanel({
                 )}
               </div>
             ) : (
-              filteredCalls.map((call) => (
-                <button
-                  key={call.id}
-                  onClick={() => setDetail({ type: "call", data: call })}
-                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
-                >
-                  <div className="flex items-start gap-2.5">
-                    <Phone className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-medium line-clamp-1">
-                        {call.title}
-                      </h4>
-                      <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
-                        <Clock className="w-2.5 h-2.5" />
-                        <span>{call.date}</span>
-                        <span>·</span>
-                        <span>{call.duration}</span>
-                        <span>·</span>
-                        <Users className="w-2.5 h-2.5" />
-                        <span>{call.participants.length}</span>
+              sortedCalls.map((call) => {
+                const dt = formatDate(call.date);
+                return (
+                  <button key={call.id} onClick={() => setDetail({ type: "call", data: call })}
+                    className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                    <div className="flex items-start gap-2.5">
+                      <Phone className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-medium line-clamp-1">{call.title}</h4>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground">
+                          {dt && <><span className="text-foreground/50">{dt}</span><span>·</span></>}
+                          <span>{call.duration}</span><span>·</span>
+                          <Users className="w-2.5 h-2.5" /><span>{call.participants.length}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         )}
         {!loading && activeTab === "jira" && (
           <div>
-            {filteredJira.length === 0 ? (
+            {sortedJira.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
                 <p className="text-xs mb-1">{sq ? "No matching issues" : "No Jira issues loaded"}</p>
@@ -545,34 +546,35 @@ export function SourcePanel({
                 )}
               </div>
             ) : (
-              filteredJira.map((issue) => (
-                <button key={issue.id} onClick={() => setDetail({ type: "jira", data: issue })}
-                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
-                  <div className="flex items-start gap-2.5">
-                    <div className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
-                      issue.status.toLowerCase().includes("done") && "bg-green-500",
-                      issue.status.toLowerCase().includes("progress") && "bg-blue-500",
-                      !issue.status.toLowerCase().includes("done") && !issue.status.toLowerCase().includes("progress") && "bg-muted-foreground"
-                    )} />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-medium line-clamp-1"><span className="text-muted-foreground">{issue.key}</span> {issue.summary}</h4>
-                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
-                        <span>{issue.issueType}</span><span>·</span>
-                        <span>{issue.status}</span><span>·</span>
-                        <span>{issue.priority}</span>
-                        {issue.assignee !== "Unassigned" && <><span>·</span><span>{issue.assignee}</span></>}
+              sortedJira.map((issue) => {
+                const dt = formatDate(issue.updated || issue.created);
+                return (
+                  <button key={issue.id} onClick={() => setDetail({ type: "jira", data: issue })}
+                    className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                    <div className="flex items-start gap-2.5">
+                      <div className={cn("w-2 h-2 rounded-full mt-1.5 flex-shrink-0",
+                        issue.status.toLowerCase().includes("done") && "bg-green-500",
+                        issue.status.toLowerCase().includes("progress") && "bg-blue-500",
+                        !issue.status.toLowerCase().includes("done") && !issue.status.toLowerCase().includes("progress") && "bg-muted-foreground")} />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-xs font-medium line-clamp-1"><span className="text-muted-foreground">{issue.key}</span> {issue.summary}</h4>
+                        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                          {dt && <><span className="text-foreground/50">{dt}</span><span>·</span></>}
+                          <span>{issue.issueType}</span><span>·</span><span>{issue.status}</span>
+                          {issue.assignee !== "Unassigned" && <><span>·</span><span>{issue.assignee}</span></>}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         )}
 
         {!loading && activeTab === "confluence" && (
           <div>
-            {filteredConfluence.length === 0 ? (
+            {sortedConfluence.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
                 <p className="text-xs mb-1">{sq ? "No matching pages" : "No Confluence pages loaded"}</p>
@@ -581,20 +583,22 @@ export function SourcePanel({
                 )}
               </div>
             ) : (
-              filteredConfluence.map((page) => (
-                <button key={page.id} onClick={() => setDetail({ type: "confluence", data: page })}
-                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-xs font-medium line-clamp-1">{page.title}</h4>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
-                      <span>{page.space}</span><span>·</span>
-                      <span>{page.author}</span>
-                      {page.lastModified && <><span>·</span><span>{new Date(page.lastModified).toLocaleDateString()}</span></>}
+              sortedConfluence.map((page) => {
+                const dt = formatDate(page.lastModified);
+                return (
+                  <button key={page.id} onClick={() => setDetail({ type: "confluence", data: page })}
+                    className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-medium line-clamp-1">{page.title}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        {dt && <><span className="text-foreground/50">{dt}</span><span>·</span></>}
+                        <span>{page.space}</span>
+                        {page.author && <><span>·</span><span>{page.author}</span></>}
+                      </div>
                     </div>
-                    {page.excerpt && <p className="text-[10px] text-muted-foreground line-clamp-2 mt-1">{page.excerpt.slice(0, 120)}</p>}
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         )}

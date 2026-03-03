@@ -56,21 +56,49 @@ export function getDemoData(): AgentData {
   };
 }
 
-function lookupDetails(ids: string[], data: AgentData): string[] {
+const DETAIL_KEYWORDS = ["specific", "details", "feedback", "tickets", "what are we seeing", "what are customers saying", "show me", "list", "quotes", "verbatim", "exact"];
+
+function wantsDetail(query: string): boolean {
+  const q = query.toLowerCase();
+  return DETAIL_KEYWORDS.some((kw) => q.includes(kw));
+}
+
+function lookupDetails(ids: string[], data: AgentData, detailed = false): string[] {
+  const contentLen = detailed ? 500 : 200;
+  const descLen = detailed ? 400 : 0;
   const details: string[] = [];
   for (const id of ids) {
     const fb = data.feedback.find((f) => f.id === id);
-    if (fb) { const w = shortDate(fb as unknown as Record<string, unknown>); details.push(`[Feedback, ${w}] ${fb.title} — ${fb.customer}${fb.company ? ` (${fb.company})` : ""}: "${fb.content.slice(0, 200)}"`); continue; }
+    if (fb) {
+      const w = shortDate(fb as unknown as Record<string, unknown>);
+      details.push(`[Feedback, ${w}] ${fb.title} — ${fb.customer}${fb.company ? ` (${fb.company})` : ""}: "${fb.content.slice(0, contentLen)}"`);
+      continue;
+    }
     const feat = data.features.find((f) => f.id === id);
-    if (feat) { details.push(`[Feature] ${feat.name} — ${feat.status}, ${feat.votes} votes`); continue; }
+    if (feat) {
+      const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
+      details.push(`[Feature] ${feat.name} — ${feat.status}, ${feat.votes} votes${desc}`);
+      continue;
+    }
     const call = data.calls.find((c) => c.id === id);
-    if (call) { details.push(`[Call, ${call.date}] ${call.title} — ${call.summary.slice(0, 150)}`); continue; }
+    if (call) {
+      details.push(`[Call, ${call.date}] ${call.title} — ${call.summary.slice(0, contentLen)}`);
+      continue;
+    }
     const insight = data.insights.find((i) => i.id === id);
-    if (insight) { details.push(`[Insight] ${insight.title} — ${insight.description.slice(0, 150)}`); continue; }
+    if (insight) { details.push(`[Insight] ${insight.title} — ${insight.description.slice(0, contentLen)}`); continue; }
     const jira = data.jiraIssues.find((j) => j.id === id);
-    if (jira) { const w = shortDate(jira as unknown as Record<string, unknown>); details.push(`[Jira, ${w}] ${jira.key} ${jira.summary} — ${jira.status}/${jira.priority}`); continue; }
+    if (jira) {
+      const w = shortDate(jira as unknown as Record<string, unknown>);
+      const desc = detailed && jira.description ? `\n  Description: "${jira.description.slice(0, descLen)}"` : "";
+      details.push(`[Jira ${jira.key}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
+      continue;
+    }
     const page = data.confluencePages.find((p) => p.id === id);
-    if (page) { details.push(`[Confluence] ${page.title} — ${page.space}`); }
+    if (page) {
+      const excerpt = detailed && page.excerpt ? `: ${page.excerpt.slice(0, descLen)}` : "";
+      details.push(`[Confluence] ${page.title} — ${page.space}${excerpt}`);
+    }
   }
   return details;
 }
@@ -308,10 +336,11 @@ export async function chat(
 
   const sources: { type: string; id: string; title: string }[] = [];
   const searchParts: string[] = [];
+  const detailed = wantsDetail(userMessage);
 
   for (const r of results) {
     const doc = r.document;
-    const details = lookupDetails([doc.id], data);
+    const details = lookupDetails([doc.id], data, detailed);
     if (details.length > 0) searchParts.push(details[0]);
 
     let title = doc.id;
@@ -366,7 +395,7 @@ USE THIS EXACT FORMAT:
 2. [owner] [action] [by when]
 3. [owner] [action] [by when]
 
-HARD CONSTRAINTS: 250 words max. No :--- in tables. No multi-sentence action items. Include a customer quote if one exists in the data. Skip the quote section if none available.`;
+CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Include customer quotes from the data when available. When the question asks for specific feedback or ticket details, show the actual content — don't just summarize titles. Skip the quote section if none available.`;
 
   const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(prompt);
 
