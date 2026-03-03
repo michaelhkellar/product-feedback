@@ -71,13 +71,13 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false): string
     const fb = data.feedback.find((f) => f.id === id);
     if (fb) {
       const w = shortDate(fb as unknown as Record<string, unknown>);
-      details.push(`[Feedback, ${w}] ${fb.title} — ${fb.customer}${fb.company ? ` (${fb.company})` : ""}: "${fb.content.slice(0, contentLen)}"`);
+      details.push(`[Source: ${fb.source}, ${w}] "${fb.title}" — from ${fb.customer}${fb.company ? ` (${fb.company})` : ""}: "${fb.content.slice(0, contentLen)}"`);
       continue;
     }
     const feat = data.features.find((f) => f.id === id);
     if (feat) {
       const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
-      details.push(`[Feature] ${feat.name} — ${feat.status}, ${feat.votes} votes${desc}`);
+      details.push(`[Source: productboard feature] "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
       continue;
     }
     const call = data.calls.find((c) => c.id === id);
@@ -103,7 +103,9 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false): string
   return details;
 }
 
-const SYSTEM_PROMPT = `You are a concise product intelligence analyst. Synthesize data into brief, actionable insights. Focus on recent changes. Be opinionated. Include direct customer quotes when available — they make insights concrete and compelling.`;
+const SYSTEM_PROMPT = `You are a concise product intelligence analyst. Synthesize data into brief, actionable insights. Focus on recent changes. Be opinionated. Include direct customer quotes when available.
+
+IMPORTANT: When feedback or features mention product names (Zapier, Salesforce, Autotask, Jira, etc.), those are the products customers want INTEGRATED — not the source of the feedback. The source is always shown in brackets like [productboard] or [Jira CX-1234]. Don't confuse the integration being requested with the system that captured the request.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report"];
 
