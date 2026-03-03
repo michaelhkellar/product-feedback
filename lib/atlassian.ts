@@ -112,50 +112,42 @@ async function atlFetch(url: string, auth: ResolvedAuth, method = "GET", body?: 
   }
 }
 
-function classicJiraV2Base(domain: string): string {
-  return `https://${domain}.atlassian.net/rest/api/2`;
-}
-
-function scopedJiraV2Base(cloudId: string): string {
-  return `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/2`;
-}
-
-async function jiraSearchWithFallback(
-  auth: ResolvedAuth, jqlStr: string, pageSize: number, startAt: number, fields: string[]
+async function jiraSearchPage(
+  auth: ResolvedAuth, jqlStr: string, pageSize: number, fields: string[], pageToken?: string
 ): Promise<{ data: unknown; error: string | null }> {
   const bases = jiraBases(auth);
-  const v2Bases: string[] = [];
-  if (auth.useScoped && auth.cloudId) {
-    v2Bases.push(scopedJiraV2Base(auth.cloudId));
-    v2Bases.push(classicJiraV2Base(auth.domain));
-  } else {
-    v2Bases.push(classicJiraV2Base(auth.domain));
-    if (auth.cloudId) v2Bases.push(scopedJiraV2Base(auth.cloudId));
-  }
-
-  const errors: string[] = [];
   const jqlEncoded = encodeURIComponent(jqlStr);
   const fieldStr = fields.join(",");
+  const errors: string[] = [];
 
-  const attempts: { url: string; method: "GET" | "POST"; body?: unknown; label: string }[] = [
-    ...bases.map((b) => ({ url: `${b}/search/jql`, method: "POST" as const, body: { jql: jqlStr, maxResults: pageSize, startAt, fields }, label: "v3 POST /search/jql" })),
-    ...bases.map((b) => ({ url: `${b}/search?jql=${jqlEncoded}&maxResults=${pageSize}&startAt=${startAt}&fields=${fieldStr}`, method: "GET" as const, label: "v3 GET /search" })),
-    ...v2Bases.map((b) => ({ url: `${b}/search?jql=${jqlEncoded}&maxResults=${pageSize}&startAt=${startAt}&fields=${fieldStr}`, method: "GET" as const, label: "v2 GET /search" })),
-    ...v2Bases.map((b) => ({ url: `${b}/search`, method: "POST" as const, body: { jql: jqlStr, maxResults: pageSize, startAt, fields }, label: "v2 POST /search" })),
-  ];
+  const tokenParam = pageToken ? `&nextPageToken=${encodeURIComponent(pageToken)}` : "";
+
+  const attempts: { url: string; method: "GET" | "POST"; body?: unknown; label: string }[] = [];
+
+  for (const b of bases) {
+    attempts.push({ url: `${b}/search/jql?jql=${jqlEncoded}&maxResults=${pageSize}&fields=${fieldStr}${tokenParam}`, method: "GET", label: "v3 GET /search/jql" });
+  }
+  for (const b of bases) {
+    const startAt = 0;
+    attempts.push({ url: `${b}/search?jql=${jqlEncoded}&maxResults=${pageSize}&startAt=${startAt}&fields=${fieldStr}`, method: "GET", label: "v3 GET /search (legacy)" });
+  }
 
   for (const attempt of attempts) {
     const { data, error } = await atlFetch(attempt.url, auth, attempt.method, attempt.body);
     if (!error && data) {
-      console.log(`Jira search: ${attempt.label} succeeded`);
+      if (!jiraSearchEndpoint) {
+        jiraSearchEndpoint = attempt.label;
+        console.log(`Jira: using ${attempt.label}`);
+      }
       return { data, error: null };
     }
     if (error) errors.push(`${attempt.label}: ${error.slice(0, 60)}`);
   }
 
-  console.error(`Jira search: all ${attempts.length} attempts failed:\n${errors.join("\n")}`);
-  return { data: null, error: `Jira search failed (tried ${attempts.length} endpoints). Errors: ${errors.slice(-2).join("; ").slice(0, 150)}` };
+  return { data: null, error: `Jira search failed. ${errors.slice(-2).join("; ").slice(0, 150)}` };
 }
+
+let jiraSearchEndpoint: string | null = null;
 
 function parseFilterList(filter: string | undefined): string[] {
   if (!filter) return [];
@@ -179,15 +171,7 @@ export async function getJiraProjects(
   if (!rawAuth) return [];
   const auth = await resolveAuth(rawAuth);
 
-  const allBases = [...jiraBases(auth)];
-  if (auth.useScoped && auth.cloudId) {
-    allBases.push(scopedJiraV2Base(auth.cloudId), classicJiraV2Base(auth.domain));
-  } else {
-    allBases.push(classicJiraV2Base(auth.domain));
-    if (auth.cloudId) allBases.push(scopedJiraV2Base(auth.cloudId));
-  }
-
-  for (const base of allBases) {
+  for (const base of jiraBases(auth)) {
     for (const path of ["/project/search?maxResults=200&orderBy=name", "/project?maxResults=200"]) {
       const { data } = await atlFetch(`${base}${path}`, auth);
       if (data) {
@@ -225,6 +209,24 @@ export async function getConfluenceSpaces(
   return [];
 }
 
+function parseIssue(issue: Record<string, unknown>): JiraIssue {
+  const f = (issue.fields || {}) as Record<string, unknown>;
+  return {
+    id: (issue.id as string) || "", key: (issue.key as string) || "",
+    summary: (f.summary as string) || "",
+    description: extractTextFromADF(f.description),
+    status: ((f.status as Record<string, unknown>)?.name as string) || "Unknown",
+    issueType: ((f.issuetype as Record<string, unknown>)?.name as string) || "Unknown",
+    priority: ((f.priority as Record<string, unknown>)?.name as string) || "Medium",
+    assignee: ((f.assignee as Record<string, unknown>)?.displayName as string) || "Unassigned",
+    reporter: ((f.reporter as Record<string, unknown>)?.displayName as string) || "",
+    labels: (f.labels as string[]) || [],
+    created: (f.created as string) || "", updated: (f.updated as string) || "",
+    project: ((f.project as Record<string, unknown>)?.name as string) || ((f.project as Record<string, unknown>)?.key as string) || "",
+    resolution: ((f.resolution as Record<string, unknown>)?.name as string) || "",
+  };
+}
+
 export async function getJiraIssues(
   d?: string, e?: string, t?: string, projectFilter?: string
 ): Promise<{ data: JiraIssue[]; isDemo: boolean; error?: string }> {
@@ -233,41 +235,35 @@ export async function getJiraIssues(
 
   const auth = await resolveAuth(rawAuth);
   const allIssues: JiraIssue[] = [];
-  let startAt = 0;
   const jqlStr = buildJiraJql(projectFilter);
   let lastError: string | null = null;
   const fields = ["summary", "description", "status", "issuetype", "priority", "assignee", "reporter", "labels", "created", "updated", "project", "resolution"];
+  let pageToken: string | undefined;
+  let pageCount = 0;
 
-  while (allIssues.length < MAX_RESULTS) {
-    const { data, error } = await jiraSearchWithFallback(auth, jqlStr, PAGE_SIZE, startAt, fields);
+  while (allIssues.length < MAX_RESULTS && pageCount < 20) {
+    const { data, error } = await jiraSearchPage(auth, jqlStr, PAGE_SIZE, fields, pageToken);
     if (error) { lastError = error; break; }
     if (!data) break;
 
     const result = data as Record<string, unknown>;
-    const issues = result.issues as Record<string, unknown>[];
-    if (!issues || issues.length === 0) break;
+    const issues = (result.issues || []) as Record<string, unknown>[];
+    if (issues.length === 0) break;
 
-    for (const issue of issues) {
-      const f = (issue.fields || {}) as Record<string, unknown>;
-      allIssues.push({
-        id: issue.id as string, key: issue.key as string,
-        summary: (f.summary as string) || "",
-        description: extractTextFromADF(f.description),
-        status: ((f.status as Record<string, unknown>)?.name as string) || "Unknown",
-        issueType: ((f.issuetype as Record<string, unknown>)?.name as string) || "Unknown",
-        priority: ((f.priority as Record<string, unknown>)?.name as string) || "Medium",
-        assignee: ((f.assignee as Record<string, unknown>)?.displayName as string) || "Unassigned",
-        reporter: ((f.reporter as Record<string, unknown>)?.displayName as string) || "",
-        labels: (f.labels as string[]) || [],
-        created: (f.created as string) || "", updated: (f.updated as string) || "",
-        project: ((f.project as Record<string, unknown>)?.name as string) || ((f.project as Record<string, unknown>)?.key as string) || "",
-        resolution: ((f.resolution as Record<string, unknown>)?.name as string) || "",
-      });
+    for (const issue of issues) allIssues.push(parseIssue(issue));
+
+    const nextToken = result.nextPageToken as string | undefined;
+    if (nextToken && issues.length >= PAGE_SIZE) {
+      pageToken = nextToken;
+    } else {
+      const total = result.total as number | undefined;
+      if (total && allIssues.length < total && issues.length >= PAGE_SIZE) {
+        pageToken = undefined;
+        break;
+      }
+      break;
     }
-
-    const total = result.total as number;
-    if (issues.length < PAGE_SIZE || allIssues.length >= (total || MAX_RESULTS)) break;
-    startAt += PAGE_SIZE;
+    pageCount++;
   }
 
   console.log(`Jira: ${allIssues.length} issues${projectFilter ? ` (${projectFilter})` : ""}${lastError ? " [err]" : ""}`);
