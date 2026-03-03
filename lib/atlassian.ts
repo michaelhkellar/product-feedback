@@ -155,18 +155,17 @@ function parseFilterList(filter: string | undefined): string[] {
 }
 
 function buildJiraJql(projectFilter: string | undefined): string {
-  const parts: string[] = [];
+  const conditions: string[] = [];
   const projects = parseFilterList(projectFilter);
   if (projects.length > 0) {
     const quoted = projects.map((p) => {
       const upper = p.trim().toUpperCase();
       return /^[A-Z][A-Z0-9_]+$/.test(upper) ? upper : `"${p.trim().replace(/"/g, '\\"')}"`;
     });
-    parts.push(`project IN (${quoted.join(", ")})`);
+    conditions.push(`project IN (${quoted.join(", ")})`);
   }
-  parts.push(`statusCategory != Done`);
-  parts.push(`ORDER BY updated DESC`);
-  return parts.join(" AND ");
+  conditions.push(`statusCategory != Done`);
+  return `${conditions.join(" AND ")} ORDER BY updated DESC`;
 }
 
 export async function getJiraProjects(
