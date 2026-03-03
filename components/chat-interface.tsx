@@ -50,12 +50,13 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ className }: ChatInterfaceProps) {
-  const { keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
+  const { keys, keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const [sessionTokens, setSessionTokens] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -131,10 +132,19 @@ Try one of the suggested queries below to get started.`,
           "Content-Type": "application/json",
           ...keyHeaders,
         },
-        body: JSON.stringify({ message: content, history, useDemoData }),
+        body: JSON.stringify({
+          message: content,
+          history,
+          useDemoData,
+          contextMode: keys.contextMode || "focused",
+        }),
       });
 
       const data = await res.json();
+
+      if (data.tokenEstimate?.total > 0) {
+        setSessionTokens((prev) => prev + data.tokenEstimate.total);
+      }
 
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -317,13 +327,17 @@ Try one of the suggested queries below to get started.`,
               <Send className="w-3.5 h-3.5" />
             </button>
           </div>
-          <p className="text-center text-[10px] text-muted-foreground mt-2">
-            Powered by{" "}
-            {status.geminiKey.configured
-              ? "Gemini AI"
-              : "built-in intelligence"}{" "}
-            · Analyzing feedback from Productboard, Attention & more
-          </p>
+          <div className="flex items-center justify-center gap-3 mt-2 text-[10px] text-muted-foreground">
+            <span>
+              {status.geminiKey.configured ? "Gemini AI" : "Built-in"}{" "}
+              · {keys.contextMode === "deep" ? "Deep" : keys.contextMode === "standard" ? "Standard" : "Focused"} context
+            </span>
+            {sessionTokens > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-muted font-mono">
+                ~{sessionTokens > 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens this session
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>

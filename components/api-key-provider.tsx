@@ -28,6 +28,7 @@ const EMPTY: ApiKeyState = {
   geminiKey: "", productboardKey: "", attentionKey: "",
   atlassianDomain: "", atlassianEmail: "", atlassianToken: "",
   atlassianJiraFilter: "", atlassianConfluenceFilter: "",
+  contextMode: "focused",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {

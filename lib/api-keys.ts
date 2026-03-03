@@ -1,3 +1,5 @@
+export type ContextMode = "focused" | "standard" | "deep";
+
 export interface ApiKeyState {
   geminiKey: string;
   productboardKey: string;
@@ -7,6 +9,7 @@ export interface ApiKeyState {
   atlassianToken: string;
   atlassianJiraFilter: string;
   atlassianConfluenceFilter: string;
+  contextMode: ContextMode;
 }
 
 export interface ApiKeyStatus {
@@ -27,6 +30,7 @@ const EMPTY_KEYS: ApiKeyState = {
   atlassianToken: "",
   atlassianJiraFilter: "",
   atlassianConfluenceFilter: "",
+  contextMode: "focused",
 };
 
 export function loadKeys(): ApiKeyState {
@@ -44,6 +48,7 @@ export function loadKeys(): ApiKeyState {
       atlassianToken: parsed.atlassianToken || "",
       atlassianJiraFilter: parsed.atlassianJiraFilter || "",
       atlassianConfluenceFilter: parsed.atlassianConfluenceFilter || "",
+      contextMode: parsed.contextMode || "focused",
     };
   } catch {
     return { ...EMPTY_KEYS };

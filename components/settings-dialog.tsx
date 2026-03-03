@@ -203,6 +203,31 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
           </div>
 
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-2">
+            <p className="text-xs font-medium">AI Context Mode</p>
+            <p className="text-[10px] text-muted-foreground">Controls how much data is sent to Gemini per query. Less = cheaper + faster.</p>
+            <div className="flex gap-1.5">
+              {([
+                { key: "focused" as const, label: "Focused", desc: "Search results only (~500 tokens)" },
+                { key: "standard" as const, label: "Standard", desc: "Recent items + search (~1.5k tokens)" },
+                { key: "deep" as const, label: "Deep", desc: "Broad context + search (~3k tokens)" },
+              ]).map((m) => (
+                <button key={m.key}
+                  onClick={() => { setKey("contextMode", m.key); showSave(`Context mode: ${m.label}`); }}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    keys.contextMode === m.key
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{m.label}</div>
+                  <div className="text-[8px] mt-0.5 opacity-70">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+            <p className="text-[9px] text-muted-foreground">Broad queries (like &ldquo;executive summary&rdquo;) auto-upgrade from Focused to Standard.</p>
+          </div>
+
           {SIMPLE_KEYS.map((cfg) => {
             const field = fields[cfg.id];
             if (!field) return null;

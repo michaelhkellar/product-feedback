@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chat } from "@/lib/agent";
 import { getData } from "@/lib/data-fetcher";
-import { generateInsights } from "@/lib/insights-generator";
+import { ContextMode } from "@/lib/api-keys";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { message, history, useDemoData } = body;
+    const { message, history, useDemoData, contextMode } = body;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
@@ -22,23 +22,15 @@ export async function POST(req: NextRequest) {
     };
 
     const data = await getData(
-      keys.productboardKey,
-      keys.attentionKey,
-      useDemoData !== false,
-      keys.atlassianDomain,
-      keys.atlassianEmail,
-      keys.atlassianToken,
+      keys.productboardKey, keys.attentionKey, useDemoData !== false,
+      keys.atlassianDomain, keys.atlassianEmail, keys.atlassianToken,
       req.headers.get("x-atlassian-jira-filter") || undefined,
       req.headers.get("x-atlassian-confluence-filter") || undefined
     );
 
-    if (data.insights.length === 0 && (data.feedback.length > 0 || data.features.length > 0 || data.jiraIssues.length > 0)) {
-      try {
-        data.insights = await generateInsights(data, keys.geminiKey);
-      } catch { /* continue */ }
-    }
+    const mode: ContextMode = (contextMode === "standard" || contextMode === "deep") ? contextMode : "focused";
+    const result = await chat(message, Array.isArray(history) ? history : [], data, keys, mode);
 
-    const result = await chat(message, Array.isArray(history) ? history : [], data, keys);
     return NextResponse.json(result);
   } catch (error) {
     console.error("Chat API error:", error);
