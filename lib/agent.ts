@@ -105,13 +105,31 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false): string
 
 const SYSTEM_PROMPT = `You are a concise product intelligence analyst. Synthesize data into brief, actionable insights. Focus on recent changes. Be opinionated. Include direct customer quotes when available.
 
-IMPORTANT about data sources: Feedback arrives in Productboard through various pipelines (Zapier forms, email integrations, CRM syncs, manual entry, etc.). The tool that pushed the data into Productboard (like Zapier) is just the delivery mechanism — it is NOT the subject of the feedback. Always read the actual TITLE and CONTENT of the feedback to understand what the customer is requesting. The source system is shown in brackets like [Source: productboard] or [Jira CX-1234]. For example, a Productboard note titled "Integration Request (Salesforce)" means the customer wants a Salesforce integration — Productboard is where it was captured, and Zapier may have been the pipeline that got it there.`;
+DATA SOURCE RULES:
+- Productboard notes/features = CUSTOMER FEEDBACK. This is the primary voice-of-customer source. Prioritize this.
+- Jira CX tickets (CX- prefix) = CUSTOMER SUCCESS issues. These reflect real customer problems. Prioritize these alongside Productboard.
+- Jira ENG tickets (ENG- prefix) = ENGINEERING/internal work. These are implementation details, not customer feedback. Reference only when the user asks about engineering status or what's being built.
+- Confluence pages = INTERNAL DOCUMENTATION. Only reference when the user specifically asks about docs, guides, or internal processes. Don't include in general feedback summaries.
+- Feedback arrives in Productboard through pipelines (Zapier, email, CRM). Zapier/email is the delivery mechanism, NOT the subject. Read the actual TITLE and CONTENT to understand what the customer wants.
+- Source is shown in brackets like [Source: productboard] or [Jira CX-1234]. A note titled "Integration Request (Salesforce)" = customer wants Salesforce integration, NOT feedback about Salesforce as a tool.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report"];
+const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
+const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprint", "what's being built", "implementation", "technical"];
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
   return BROAD_KEYWORDS.some((kw) => q.includes(kw));
+}
+
+function wantsConfluence(query: string): boolean {
+  const q = query.toLowerCase();
+  return CONFLUENCE_KEYWORDS.some((kw) => q.includes(kw));
+}
+
+function wantsEngineering(query: string): boolean {
+  const q = query.toLowerCase();
+  return ENG_KEYWORDS.some((kw) => q.includes(kw));
 }
 
 function recentItems<T extends { date?: string; created?: string; updated?: string }>(items: T[], limit: number): T[] {
@@ -251,13 +269,18 @@ function shortDate(item: Record<string, unknown>): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function buildStandardContext(data: AgentData, searchResults: string): string {
+function filterJiraForContext(issues: JiraIssue[], includeEng: boolean): JiraIssue[] {
+  if (includeEng) return issues;
+  return issues.filter((j) => !/^ENG-/i.test(j.key));
+}
+
+function buildStandardContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false): string {
   const parts: string[] = [];
   parts.push(buildStatsHeader(data));
 
   const recentFb = recentItems(data.feedback, 10);
   if (recentFb.length > 0) {
-    parts.push(`\nRecent feedback (${recentFb.length} of ${data.feedback.length}):`);
+    parts.push(`\nRecent customer feedback (${recentFb.length} of ${data.feedback.length}):`);
     for (const fb of recentFb) {
       const when = shortDate(fb as unknown as Record<string, unknown>);
       parts.push(`- [${when}] ${fb.title} [${fb.source}/${fb.priority}] ${fb.customer}${fb.company ? ` @ ${fb.company}` : ""}`);
@@ -269,26 +292,32 @@ function buildStandardContext(data: AgentData, searchResults: string): string {
     parts.push(`\nTop features: ${top.map((f) => `${f.name} (${f.votes}v, ${f.status})`).join("; ")}`);
   }
 
-  if (data.jiraIssues.length > 0) {
-    const recent = recentItems(data.jiraIssues, 8);
-    parts.push(`\nRecent Jira (${recent.length} of ${data.jiraIssues.length}):`);
+  const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
+  if (jiraFiltered.length > 0) {
+    const recent = recentItems(jiraFiltered, 8);
+    const label = includeEng ? "Jira" : "Jira (CX/customer)";
+    parts.push(`\nRecent ${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
       const when = shortDate(j as unknown as Record<string, unknown>);
       parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.priority}]`);
     }
   }
 
+  if (includeConfluence && data.confluencePages.length > 0) {
+    parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 5).map((p) => p.title).join(", ")}`);
+  }
+
   parts.push(`\n---\nSearch results:\n${searchResults || "(No matches)"}`);
   return parts.join("\n");
 }
 
-function buildDeepContext(data: AgentData, searchResults: string): string {
+function buildDeepContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false): string {
   const parts: string[] = [];
   parts.push(buildStatsHeader(data));
 
   const recentFb = recentItems(data.feedback, 25);
   if (recentFb.length > 0) {
-    parts.push(`\nFeedback (${recentFb.length} of ${data.feedback.length}):`);
+    parts.push(`\nCustomer feedback (${recentFb.length} of ${data.feedback.length}):`);
     for (const fb of recentFb) {
       const when = shortDate(fb as unknown as Record<string, unknown>);
       parts.push(`- [${when}] **${fb.title}** [${fb.source}/${fb.priority}] ${fb.customer}${fb.company ? ` @ ${fb.company}` : ""}: ${fb.content.slice(0, 100)}`);
@@ -302,9 +331,11 @@ function buildDeepContext(data: AgentData, searchResults: string): string {
     for (const f of top) parts.push(`- ${f.name} — ${f.status}, ${f.votes} votes`);
   }
 
-  if (data.jiraIssues.length > 0) {
-    const recent = recentItems(data.jiraIssues, 12);
-    parts.push(`\nJira (${recent.length} of ${data.jiraIssues.length}):`);
+  const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
+  if (jiraFiltered.length > 0) {
+    const recent = recentItems(jiraFiltered, 12);
+    const label = includeEng ? "Jira (all)" : "Jira (CX/customer)";
+    parts.push(`\n${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
       const when = shortDate(j as unknown as Record<string, unknown>);
       parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}] → ${j.assignee}`);
@@ -317,7 +348,7 @@ function buildDeepContext(data: AgentData, searchResults: string): string {
     for (const c of recent) parts.push(`- [${shortDate(c as unknown as Record<string, unknown>)}] ${c.title} — ${c.summary.slice(0, 100)}`);
   }
 
-  if (data.confluencePages.length > 0) {
+  if (includeConfluence && data.confluencePages.length > 0) {
     parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 5).map((p) => p.title).join(", ")}${data.confluencePages.length > 5 ? ` +${data.confluencePages.length - 5} more` : ""}`);
   }
 
@@ -338,8 +369,20 @@ export async function chat(
   contextMode: ContextMode = "focused"
 ): Promise<ChatResult> {
   const store = buildStore(data);
-  const searchLimit = contextMode === "focused" ? 8 : contextMode === "standard" ? 12 : 15;
-  const results = store.search(userMessage, { limit: searchLimit });
+  const searchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
+  const rawResults = store.search(userMessage, { limit: searchLimit });
+
+  const includeConfluence = wantsConfluence(userMessage);
+  const includeEng = wantsEngineering(userMessage);
+
+  const results = rawResults.filter((r) => {
+    if (r.document.type === "confluence" && !includeConfluence) return false;
+    if (r.document.type === "jira") {
+      const j = data.jiraIssues.find((j) => j.id === r.document.id);
+      if (j && /^ENG-/i.test(j.key) && !includeEng) return false;
+    }
+    return true;
+  });
 
   const sources: { type: string; id: string; title: string; url?: string }[] = [];
   const searchParts: string[] = [];
@@ -382,8 +425,8 @@ export async function chat(
 
   let context: string;
   switch (effectiveMode) {
-    case "deep": context = buildDeepContext(data, searchContext); break;
-    case "standard": context = buildStandardContext(data, searchContext); break;
+    case "deep": context = buildDeepContext(data, searchContext, includeEng, includeConfluence); break;
+    case "standard": context = buildStandardContext(data, searchContext, includeEng, includeConfluence); break;
     default: context = buildFocusedContext(data, searchContext);
   }
 

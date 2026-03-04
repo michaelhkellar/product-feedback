@@ -55,8 +55,14 @@ function fixMarkdown(text: string): string {
   const fixed: string[] = [];
 
   for (const line of lines) {
-    if (line.includes("| --- |") && (line.match(/\|/g) || []).length > 8) {
-      fixed.push(line.replace(/\|\s*\|/g, "|\n|"));
+    const pipeCount = (line.match(/\|/g) || []).length;
+    const hasSeparator = /\|-{2,}\|/.test(line) || line.includes("| --- |") || line.includes("|---|");
+
+    if (hasSeparator && pipeCount > 8) {
+      const repaired = line
+        .replace(/\|\s*\|/g, "|\n|")
+        .replace(/\|(-{2,}\|)+/g, (m) => m.replace(/\|/g, "|\n|").replace(/^\|\n/, "|"));
+      fixed.push(repaired);
     } else {
       fixed.push(line);
     }
