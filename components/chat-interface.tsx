@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const SUGGESTED_QUERIES = [
   {
@@ -241,7 +242,9 @@ Try one of the suggested queries below to get started.`,
                 )}
               >
                 <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                  <ReactMarkdown>{fixMarkdown(msg.content)}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {fixMarkdown(msg.content)}
+                  </ReactMarkdown>
                 </div>
               </div>
               {msg.sources && msg.sources.length > 0 && (
