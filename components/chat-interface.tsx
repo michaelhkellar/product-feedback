@@ -51,24 +51,25 @@ interface ChatInterfaceProps {
 }
 
 function fixMarkdown(text: string): string {
-  const lines = text.split("\n");
-  const fixed: string[] = [];
+  if (!text.includes("|")) return text;
 
-  for (const line of lines) {
-    const pipeCount = (line.match(/\|/g) || []).length;
-    const hasSeparator = /\|-{2,}\|/.test(line) || line.includes("| --- |") || line.includes("|---|");
+  let result = text;
 
-    if (hasSeparator && pipeCount > 8) {
-      const repaired = line
-        .replace(/\|\s*\|/g, "|\n|")
-        .replace(/\|(-{2,}\|)+/g, (m) => m.replace(/\|/g, "|\n|").replace(/^\|\n/, "|"));
-      fixed.push(repaired);
-    } else {
-      fixed.push(line);
+  const tablePattern = /(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*(\|\s*-{2,}\s*(?:\|\s*-{2,}\s*)+\|)\s*((?:\|[^|\n]+(?:\|[^|\n]+)+\|\s*)+)/g;
+
+  result = result.replace(tablePattern, (match) => {
+    const allPipes = match.split(/(?<=\|)\s+(?=\|)/g).join("\n");
+    return allPipes;
+  });
+
+  if (result === text && (text.includes("|---|") || text.includes("| --- |"))) {
+    const pipeCount = (text.match(/\|/g) || []).length;
+    if (pipeCount > 10) {
+      result = text.replace(/\|\s*\|/g, "|\n|");
     }
   }
 
-  return fixed.join("\n");
+  return result;
 }
 
 export function ChatInterface({ className }: ChatInterfaceProps) {

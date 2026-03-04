@@ -449,7 +449,7 @@ USE THIS EXACT FORMAT:
 
 [1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
 
-> "[direct customer quote if available in the data]" — Customer Name
+> "[direct customer quote if available]" — Customer Name (Source: Jira CX-123 or Productboard note title)
 
 | Source | What | When |
 | --- | --- | --- |
@@ -461,7 +461,7 @@ USE THIS EXACT FORMAT:
 2. [owner] [action] [by when]
 3. [owner] [action] [by when]
 
-CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Include customer quotes from the data when available. When the question asks for specific feedback or ticket details, show the actual content — don't just summarize titles. Skip the quote section if none available.`;
+CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include its source (ticket ID, Productboard note title, or customer name). Never show an unattributed quote. When the question asks for specific feedback or ticket details, show the actual content. Skip the quote section if none available.`;
 
   const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(prompt);
 
