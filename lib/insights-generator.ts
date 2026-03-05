@@ -27,6 +27,44 @@ function cleanThemes(themes: string[]): string[] {
   return themes.filter((t) => !isNoiseTheme(t));
 }
 
+function normalizeTheme(theme: string): string {
+  return theme.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function parseDate(value: string): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function countRecentFeedback(feedback: FeedbackItem[], days: number): number {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return feedback.reduce((count, item) => {
+    const d = parseDate(item.date);
+    return d && d >= cutoff ? count + 1 : count;
+  }, 0);
+}
+
+function topFeedbackThemes(
+  feedback: FeedbackItem[],
+  limit: number,
+  minCount: number
+): Array<{ theme: string; count: number }> {
+  const counts: Record<string, number> = {};
+  for (const fb of feedback) {
+    for (const t of cleanThemes(fb.themes)) {
+      const key = normalizeTheme(t);
+      counts[key] = (counts[key] || 0) + 1;
+    }
+  }
+  return Object.entries(counts)
+    .filter(([, count]) => count >= minCount)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([theme, count]) => ({ theme, count }));
+}
+
 export async function generateInsights(
   data: AgentData,
   geminiKey?: string
@@ -52,7 +90,7 @@ export async function generateInsights(
   return programmatic;
 }
 
-function generateProgrammaticInsights(data: AgentData): Insight[] {
+export function generateProgrammaticInsights(data: AgentData): Insight[] {
   const insights: Insight[] = [];
   const now = new Date().toISOString();
 
@@ -192,22 +230,31 @@ function feedbackVolumeInsight(feedback: FeedbackItem[], now: string): Insight[]
     .sort(([, a], [, b]) => b - a)
     .map(([s, c]) => `${s}: ${c}`)
     .join(", ");
+  const sourceCount = Object.keys(bySource).length;
+  const recent14d = countRecentFeedback(feedback, 14);
+  const topThemes = topFeedbackThemes(
+    feedback,
+    3,
+    Math.max(2, Math.floor(feedback.length * 0.01))
+  );
 
-  insights.push({
-    id: "gen-feedback-volume",
-    type: "trend",
-    title: `${feedback.length} Feedback Items Across ${Object.keys(bySource).length} Sources`,
-    description: `Breakdown by source: ${sourceBreakdown}. ${
-      feedback.length > 100
-        ? "High volume — consider automated categorization."
-        : "Manageable volume for manual review."
-    }`,
-    confidence: 0.95,
-    relatedFeedbackIds: feedback.slice(0, 5).map((f) => f.id),
-    themes: ["feedback-volume"],
-    impact: feedback.length > 200 ? "high" : "medium",
-    createdAt: now,
-  });
+  if (sourceCount > 1 || feedback.length < 150) {
+    insights.push({
+      id: "gen-feedback-volume",
+      type: "trend",
+      title: `Feedback intake: ${feedback.length} items across ${sourceCount} sources`,
+      description: `Breakdown by source: ${sourceBreakdown}. Recent activity: ${recent14d} items in the last 14 days.${
+        topThemes.length > 0
+          ? ` Top recurring themes: ${topThemes.map((t) => `${t.theme} (${t.count})`).join(", ")}.`
+          : ""
+      }`,
+      confidence: 0.93,
+      relatedFeedbackIds: feedback.slice(0, 8).map((f) => f.id),
+      themes: ["feedback-volume", ...topThemes.map((t) => t.theme).slice(0, 2)],
+      impact: feedback.length > 200 ? "high" : "medium",
+      createdAt: now,
+    });
+  }
 
   const critical = feedback.filter((f) => f.priority === "critical" || f.priority === "high");
   if (critical.length > 0) {
@@ -236,7 +283,7 @@ function themeInsights(feedback: FeedbackItem[], features: ProductboardFeature[]
   const themeCounts: Record<string, { count: number; ids: string[] }> = {};
   for (const fb of feedback) {
     for (const t of cleanThemes(fb.themes)) {
-      const key = t.toLowerCase().trim();
+      const key = normalizeTheme(t);
       if (!themeCounts[key]) themeCounts[key] = { count: 0, ids: [] };
       themeCounts[key].count++;
       themeCounts[key].ids.push(fb.id);
@@ -244,7 +291,7 @@ function themeInsights(feedback: FeedbackItem[], features: ProductboardFeature[]
   }
   for (const f of features) {
     for (const t of cleanThemes(f.themes)) {
-      const key = t.toLowerCase().trim();
+      const key = normalizeTheme(t);
       if (!themeCounts[key]) themeCounts[key] = { count: 0, ids: [] };
       themeCounts[key].count++;
       themeCounts[key].ids.push(f.id);
@@ -335,27 +382,48 @@ function callInsights(calls: AttentionCall[], now: string): Insight[] {
 function gapInsights(features: ProductboardFeature[], feedback: FeedbackItem[], now: string): Insight[] {
   const insights: Insight[] = [];
 
-  const feedbackThemes = new Set<string>();
+  const feedbackThemeStats: Record<string, { count: number; ids: string[] }> = {};
   for (const fb of feedback) {
-    for (const t of cleanThemes(fb.themes)) feedbackThemes.add(t.toLowerCase());
+    for (const t of cleanThemes(fb.themes)) {
+      const key = normalizeTheme(t);
+      if (!feedbackThemeStats[key]) feedbackThemeStats[key] = { count: 0, ids: [] };
+      feedbackThemeStats[key].count++;
+      feedbackThemeStats[key].ids.push(fb.id);
+    }
   }
 
   const featureThemes = new Set<string>();
   for (const f of features) {
-    for (const t of cleanThemes(f.themes)) featureThemes.add(t.toLowerCase());
+    for (const t of cleanThemes(f.themes)) featureThemes.add(normalizeTheme(t));
   }
 
-  const unaddressed = Array.from(feedbackThemes).filter((t) => !featureThemes.has(t));
+  const minGapMentions =
+    feedback.length >= 1000 ? 10 :
+    feedback.length >= 300 ? 6 :
+    feedback.length >= 100 ? 4 : 2;
+
+  const unaddressed = Object.entries(feedbackThemeStats)
+    .filter(([theme, stats]) => stats.count >= minGapMentions && !featureThemes.has(theme))
+    .sort(([, a], [, b]) => b.count - a.count);
+
   if (unaddressed.length > 0) {
+    const top = unaddressed.slice(0, 5);
+    const titleThemes = top
+      .slice(0, 3)
+      .map(([theme, stats]) => `${theme} (${stats.count})`)
+      .join(", ");
+    const related = top.flatMap(([, stats]) => stats.ids).slice(0, 15);
     insights.push({
       id: "gen-theme-gaps",
       type: "anomaly",
-      title: `${unaddressed.length} Feedback Themes Not on Any Feature`,
-      description: `Customer feedback mentions themes with no matching feature: ${unaddressed.slice(0, 6).join(", ")}${unaddressed.length > 6 ? ` and ${unaddressed.length - 6} more` : ""}. These may be unaddressed needs or new opportunities.`,
-      confidence: 0.75,
-      relatedFeedbackIds: [],
-      themes: unaddressed.slice(0, 5),
-      impact: unaddressed.length > 5 ? "high" : "medium",
+      title: `Unmapped feedback demand: ${titleThemes}`,
+      description: `${unaddressed.length} recurring themes appear in customer feedback (${minGapMentions}+ mentions each) but are not represented in current feature themes. Top gaps: ${top
+        .map(([theme, stats]) => `${theme} (${stats.count})`)
+        .join(", ")}. These are better candidates for follow-up than one-off tags.`,
+      confidence: 0.84,
+      relatedFeedbackIds: related,
+      themes: top.map(([theme]) => theme),
+      impact: top[0][1].count >= minGapMentions * 2 || unaddressed.length >= 6 ? "high" : "medium",
       createdAt: now,
     });
   }

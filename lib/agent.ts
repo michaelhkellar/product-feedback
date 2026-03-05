@@ -63,7 +63,32 @@ function wantsDetail(query: string): boolean {
   return DETAIL_KEYWORDS.some((kw) => q.includes(kw));
 }
 
-function lookupDetails(ids: string[], data: AgentData, detailed = false): string[] {
+function atlassianIssueUrl(issueKey: string, keys: AgentKeys): string | undefined {
+  const domain = keys.atlassianDomain || process.env.ATLASSIAN_DOMAIN || "";
+  if (!domain) return undefined;
+  return `https://${domain.replace(/\.atlassian\.net\/?$/, "")}.atlassian.net/browse/${issueKey}`;
+}
+
+function feedbackContactRef(fb: FeedbackItem): string {
+  const explicitEmail = fb.metadata?.userEmail || "";
+  const customerLooksLikeEmail = /\S+@\S+/.test(fb.customer) ? fb.customer : "";
+  const email = explicitEmail || customerLooksLikeEmail;
+  const name = fb.customer && fb.customer !== email ? fb.customer : "";
+  if (name && email) return `${name} <${email}>`;
+  if (email) return email;
+  if (name) return name;
+  if (fb.company) return fb.company;
+  return fb.id;
+}
+
+function feedbackSourceRef(fb: FeedbackItem): string {
+  const base = fb.source === "productboard" ? "Productboard note" : fb.source;
+  const contact = feedbackContactRef(fb);
+  const url = fb.metadata?.sourceUrl;
+  return url ? `${base} (${contact}, link: ${url})` : `${base} (${contact})`;
+}
+
+function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: AgentKeys = {}): string[] {
   const contentLen = detailed ? 500 : 200;
   const descLen = detailed ? 400 : 0;
   const details: string[] = [];
@@ -71,7 +96,7 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false): string
     const fb = data.feedback.find((f) => f.id === id);
     if (fb) {
       const w = shortDate(fb as unknown as Record<string, unknown>);
-      details.push(`[Source: ${fb.source}, ${w}] "${fb.title}" — from ${fb.customer}${fb.company ? ` (${fb.company})` : ""}: "${fb.content.slice(0, contentLen)}"`);
+      details.push(`[Source: ${feedbackSourceRef(fb)}, ${w}] "${fb.title}" — customer: ${feedbackContactRef(fb)}${fb.company ? ` @ ${fb.company}` : ""}: "${fb.content.slice(0, contentLen)}"`);
       continue;
     }
     const feat = data.features.find((f) => f.id === id);
@@ -90,8 +115,9 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false): string
     const jira = data.jiraIssues.find((j) => j.id === id);
     if (jira) {
       const w = shortDate(jira as unknown as Record<string, unknown>);
+      const link = atlassianIssueUrl(jira.key, keys);
       const desc = detailed && jira.description ? `\n  Description: "${jira.description.slice(0, descLen)}"` : "";
-      details.push(`[Jira ${jira.key}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
+      details.push(`[Jira ${jira.key}${link ? ` (${link})` : ""}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
       continue;
     }
     const page = data.confluencePages.find((p) => p.id === id);
@@ -112,6 +138,7 @@ DATA SOURCE RULES:
 - Confluence pages = INTERNAL DOCUMENTATION. Only reference when the user specifically asks about docs, guides, or internal processes. Don't include in general feedback summaries.
 - Feedback arrives in Productboard through pipelines (Zapier, email, CRM). Zapier/email is the delivery mechanism, NOT the subject. Read the actual TITLE and CONTENT to understand what the customer wants.
 - Source is shown in brackets like [Source: productboard] or [Jira CX-1234]. A note titled "Integration Request (Salesforce)" = customer wants Salesforce integration, NOT feedback about Salesforce as a tool.
+- Prefer source citations that are directly actionable: Jira key/link, Productboard note link, and customer name/email from the note.
 - If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report"];
@@ -119,6 +146,7 @@ const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wi
 const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprint", "what's being built", "implementation", "technical"];
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
 const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same"];
+const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -138,6 +166,11 @@ function wantsEngineering(query: string): boolean {
 function wantsCount(query: string): boolean {
   const q = query.toLowerCase();
   return COUNT_KEYWORDS.some((kw) => q.includes(kw));
+}
+
+function wantsInsightDrilldown(query: string): boolean {
+  const q = query.toLowerCase();
+  return INSIGHT_DRILLDOWN_KEYWORDS.some((kw) => q.includes(kw));
 }
 
 function isLikelyFollowUp(query: string): boolean {
@@ -172,6 +205,106 @@ function buildSearchQueries(
   }
 
   return Array.from(new Set(queries.map((q) => q.toLowerCase())));
+}
+
+function extractInsightTopic(userMessage: string): string {
+  const patterns = [
+    /tell me more about\s*:?\s*(.+)$/i,
+    /deep dive on\s*:?\s*(.+)$/i,
+    /drill down on\s*:?\s*(.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = userMessage.match(pattern);
+    if (match && match[1]) return match[1].trim();
+  }
+  return userMessage.trim();
+}
+
+function normalizeTheme(theme: string): string {
+  return theme.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function recurringThemeGaps(data: AgentData): Array<{ theme: string; count: number; ids: string[] }> {
+  if (data.features.length === 0 || data.feedback.length === 0) return [];
+
+  const feedbackThemeStats: Record<string, { count: number; ids: string[] }> = {};
+  for (const fb of data.feedback) {
+    for (const theme of fb.themes) {
+      const key = normalizeTheme(theme);
+      if (!key || NOISE_THEMES.test(key)) continue;
+      if (!feedbackThemeStats[key]) feedbackThemeStats[key] = { count: 0, ids: [] };
+      feedbackThemeStats[key].count++;
+      feedbackThemeStats[key].ids.push(fb.id);
+    }
+  }
+
+  const featureThemes = new Set<string>();
+  for (const feature of data.features) {
+    for (const theme of feature.themes) {
+      const key = normalizeTheme(theme);
+      if (!key || NOISE_THEMES.test(key)) continue;
+      featureThemes.add(key);
+    }
+  }
+
+  const minMentions =
+    data.feedback.length >= 1000 ? 10 :
+    data.feedback.length >= 300 ? 6 :
+    data.feedback.length >= 100 ? 4 : 2;
+
+  return Object.entries(feedbackThemeStats)
+    .filter(([theme, stats]) => stats.count >= minMentions && !featureThemes.has(theme))
+    .sort(([, a], [, b]) => b.count - a.count)
+    .map(([theme, stats]) => ({ theme, count: stats.count, ids: stats.ids }));
+}
+
+function buildInsightDrilldownContext(
+  userMessage: string,
+  data: AgentData,
+  matchedInsightIds: string[],
+  keys: AgentKeys
+): string {
+  if (!wantsInsightDrilldown(userMessage)) return "";
+
+  const topic = extractInsightTopic(userMessage).toLowerCase();
+  const insights = data.insights.filter(
+    (insight) =>
+      matchedInsightIds.includes(insight.id) ||
+      insight.title.toLowerCase().includes(topic) ||
+      topic.includes(insight.title.toLowerCase())
+  );
+
+  const parts: string[] = [];
+
+  if (insights.length > 0) {
+    parts.push("Insight drilldown:");
+    for (const insight of insights.slice(0, 3)) {
+      parts.push(`- ${insight.title}: ${insight.description}`);
+      if (insight.relatedFeedbackIds.length > 0) {
+        const examples = lookupDetails(insight.relatedFeedbackIds.slice(0, 6), data, true, keys);
+        for (const ex of examples.slice(0, 6)) {
+          parts.push(`  - Evidence: ${ex}`);
+        }
+      }
+    }
+  }
+
+  if (topic.includes("theme") && topic.includes("not on any feature")) {
+    const gaps = recurringThemeGaps(data).slice(0, 5);
+    if (gaps.length > 0) {
+      parts.push("Recurring feedback themes not mapped to feature themes:");
+      for (const gap of gaps) {
+        parts.push(`- ${gap.theme} (${gap.count} mentions)`);
+      }
+      const evidenceIds = gaps.flatMap((gap) => gap.ids).slice(0, 8);
+      const evidence = lookupDetails(evidenceIds, data, true, keys);
+      for (const ex of evidence.slice(0, 8)) {
+        parts.push(`  - Evidence: ${ex}`);
+      }
+    }
+  }
+
+  return parts.join("\n");
 }
 
 function recentItems<T extends { date?: string; created?: string; updated?: string }>(items: T[], limit: number): T[] {
@@ -412,9 +545,10 @@ export async function chat(
 ): Promise<ChatResult> {
   const store = buildStore(data);
   const countQuery = wantsCount(userMessage);
+  const drilldownQuery = wantsInsightDrilldown(userMessage);
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
-  const searchLimit = countQuery ? Math.max(baseSearchLimit * 3, 30) : baseSearchLimit;
-  const searchQueries = buildSearchQueries(userMessage, conversationHistory, countQuery || isLikelyFollowUp(userMessage));
+  const searchLimit = countQuery || drilldownQuery ? Math.max(baseSearchLimit * 3, 30) : baseSearchLimit;
+  const searchQueries = buildSearchQueries(userMessage, conversationHistory, countQuery || drilldownQuery || isLikelyFollowUp(userMessage));
 
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
@@ -442,18 +576,20 @@ export async function chat(
 
   const sources: { type: string; id: string; title: string; url?: string }[] = [];
   const searchParts: string[] = [];
-  const detailed = wantsDetail(userMessage);
+  const detailed = wantsDetail(userMessage) || drilldownQuery;
 
   for (const r of results) {
     const doc = r.document;
-    const details = lookupDetails([doc.id], data, detailed);
+    const details = lookupDetails([doc.id], data, detailed, keys);
     if (details.length > 0) searchParts.push(details[0]);
 
     let title = doc.id;
     let url: string | undefined;
     if (doc.type === "feedback") {
       const fb = data.feedback.find((f) => f.id === doc.id);
-      title = fb?.title || title;
+      const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
+      const contact = email || fb?.customer || fb?.company || "";
+      title = fb ? `${fb.title}${contact ? ` — ${contact}` : ""}` : title;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
     } else if (doc.type === "feature") {
       title = data.features.find((f) => f.id === doc.id)?.name || title;
@@ -475,10 +611,12 @@ export async function chat(
     sources.push({ type: doc.type, id: doc.id, title, url });
   }
 
-  const searchContext = searchParts.join("\n");
+  const matchedInsightIds = results.filter((r) => r.document.type === "insight").map((r) => r.document.id);
+  const drilldownContext = buildInsightDrilldownContext(userMessage, data, matchedInsightIds, keys);
+  const searchContext = [searchParts.join("\n"), drilldownContext].filter(Boolean).join("\n");
 
   const effectiveMode =
-    countQuery && contextMode === "focused"
+    (countQuery || drilldownQuery) && contextMode === "focused"
       ? "deep"
       : isBroadQuery(userMessage) && contextMode === "focused"
         ? "standard"
@@ -510,11 +648,11 @@ USE THIS EXACT FORMAT:
 
 [1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
 
-> "[direct customer quote if available]" — Customer Name (Source: Jira CX-123 or Productboard note title)
+> "[direct customer quote if available]" — Customer Name or Email (Source: [Jira CX-123](link) or [Productboard note - customer/email](link if available))
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Source = where it came from (Productboard, Jira CX-123, etc). What = the actual request/issue. When = relative date.]
+[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard customer/email and link when available. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date.]
 
 ## Next Steps
 
@@ -522,7 +660,7 @@ USE THIS EXACT FORMAT:
 2. [owner] [action] [by when]
 3. [owner] [action] [by when]
 
-CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include its source (ticket ID, Productboard note title, or customer name). Never show an unattributed quote. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
+CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include a specific, searchable source (Jira key, customer name, or customer email). Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
   const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(prompt);
 

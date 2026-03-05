@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { chat } from "@/lib/agent";
 import { getData } from "@/lib/data-fetcher";
 import { ContextMode } from "@/lib/api-keys";
+import { generateProgrammaticInsights } from "@/lib/insights-generator";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,8 +29,19 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-atlassian-confluence-filter") || undefined
     );
 
+    // Keep chat aware of the same programmatic insight set shown in the Insights panel.
+    const generatedInsights = generateProgrammaticInsights(data);
+    const seenInsightIds = new Set(data.insights.map((i) => i.id));
+    const mergedInsights = [...data.insights];
+    for (const insight of generatedInsights) {
+      if (!seenInsightIds.has(insight.id)) {
+        mergedInsights.push(insight);
+      }
+    }
+    const dataWithInsights = { ...data, insights: mergedInsights };
+
     const mode: ContextMode = (contextMode === "standard" || contextMode === "deep") ? contextMode : "focused";
-    const result = await chat(message, Array.isArray(history) ? history : [], data, keys, mode);
+    const result = await chat(message, Array.isArray(history) ? history : [], dataWithInsights, keys, mode);
 
     return NextResponse.json(result);
   } catch (error) {

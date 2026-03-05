@@ -309,7 +309,7 @@ export function InsightsPanel({
               <button
                 onClick={() => {
                   onQueryInsight(
-                    `Tell me more about: ${selectedInsight.title}`
+                    `Tell me more about: ${selectedInsight.title}. Include concrete examples with customer-identifiable sources and direct evidence from feedback/tickets.`
                   );
                   setSelectedInsight(null);
                 }}
