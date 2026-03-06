@@ -11,7 +11,7 @@ interface ApiKeyContextValue {
   removeKey: (name: keyof ApiKeyState) => void;
   clearAllKeys: () => void;
   setUseDemoData: (v: boolean) => void;
-  refreshStatus: () => Promise<void>;
+  refreshStatus: (overrideKeys?: Partial<ApiKeyState>) => Promise<void>;
   keyHeaders: Record<string, string>;
   hasAnyKey: boolean;
 }
@@ -51,9 +51,10 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
     setLoaded(true);
   }, []);
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (overrideKeys?: Partial<ApiKeyState>) => {
     try {
-      const res = await fetch("/api/settings/status", { headers: buildKeyHeaders(keys) });
+      const effectiveKeys = { ...keys, ...overrideKeys };
+      const res = await fetch("/api/settings/status", { headers: buildKeyHeaders(effectiveKeys) });
       if (res.ok) {
         const data = await res.json();
         setStatus(data.status);

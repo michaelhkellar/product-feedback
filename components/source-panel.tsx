@@ -16,6 +16,7 @@ import {
   ConfluencePage,
   DataSourceStatus,
 } from "@/lib/types";
+import type { PendoUsageOverview } from "@/lib/pendo";
 import {
   ClipboardList,
   Phone,
@@ -61,7 +62,60 @@ type DetailView =
   | { type: "call"; data: AttentionCall }
   | { type: "jira"; data: JiraIssue }
   | { type: "confluence"; data: ConfluencePage }
+  | { type: "pendo"; data: PendoFinding }
   | null;
+
+type PendoFinding = {
+  id: string;
+  kind: "page" | "feature" | "account";
+  title: string;
+  subtitle: string;
+  totalEvents: number;
+  totalMinutes: number;
+  loadedAt: string;
+};
+
+function formatPendoMinutes(totalMinutes: number): string {
+  if (totalMinutes >= 60) return `${(totalMinutes / 60).toFixed(1)}h`;
+  if (totalMinutes > 0) return `${totalMinutes.toFixed(1)}m`;
+  return "0m";
+}
+
+function buildPendoFindings(overview: PendoUsageOverview | null): PendoFinding[] {
+  if (!overview) return [];
+
+  const findings: PendoFinding[] = [
+    ...overview.activePages.map((item) => ({
+      id: `page:${item.id}`,
+      kind: "page" as const,
+      title: item.name,
+      subtitle: "Tagged page activity",
+      totalEvents: item.totalEvents,
+      totalMinutes: item.totalMinutes,
+      loadedAt: overview.generatedAt,
+    })),
+    ...overview.activeFeatures.map((item) => ({
+      id: `feature:${item.id}`,
+      kind: "feature" as const,
+      title: item.name,
+      subtitle: "Tagged feature activity",
+      totalEvents: item.totalEvents,
+      totalMinutes: item.totalMinutes,
+      loadedAt: overview.generatedAt,
+    })),
+    ...overview.activeAccounts.map((item) => ({
+      id: `account:${item.accountId}`,
+      kind: "account" as const,
+      title: item.accountId,
+      subtitle: "Account-level product usage",
+      totalEvents: item.totalEvents,
+      totalMinutes: item.totalMinutes,
+      loadedAt: overview.generatedAt,
+    })),
+  ];
+
+  return findings.sort((a, b) => b.totalEvents - a.totalEvents);
+}
 
 export function SourcePanel({
   className,
@@ -71,7 +125,7 @@ export function SourcePanel({
   const { keys, status, useDemoData, keyHeaders } = useApiKeys();
 
   const [activeTab, setActiveTab] = useState<
-    "sources" | "feedback" | "features" | "calls" | "jira" | "confluence"
+    "sources" | "feedback" | "features" | "calls" | "pendo" | "jira" | "confluence"
   >("sources");
   const [detail, setDetail] = useState<DetailView>(null);
   const [loading, setLoading] = useState(false);
@@ -82,6 +136,7 @@ export function SourcePanel({
   const [calls, setCalls] = useState<AttentionCall[]>([]);
   const [jiraIssues, setJiraIssues] = useState<JiraIssue[]>([]);
   const [confluencePages, setConfluencePages] = useState<ConfluencePage[]>([]);
+  const [pendoFindings, setPendoFindings] = useState<PendoFinding[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceStatus[]>([]);
   const [dataIsDemo, setDataIsDemo] = useState(true);
   const [pendoItemCount, setPendoItemCount] = useState(0);
@@ -107,7 +162,8 @@ export function SourcePanel({
       const newConfluence: ConfluencePage[] = atlRes.confluencePages || [];
       const atlConnected = atlRes.connected === true;
       const isDemo = pbRes.featuresIsDemo || attRes.callsIsDemo;
-      const newPendoCount = (pendoRes.overview?.totalPages || 0) + (pendoRes.overview?.totalFeatures || 0);
+      const newPendoFindings = buildPendoFindings(pendoRes.overview || null);
+      const newPendoCount = newPendoFindings.length;
 
       if (useDemoData && isDemo && !atlConnected) {
         setFeedback(DEMO_FEEDBACK);
@@ -120,6 +176,7 @@ export function SourcePanel({
       }
       setJiraIssues(newJira);
       setConfluencePages(newConfluence);
+      setPendoFindings(newPendoFindings);
       setPendoItemCount(newPendoCount);
       setDataIsDemo(isDemo && useDemoData && !atlConnected);
 
@@ -159,6 +216,7 @@ export function SourcePanel({
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
+        setPendoFindings([]);
         setDataSources(DEMO_DATA_SOURCES);
         setDataIsDemo(true);
         setPendoItemCount(0);
@@ -232,6 +290,16 @@ export function SourcePanel({
     );
   }, [confluencePages, sq]);
 
+  const filteredPendo = useMemo(() => {
+    if (!sq) return pendoFindings;
+    return pendoFindings.filter(
+      (item) =>
+        item.title.toLowerCase().includes(sq) ||
+        item.subtitle.toLowerCase().includes(sq) ||
+        item.kind.toLowerCase().includes(sq)
+    );
+  }, [pendoFindings, sq]);
+
   const totalItems = feedback.length + features.length + calls.length + jiraIssues.length + confluencePages.length + pendoItemCount;
 
   function formatDate(dateStr: string | undefined): string {
@@ -264,6 +332,7 @@ export function SourcePanel({
   const sortedCalls = useMemo(() => sortByDate(filteredCalls), [filteredCalls]);
   const sortedJira = useMemo(() => sortByDate(filteredJira), [filteredJira]);
   const sortedConfluence = useMemo(() => sortByDate(filteredConfluence), [filteredConfluence]);
+  const sortedPendo = useMemo(() => [...filteredPendo].sort((a, b) => b.totalEvents - a.totalEvents), [filteredPendo]);
 
   const sentimentIcon = (s: string) => {
     if (s === "positive")
@@ -301,6 +370,7 @@ export function SourcePanel({
               { key: "feedback" as const, label: `Feedback (${feedback.length})` },
               { key: "features" as const, label: `Features (${features.length})` },
               ...(calls.length > 0 ? [{ key: "calls" as const, label: `Calls (${calls.length})` }] : []),
+              ...(pendoFindings.length > 0 || status.pendoKey?.configured ? [{ key: "pendo" as const, label: `Pendo (${pendoFindings.length})` }] : []),
               ...(jiraIssues.length > 0 || status.atlassianKey?.configured ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
               ...(confluencePages.length > 0 || status.atlassianKey?.configured ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
             ]
@@ -346,6 +416,7 @@ export function SourcePanel({
               {activeTab === "feedback" && `${filteredFeedback.length} of ${feedback.length} results`}
               {activeTab === "features" && `${filteredFeatures.length} of ${features.length} results`}
               {activeTab === "calls" && `${filteredCalls.length} of ${calls.length} results`}
+              {activeTab === "pendo" && `${filteredPendo.length} of ${pendoFindings.length} results`}
               {activeTab === "jira" && `${filteredJira.length} of ${jiraIssues.length} results`}
               {activeTab === "confluence" && `${filteredConfluence.length} of ${confluencePages.length} results`}
             </p>
@@ -552,6 +623,37 @@ export function SourcePanel({
             )}
           </div>
         )}
+        {!loading && activeTab === "pendo" && (
+          <div>
+            {sortedPendo.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground px-4">
+                <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p className="text-xs mb-1">{sq ? "No matching Pendo findings" : "No Pendo findings loaded"}</p>
+                {!sq && <p className="text-[10px]">Connect Pendo to review recent page, feature, and account activity</p>}
+              </div>
+            ) : (
+              sortedPendo.map((item) => (
+                <button key={item.id} onClick={() => setDetail({ type: "pendo", data: item })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                  <div className="flex items-start gap-2.5">
+                    <Hash className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-medium line-clamp-1">{item.title}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        <span className="capitalize">{item.kind}</span>
+                        <span>·</span>
+                        <span>{item.totalEvents} events</span>
+                        <span>·</span>
+                        <span>{formatPendoMinutes(item.totalMinutes)}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         {!loading && activeTab === "jira" && (
           <div>
             {sortedJira.length === 0 ? (
@@ -753,16 +855,36 @@ export function SourcePanel({
                 {detail.data.url && <a href={detail.data.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Confluence</a>}
               </>
             )}
+            {detail.type === "pendo" && (
+              <>
+                <h3 className="text-sm font-semibold">{detail.data.title}</h3>
+                <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                  <span className="capitalize">{detail.data.kind}</span>
+                  <span>·</span>
+                  <span>{detail.data.totalEvents} events</span>
+                  <span>·</span>
+                  <span>{formatPendoMinutes(detail.data.totalMinutes)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {detail.data.subtitle}. This is one of the recent Pendo usage signals loaded for the workspace.
+                </p>
+              </>
+            )}
             {onQuerySource && (
               <button
                 onClick={() => {
                   const title =
                     detail.type === "feedback" ? detail.data.title
                     : detail.type === "feature" ? detail.data.name
+                    : detail.type === "pendo" ? `${detail.data.kind} ${detail.data.title}`
                     : detail.type === "jira" ? `${detail.data.key}: ${detail.data.summary}`
                     : detail.type === "confluence" ? detail.data.title
                     : detail.data.title;
-                  onQuerySource(`Tell me more about: ${title}`);
+                  onQuerySource(
+                    detail.type === "pendo"
+                      ? `Use Pendo to explain the recent ${detail.data.kind} activity for ${detail.data.title}, including what this usage might mean and any related customer feedback.`
+                      : `Tell me more about: ${title}`
+                  );
                   setDetail(null);
                 }}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
