@@ -127,6 +127,7 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
     if (status.productboardKey.configured)
       configuredSources.push("Productboard");
     if (status.attentionKey.configured) configuredSources.push("Attention");
+    if (status.pendoKey?.configured) configuredSources.push("Pendo");
     if (status.atlassianKey?.configured) configuredSources.push("Jira + Confluence");
 
     const sourceInfo =
@@ -293,6 +294,7 @@ Try one of the suggested queries below to get started.`,
                       src.type === "feedback" && "bg-blue-500/10 text-blue-600",
                       src.type === "feature" && "bg-green-500/10 text-green-600",
                       src.type === "call" && "bg-amber-500/10 text-amber-600",
+                      src.type === "pendo" && "bg-fuchsia-500/10 text-fuchsia-600",
                       src.type === "insight" && "bg-purple-500/10 text-purple-600",
                       src.type === "jira" && "bg-orange-500/10 text-orange-600",
                       src.type === "confluence" && "bg-cyan-500/10 text-cyan-600",

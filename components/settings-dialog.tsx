@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useApiKeys } from "./api-key-provider";
-import { maskKey, buildKeyHeaders, ApiKeyState } from "@/lib/api-keys";
+import { buildKeyHeaders, ApiKeyState } from "@/lib/api-keys";
 import {
   X, Settings, Key, CheckCircle2, XCircle, Loader2,
-  Eye, EyeOff, Trash2, Save, AlertTriangle,
+  Trash2, Save, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -90,10 +90,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setLoadingResources(false);
   }
 
-  function showSave(msg: string) {
+  function showSave(msg: string, nextKeys?: Partial<ApiKeyState>) {
     setSaveMessage(msg);
     setTimeout(() => setSaveMessage(null), 2000);
-    setTimeout(() => refreshStatus(), 500);
+    refreshStatus(nextKeys);
   }
 
   async function handleValidate(id: string) {
@@ -132,35 +132,42 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const field = fields[id];
     if (!field) return;
     const trimmed = field.value.trim();
+    const nextKeys: Partial<ApiKeyState> = { [id]: trimmed } as Partial<ApiKeyState>;
     if (trimmed) setKey(id as keyof ApiKeyState, trimmed);
     else removeKey(id as keyof ApiKeyState);
     updateField(id, { dirty: false });
+    showSave(`${SIMPLE_KEYS.find((cfg) => cfg.id === id)?.label || "Key"} ${trimmed ? "saved" : "removed"}`, nextKeys);
   }
 
   function handleRemove(id: string) {
     removeKey(id as keyof ApiKeyState);
     updateField(id, { value: "", dirty: false, valid: null, error: null });
+    showSave(`${SIMPLE_KEYS.find((cfg) => cfg.id === id)?.label || "Key"} removed`, { [id]: "" } as Partial<ApiKeyState>);
   }
 
   function handleSaveAtlassian() {
+    const nextKeys: Partial<ApiKeyState> = {};
     for (const af of ATLASSIAN_FIELDS) {
       const field = fields[af.id];
       if (field) {
         const trimmed = field.value.trim();
         if (trimmed) setKey(af.id, trimmed);
         else removeKey(af.id);
+        (nextKeys as Record<string, string>)[af.id] = trimmed;
         updateField(af.id, { dirty: false });
       }
     }
-    showSave("Atlassian settings saved");
+    showSave("Atlassian settings saved", nextKeys);
   }
 
   function handleRemoveAtlassian() {
+    const nextKeys: Partial<ApiKeyState> = {};
     for (const af of ATLASSIAN_FIELDS) {
       removeKey(af.id);
+      (nextKeys as Record<string, string>)[af.id] = "";
       updateField(af.id, { value: "", dirty: false, valid: null, error: null });
     }
-    showSave("Atlassian settings removed");
+    showSave("Atlassian settings removed", nextKeys);
   }
 
   if (!open) return null;
@@ -204,6 +211,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform", useDemoData ? "translate-x-5" : "translate-x-0.5")} />
               </button>
             </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-muted/30 border border-border">
+            <p className="text-xs font-medium">Local key storage</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Saved API keys are stored in encrypted browser storage when supported. Older plaintext local storage entries are migrated automatically.
+            </p>
           </div>
 
           <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-2">
@@ -252,15 +266,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <p className="text-[10px] text-muted-foreground">{cfg.description}</p>
                 <div className="flex gap-2">
                   <div className="flex-1 relative">
-                    <input type={field.visible ? "text" : "password"} value={field.value}
+                    <input type="password" value={field.value}
                       onChange={(e) => updateField(cfg.id, { value: e.target.value, dirty: true })}
                       placeholder={cfg.placeholder}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 pr-8" />
-                    <button type="button" onClick={() => updateField(cfg.id, { visible: !field.visible })} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                      {field.visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
                   </div>
-                  <button onClick={() => { handleSave(cfg.id); showSave(`${cfg.label} saved`); }}
+                  <button onClick={() => { handleSave(cfg.id); }}
                     disabled={!field.dirty && !!keys[cfg.id]}
                     className={cn("px-3 py-2 rounded-lg text-[10px] font-medium flex items-center gap-1.5 transition-colors",
                       field.dirty || !keys[cfg.id] ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-muted text-muted-foreground cursor-not-allowed")}>
@@ -273,12 +284,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     {field.validating ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}Test
                   </button>
                   {keys[cfg.id] && (
-                    <button onClick={() => { handleRemove(cfg.id); showSave(`${cfg.label} removed`); }}
+                    <button onClick={() => { handleRemove(cfg.id); }}
                       className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
                       <Trash2 className="w-3 h-3" />Remove
                     </button>
                   )}
-                  {keys[cfg.id] && !field.dirty && <span className="text-[10px] text-muted-foreground font-mono">{maskKey(keys[cfg.id])}</span>}
                 </div>
                 {field.error && <div className="flex items-center gap-1.5 text-[10px] text-red-500"><AlertTriangle className="w-3 h-3" />{field.error}</div>}
               </div>
@@ -305,17 +315,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <label className="text-[10px] text-muted-foreground font-medium">{af.label}</label>
                   <div className="relative">
                     <input
-                      type={af.type === "password" && !field.visible ? "password" : "text"}
+                      type={af.type === "password" ? "password" : "text"}
                       value={field.value}
                       onChange={(e) => updateField(af.id, { value: e.target.value, dirty: true })}
                       placeholder={af.placeholder}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 pr-8"
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
                     />
-                    {af.type === "password" && (
-                      <button type="button" onClick={() => updateField(af.id, { visible: !field.visible })} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                        {field.visible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
-                    )}
                   </div>
                 </div>
               );
@@ -428,7 +433,17 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               for (const cfg of SIMPLE_KEYS) initial[cfg.id] = { value: "", visible: false, dirty: false, validating: false, valid: null, error: null };
               for (const af of ATLASSIAN_FIELDS) initial[af.id] = { value: "", visible: af.type !== "password", dirty: false, validating: false, valid: null, error: null };
               setFields(initial);
-              showSave("All keys cleared");
+              showSave("All keys cleared", {
+                geminiKey: "",
+                productboardKey: "",
+                attentionKey: "",
+                pendoKey: "",
+                atlassianDomain: "",
+                atlassianEmail: "",
+                atlassianToken: "",
+                atlassianJiraFilter: "",
+                atlassianConfluenceFilter: "",
+              });
             }} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-red-500 hover:bg-red-500/10 transition-colors">
               <Trash2 className="w-3.5 h-3.5" />Clear All Keys
             </button>
