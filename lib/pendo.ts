@@ -1,4 +1,4 @@
-import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
 
 const API_BASE = "https://app.pendo.io/api/v1";
 const OVERVIEW_DAYS = 7;
@@ -151,7 +151,8 @@ async function topUsageForSource(
   groupField: "pageId" | "featureId",
   names: Map<string, string>,
   days = OVERVIEW_DAYS,
-  filter?: string
+  filter?: string,
+  limit = 10
 ): Promise<PendoUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
@@ -187,12 +188,13 @@ async function topUsageForSource(
       };
     })
     .filter((item): item is PendoUsageItem => !!item)
-    .slice(0, 5);
+    .slice(0, limit);
 }
 
 async function topAccounts(
   integrationKey: string,
-  days = OVERVIEW_DAYS
+  days = OVERVIEW_DAYS,
+  limit = 10
 ): Promise<PendoAccountUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
@@ -227,7 +229,7 @@ async function topAccounts(
       };
     })
     .filter((item): item is PendoAccountUsageItem => !!item)
-    .slice(0, 5);
+    .slice(0, limit);
 }
 
 function entityFilter(kind: "visitorId" | "accountId", id: string): string {
@@ -410,7 +412,7 @@ function buildUsageSummary(
   if (pages.length > 0) {
     lines.push(
       `Top pages: ${pages
-        .slice(0, 3)
+        .slice(0, 5)
         .map((item) => `${item.name} (${item.totalEvents} events, ${formatMinutes(item.totalMinutes)})`)
         .join("; ")}.`
     );
@@ -418,8 +420,8 @@ function buildUsageSummary(
 
   if (features.length > 0) {
     lines.push(
-      `Top tagged features: ${features
-        .slice(0, 3)
+      `Top features: ${features
+        .slice(0, 5)
         .map((item) => `${item.name} (${item.totalEvents} clicks, ${formatMinutes(item.totalMinutes)})`)
         .join("; ")}.`
     );
@@ -464,6 +466,40 @@ export async function getPendoOverview(
     };
   } catch (error) {
     console.error("Failed to load Pendo overview:", error);
+    return null;
+  }
+}
+
+export async function getFullPendoAnalytics(
+  overrideKey?: string,
+  days?: number,
+  limit = 200
+): Promise<FullAnalyticsResult | null> {
+  const integrationKey = overrideKey || process.env.PENDO_INTEGRATION_KEY;
+  if (!integrationKey) return null;
+  const effectiveDays = days || OVERVIEW_DAYS;
+  const cap = Math.min(limit, 500);
+
+  try {
+    const [pages, features] = await Promise.all([
+      fetchTaggedObjects(integrationKey, "/page"),
+      fetchTaggedObjects(integrationKey, "/feature"),
+    ]);
+
+    const [allPages, allFeatures, allAccounts] = await Promise.all([
+      topUsageForSource(integrationKey, "pageEvents", "pageId", pages, effectiveDays, undefined, cap),
+      topUsageForSource(integrationKey, "featureEvents", "featureId", features, effectiveDays, undefined, cap),
+      topAccounts(integrationKey, effectiveDays, cap),
+    ]);
+
+    return {
+      pages: allPages.map((p) => ({ id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes })),
+      features: allFeatures.map((f) => ({ id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes })),
+      events: [],
+      accounts: allAccounts.map((a) => ({ id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes })),
+    };
+  } catch (error) {
+    console.error("Failed to load full Pendo analytics:", error);
     return null;
   }
 }
@@ -543,7 +579,7 @@ export async function getRelevantPendoContext(
 
     lines.push(...buildUsageSummary("Visitor activity", totals, pages, features));
     if (history.length > 0) {
-      lines.push(`Recent visitor history sample (last 24h summary): ${history.map(summarizeHistoryItem).filter(Boolean).slice(0, 3).join("; ")}.`);
+      lines.push(`Recent visitor history sample (last 24h summary): ${history.map(summarizeHistoryItem).filter(Boolean).slice(0, 5).join("; ")}.`);
     }
 
     sources.push({ type: "pendo", id: `visitor:${matchedVisitor.id}`, title: `Pendo visitor ${visitorLabel}` });

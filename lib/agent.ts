@@ -1,15 +1,15 @@
 import { InMemoryVectorStore } from "./vector-store";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
-import { getRelevantPendoContext } from "./pendo";
-import { getRelevantAmplitudeContext } from "./amplitude";
-import { getRelevantPostHogContext } from "./posthog";
+import { getRelevantPendoContext, getFullPendoAnalytics } from "./pendo";
+import { getRelevantAmplitudeContext, getFullAmplitudeAnalytics } from "./amplitude";
+import { getRelevantPostHogContext, getFullPostHogAnalytics } from "./posthog";
 import {
   DEMO_FEEDBACK, DEMO_PRODUCTBOARD_FEATURES, DEMO_ATTENTION_CALLS, DEMO_INSIGHTS,
   DEMO_JIRA_ISSUES, DEMO_CONFLUENCE_PAGES, DEMO_PENDO_OVERVIEW,
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
-  AnalyticsOverview,
+  AnalyticsOverview, FullAnalyticsResult,
 } from "./types";
 import { ContextMode } from "./api-keys";
 
@@ -496,6 +496,90 @@ function wantsAnalyticsContext(query: string): boolean {
   return false;
 }
 
+const BROAD_ANALYTICS_KEYWORDS = [
+  "all pages", "all features", "every page", "every feature",
+  "least used", "lowest usage", "low traffic", "underperforming",
+  "full breakdown", "rank pages", "rank features", "ranking",
+  "compare pages", "compare features", "bottom pages", "bottom features",
+  "which pages", "which features", "list pages", "list features",
+  "page usage", "feature usage", "full analytics", "complete breakdown",
+];
+
+const BROAD_DATA_KEYWORDS = [
+  "all feedback", "every ticket", "all jira", "all tickets",
+  "complete list", "full list", "everything about",
+  "comprehensive", "every customer", "all calls", "all issues",
+  "list all", "show all", "every issue",
+];
+
+function wantsDeepDive(query: string): { analytics: boolean; data: boolean } {
+  const q = query.toLowerCase();
+  const analytics = BROAD_ANALYTICS_KEYWORDS.some((kw) => q.includes(kw));
+  const data = BROAD_DATA_KEYWORDS.some((kw) => q.includes(kw));
+  return { analytics, data };
+}
+
+function formatFullAnalytics(result: FullAnalyticsResult, label: string): string {
+  const lines: string[] = [`\n--- Full ${label} Analytics ---`];
+  if (result.pages.length > 0) {
+    lines.push(`\nAll pages (${result.pages.length}, ranked by usage):`);
+    for (const p of result.pages) lines.push(`  ${p.name}: ${p.count} events${p.minutes ? `, ${p.minutes}m` : ""}`);
+  }
+  if (result.features.length > 0) {
+    lines.push(`\nAll features (${result.features.length}, ranked by usage):`);
+    for (const f of result.features) lines.push(`  ${f.name}: ${f.count} events${f.minutes ? `, ${f.minutes}m` : ""}`);
+  }
+  if (result.events.length > 0) {
+    lines.push(`\nAll events (${result.events.length}, ranked by count):`);
+    for (const e of result.events) lines.push(`  ${e.name}: ${e.count}`);
+  }
+  if (result.accounts.length > 0) {
+    lines.push(`\nAll accounts (${result.accounts.length}, ranked by activity):`);
+    for (const a of result.accounts) lines.push(`  ${a.id}: ${a.count} events${a.minutes ? `, ${a.minutes}m` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+function buildExpandedDataContext(data: AgentData, limit = 100): string {
+  const parts: string[] = [];
+  if (data.feedback.length > 0) {
+    const items = data.feedback.slice(0, limit);
+    parts.push(`\n--- Expanded feedback (${items.length} of ${data.feedback.length}) ---`);
+    for (const fb of items) {
+      parts.push(`- ${fb.title} [${fb.source}/${fb.priority}] ${fb.customer}${fb.company ? ` @ ${fb.company}` : ""}`);
+    }
+  }
+  if (data.jiraIssues.length > 0) {
+    const items = data.jiraIssues.slice(0, limit);
+    parts.push(`\n--- Expanded Jira (${items.length} of ${data.jiraIssues.length}) ---`);
+    for (const j of items) {
+      parts.push(`- ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}]`);
+    }
+  }
+  if (data.features.length > 0) {
+    const items = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, limit);
+    parts.push(`\n--- Expanded features (${items.length} of ${data.features.length}) ---`);
+    for (const f of items) {
+      parts.push(`- ${f.name} — ${f.status}, ${f.votes} votes`);
+    }
+  }
+  if (data.calls.length > 0) {
+    const items = data.calls.slice(0, Math.min(limit, 20));
+    parts.push(`\n--- Expanded calls (${items.length} of ${data.calls.length}) ---`);
+    for (const c of items) {
+      parts.push(`- ${c.title} (${c.date}) — ${c.summary.slice(0, 80)}`);
+    }
+  }
+  if (data.confluencePages.length > 0) {
+    const items = data.confluencePages.slice(0, Math.min(limit, 30));
+    parts.push(`\n--- Expanded Confluence (${items.length} of ${data.confluencePages.length}) ---`);
+    for (const p of items) {
+      parts.push(`- ${p.title} [${p.space}]`);
+    }
+  }
+  return parts.join("\n");
+}
+
 function isLikelyFollowUp(query: string): boolean {
   const q = query.toLowerCase();
   const hasFollowUpWord = FOLLOW_UP_KEYWORDS.some((kw) => q.includes(kw));
@@ -739,13 +823,15 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
   if (analyticsOverview) {
     const ao = analyticsOverview;
-    const pageSummary = ao.topPages.slice(0, 3).map((p) => `${p.name} (${p.count})`).join(", ");
-    const featureSummary = ao.topFeatures.slice(0, 3).map((f) => `${f.name} (${f.count})`).join(", ");
-    const eventSummary = ao.topEvents.slice(0, 3).map((e) => `${e.name} (${e.count})`).join(", ");
+    const pageSummary = ao.topPages.slice(0, 5).map((p) => `${p.name} (${p.count})`).join(", ");
+    const featureSummary = ao.topFeatures.slice(0, 5).map((f) => `${f.name} (${f.count})`).join(", ");
+    const eventSummary = ao.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ");
+    const accountSummary = ao.topAccounts.slice(0, 3).map((a) => `${a.id} (${a.count})`).join(", ");
     parts.push(`${analyticsLabel}: ${ao.totalTrackedPages} tracked pages, ${ao.totalTrackedFeatures} tracked features.`);
     if (pageSummary) parts.push(`${analyticsLabel} top pages: ${pageSummary}`);
     if (featureSummary) parts.push(`${analyticsLabel} top features: ${featureSummary}`);
     if (eventSummary) parts.push(`${analyticsLabel} top events: ${eventSummary}`);
+    if (accountSummary) parts.push(`${analyticsLabel} top accounts: ${accountSummary}`);
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
   }
 
@@ -824,7 +910,7 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
   const parts: string[] = [];
   parts.push(buildStatsHeader(data, analyticsLabel));
 
-  const recentFb = recentItems(data.feedback, 10);
+  const recentFb = recentItems(data.feedback, 15);
   if (recentFb.length > 0) {
     parts.push(`\nRecent customer feedback (${recentFb.length} of ${data.feedback.length}):`);
     for (const fb of recentFb) {
@@ -834,13 +920,13 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
   }
 
   if (data.features.length > 0) {
-    const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 5);
+    const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 8);
     parts.push(`\nTop features: ${top.map((f) => `${f.name} (${f.votes}v, ${f.status})`).join("; ")}`);
   }
 
   const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
   if (jiraFiltered.length > 0) {
-    const recent = recentItems(jiraFiltered, 8);
+    const recent = recentItems(jiraFiltered, 12);
     const label = includeEng ? "Jira" : "Jira (CX/customer)";
     parts.push(`\nRecent ${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
@@ -850,7 +936,7 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
   }
 
   if (includeConfluence && data.confluencePages.length > 0) {
-    parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 5).map((p) => p.title).join(", ")}`);
+    parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 8).map((p) => p.title).join(", ")}`);
   }
 
   parts.push(`\n---\nSearch results:\n${searchResults || "(No matches)"}`);
@@ -861,7 +947,7 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
   const parts: string[] = [];
   parts.push(buildStatsHeader(data, analyticsLabel));
 
-  const recentFb = recentItems(data.feedback, 25);
+  const recentFb = recentItems(data.feedback, 40);
   if (recentFb.length > 0) {
     parts.push(`\nCustomer feedback (${recentFb.length} of ${data.feedback.length}):`);
     for (const fb of recentFb) {
@@ -872,14 +958,14 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
 
   if (data.features.length > 0) {
     const active = data.features.filter((f) => f.status === "in_progress" || f.status === "planned");
-    const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 8);
+    const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 12);
     parts.push(`\nFeatures (${active.length} active of ${data.features.length}):`);
     for (const f of top) parts.push(`- ${f.name} — ${f.status}, ${f.votes} votes`);
   }
 
   const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
   if (jiraFiltered.length > 0) {
-    const recent = recentItems(jiraFiltered, 12);
+    const recent = recentItems(jiraFiltered, 20);
     const label = includeEng ? "Jira (all)" : "Jira (CX/customer)";
     parts.push(`\n${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
@@ -889,18 +975,18 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
   }
 
   if (data.calls.length > 0) {
-    const recent = recentItems(data.calls, 3);
+    const recent = recentItems(data.calls, 5);
     parts.push(`\nCalls:`);
     for (const c of recent) parts.push(`- [${shortDate(c as unknown as Record<string, unknown>)}] ${c.title} — ${c.summary.slice(0, 100)}`);
   }
 
   if (includeConfluence && data.confluencePages.length > 0) {
-    parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 5).map((p) => p.title).join(", ")}${data.confluencePages.length > 5 ? ` +${data.confluencePages.length - 5} more` : ""}`);
+    parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 8).map((p) => p.title).join(", ")}${data.confluencePages.length > 8 ? ` +${data.confluencePages.length - 8} more` : ""}`);
   }
 
   if (data.insights.length > 0) {
     parts.push(`\nInsights:`);
-    for (const i of data.insights.slice(0, 4)) parts.push(`- [${i.type}] ${i.title}`);
+    for (const i of data.insights.slice(0, 6)) parts.push(`- [${i.type}] ${i.title}`);
   }
 
   parts.push(`\n---\nSearch results:\n${searchResults || "(No matches)"}`);
@@ -924,9 +1010,11 @@ export async function chat(
   const store = buildStore(scopedData);
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
+  const deepDiveEarly = wantsDeepDive(userMessage);
+  const wideQuery = countQuery || drilldownQuery || deepDiveEarly.analytics || deepDiveEarly.data;
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
-  const searchLimit = countQuery || drilldownQuery ? Math.max(baseSearchLimit * 3, 30) : baseSearchLimit;
-  const searchQueries = buildSearchQueries(userMessage, conversationHistory, countQuery || drilldownQuery || isLikelyFollowUp(userMessage));
+  const searchLimit = wideQuery ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
+  const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage));
 
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
@@ -1028,17 +1116,42 @@ export async function chat(
     }
   }
 
-  const searchContext = [searchParts.join("\n"), drilldownContext, analyticsLookup?.context || ""].filter(Boolean).join("\n");
+  let fullAnalyticsBlock = "";
+  if (deepDiveEarly.analytics) {
+    const lookupDays = timeRange ? Math.min(timeRangeDays(timeRange), 90) : undefined;
+    let fullResult: FullAnalyticsResult | null = null;
+    if (analyticsProvider === "amplitude") {
+      fullResult = await getFullAmplitudeAnalytics(keys.amplitudeKey, lookupDays);
+    } else if (analyticsProvider === "posthog") {
+      fullResult = await getFullPostHogAnalytics(keys.posthogKey, lookupDays, 200, keys.posthogHost);
+    } else {
+      fullResult = await getFullPendoAnalytics(keys.pendoKey, lookupDays);
+    }
+    if (fullResult) {
+      const label = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
+      fullAnalyticsBlock = formatFullAnalytics(fullResult, label);
+    }
+  }
+
+  let expandedDataBlock = "";
+  if (deepDiveEarly.data) {
+    expandedDataBlock = buildExpandedDataContext(scopedData);
+  }
+
+  const searchContext = [searchParts.join("\n"), drilldownContext, analyticsLookup?.context || "", fullAnalyticsBlock, expandedDataBlock].filter(Boolean).join("\n");
 
   const analyticsLabel = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
 
+  const hasDeepDive = deepDiveEarly.analytics || deepDiveEarly.data;
   const effectiveContextMode = isPrdOrTicket
     ? "deep"
-    : (countQuery || drilldownQuery) && contextMode === "focused"
+    : hasDeepDive
       ? "deep"
-      : isBroadQuery(userMessage) && contextMode === "focused"
-        ? "standard"
-        : contextMode;
+      : (countQuery || drilldownQuery) && contextMode === "focused"
+        ? "deep"
+        : isBroadQuery(userMessage) && contextMode === "focused"
+          ? "standard"
+          : contextMode;
 
   let context: string;
   switch (effectiveContextMode) {

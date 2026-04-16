@@ -108,6 +108,13 @@ export interface AnalyticsLookupContext {
   sources: { type: string; id: string; title: string }[];
 }
 
+export interface FullAnalyticsResult {
+  pages: AnalyticsOverviewItem[];
+  features: AnalyticsOverviewItem[];
+  events: AnalyticsOverviewItem[];
+  accounts: AnalyticsAccountItem[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";

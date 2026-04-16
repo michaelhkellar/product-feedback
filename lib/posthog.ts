@@ -1,4 +1,4 @@
-import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
 
 const DEFAULT_HOST = "https://app.posthog.com";
 
@@ -88,7 +88,7 @@ export async function getPostHogOverview(
     ]);
 
     const pageResults = ((pageData.results || []) as unknown[][]);
-    const topPages = pageResults.slice(0, 5).map((row, i) => ({
+    const topPages = pageResults.slice(0, 10).map((row, i) => ({
       id: String(row[0] || `page-${i}`),
       name: String(row[0] || `Page ${i + 1}`),
       count: Number(row[1]) || 0,
@@ -97,7 +97,7 @@ export async function getPostHogOverview(
     let topEvents: AnalyticsOverview["topEvents"] = [];
     if (eventData) {
       const eventResults = ((eventData.results || []) as unknown[][]);
-      topEvents = eventResults.slice(0, 5).map((row, i) => ({
+      topEvents = eventResults.slice(0, 10).map((row, i) => ({
         id: String(row[0] || `event-${i}`),
         name: String(row[0] || `Event ${i + 1}`),
         count: Number(row[1]) || 0,
@@ -119,6 +119,74 @@ export async function getPostHogOverview(
     };
   } catch (error) {
     console.error("Failed to load PostHog overview:", error);
+    return null;
+  }
+}
+
+export async function getFullPostHogAnalytics(
+  overrideKey?: string,
+  days?: number,
+  limit = 200,
+  overrideHost?: string
+): Promise<FullAnalyticsResult | null> {
+  const compositeKey = overrideKey || process.env.POSTHOG_API_KEY;
+  if (!compositeKey) return null;
+  const creds = parsePostHogKey(compositeKey);
+  if (!creds) return null;
+  const effectiveDays = days || 7;
+  const cap = Math.min(limit, 500);
+  const host = resolveHost(overrideHost);
+
+  try {
+    const [pageData, eventData] = await Promise.all([
+      posthogFetch<Record<string, unknown>>(
+        `/api/projects/${creds.projectId}/query/`,
+        creds.apiKey, host,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: {
+              kind: "HogQLQuery",
+              query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT ${cap}`,
+            },
+          }),
+        }
+      ),
+      posthogFetch<Record<string, unknown>>(
+        `/api/projects/${creds.projectId}/query/`,
+        creds.apiKey, host,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: {
+              kind: "HogQLQuery",
+              query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT ${cap}`,
+            },
+          }),
+        }
+      ).catch(() => null),
+    ]);
+
+    const pageResults = ((pageData.results || []) as unknown[][]);
+    const pages = pageResults.map((row, i) => ({
+      id: String(row[0] || `page-${i}`),
+      name: String(row[0] || `Page ${i + 1}`),
+      count: Number(row[1]) || 0,
+    }));
+
+    let events: FullAnalyticsResult["events"] = [];
+    if (eventData) {
+      const eventResults = ((eventData.results || []) as unknown[][]);
+      events = eventResults.map((row, i) => ({
+        id: String(row[0] || `event-${i}`),
+        name: String(row[0] || `Event ${i + 1}`),
+        count: Number(row[1]) || 0,
+      }));
+    }
+
+    return { pages, features: [], events, accounts: [] };
+  } catch (error) {
+    console.error("Failed to load full PostHog analytics:", error);
     return null;
   }
 }
@@ -164,7 +232,7 @@ export async function getRelevantPostHogContext(
         body: JSON.stringify({
           query: {
             kind: "HogQLQuery",
-            query: `SELECT event, timestamp, properties.$current_url AS url FROM events WHERE distinct_id = '${userId.replace(/'/g, "''")}' AND timestamp >= now() - interval ${effectiveDays} day ORDER BY timestamp DESC LIMIT 10`,
+            query: `SELECT event, timestamp, properties.$current_url AS url FROM events WHERE distinct_id = '${userId.replace(/'/g, "''")}' AND timestamp >= now() - interval ${effectiveDays} day ORDER BY timestamp DESC LIMIT 15`,
           },
         }),
       }
@@ -175,7 +243,7 @@ export async function getRelevantPostHogContext(
 
     if (results.length > 0) {
       lines.push(`Recent ${results.length} events:`);
-      for (const row of results.slice(0, 5)) {
+      for (const row of results.slice(0, 8)) {
         const event = String(row[0] || "unknown");
         const time = String(row[1] || "");
         const url = String(row[2] || "");

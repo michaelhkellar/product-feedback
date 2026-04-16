@@ -48,6 +48,19 @@ const EMPTY_STATUS: ApiKeyStatus = {
   posthogKey: { configured: false, source: null },
 };
 
+const DATA_SOURCE_KEY_NAMES: (keyof ApiKeyState)[] = [
+  "productboardKey", "attentionKey", "pendoKey", "amplitudeKey",
+  "posthogKey", "atlassianDomain", "atlassianEmail", "atlassianToken", "linearKey",
+];
+
+function isDataSourceKey(name: keyof ApiKeyState): boolean {
+  return DATA_SOURCE_KEY_NAMES.includes(name);
+}
+
+function hasAnyDataSourceKey(k: ApiKeyState): boolean {
+  return DATA_SOURCE_KEY_NAMES.some((field) => !!k[field]);
+}
+
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
   const [keys, setKeys] = useState<ApiKeyState>({ ...EMPTY });
   const [status, setStatus] = useState<ApiKeyStatus>({ ...EMPTY_STATUS });
@@ -60,6 +73,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
       const stored = await loadKeys();
       if (cancelled) return;
       setKeys(stored);
+      if (hasAnyDataSourceKey(stored)) setUseDemoData(false);
       setLoaded(true);
     })();
     return () => {
@@ -88,12 +102,14 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
       void saveKeys(next);
       return next;
     });
+    if (isDataSourceKey(name) && value) setUseDemoData(false);
   }, []);
 
   const removeKey = useCallback((name: keyof ApiKeyState) => {
     setKeys((prev) => {
       const next = { ...prev, [name]: "" };
       void saveKeys(next);
+      if (isDataSourceKey(name) && !hasAnyDataSourceKey(next)) setUseDemoData(true);
       return next;
     });
   }, []);
