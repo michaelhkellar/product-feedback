@@ -18,7 +18,7 @@ import {
   ConfluencePage,
   DataSourceStatus,
 } from "@/lib/types";
-import type { PendoUsageOverview } from "@/lib/pendo";
+import type { AnalyticsOverview } from "@/lib/types";
 import {
   ClipboardList,
   Phone,
@@ -83,35 +83,44 @@ function formatPendoMinutes(totalMinutes: number): string {
   return "0m";
 }
 
-function buildPendoFindings(overview: PendoUsageOverview | null): PendoFinding[] {
+function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] {
   if (!overview) return [];
 
   const findings: PendoFinding[] = [
-    ...overview.activePages.map((item) => ({
+    ...overview.topPages.map((item) => ({
       id: `page:${item.id}`,
       kind: "page" as const,
       title: item.name,
-      subtitle: "Tagged page activity",
-      totalEvents: item.totalEvents,
-      totalMinutes: item.totalMinutes,
+      subtitle: "Page activity",
+      totalEvents: item.count,
+      totalMinutes: item.minutes || 0,
       loadedAt: overview.generatedAt,
     })),
-    ...overview.activeFeatures.map((item) => ({
+    ...overview.topFeatures.map((item) => ({
       id: `feature:${item.id}`,
       kind: "feature" as const,
       title: item.name,
-      subtitle: "Tagged feature activity",
-      totalEvents: item.totalEvents,
-      totalMinutes: item.totalMinutes,
+      subtitle: "Feature activity",
+      totalEvents: item.count,
+      totalMinutes: item.minutes || 0,
       loadedAt: overview.generatedAt,
     })),
-    ...overview.activeAccounts.map((item) => ({
-      id: `account:${item.accountId}`,
+    ...overview.topEvents.map((item) => ({
+      id: `event:${item.id}`,
+      kind: "feature" as const,
+      title: item.name,
+      subtitle: "Event activity",
+      totalEvents: item.count,
+      totalMinutes: 0,
+      loadedAt: overview.generatedAt,
+    })),
+    ...overview.topAccounts.map((item) => ({
+      id: `account:${item.id}`,
       kind: "account" as const,
-      title: item.accountId,
+      title: item.id,
       subtitle: "Account-level product usage",
-      totalEvents: item.totalEvents,
-      totalMinutes: item.totalMinutes,
+      totalEvents: item.count,
+      totalMinutes: item.minutes || 0,
       loadedAt: overview.generatedAt,
     })),
   ];

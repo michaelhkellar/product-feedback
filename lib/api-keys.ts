@@ -24,6 +24,7 @@ export interface ApiKeyState {
   ticketProvider: TicketProviderType;
   linearKey: string;
   posthogKey: string;
+  posthogHost: string;
   linearTeamId: string;
 }
 
@@ -68,6 +69,7 @@ const EMPTY_KEYS: ApiKeyState = {
   ticketProvider: "atlassian",
   linearKey: "",
   posthogKey: "",
+  posthogHost: "",
   linearTeamId: "",
 };
 
@@ -97,6 +99,7 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     ticketProvider: (parsed?.ticketProvider as ApiKeyState["ticketProvider"]) || "atlassian",
     linearKey: parsed?.linearKey || "",
     posthogKey: parsed?.posthogKey || "",
+    posthogHost: parsed?.posthogHost || "",
     linearTeamId: parsed?.linearTeamId || "",
   };
 }
@@ -324,6 +327,7 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.ticketProvider) headers["x-ticket-provider"] = keys.ticketProvider;
   if (keys.linearKey) headers["x-linear-key"] = keys.linearKey;
   if (keys.posthogKey) headers["x-posthog-key"] = keys.posthogKey;
+  if (keys.posthogHost) headers["x-posthog-host"] = keys.posthogHost;
   if (keys.linearTeamId) headers["x-linear-team-id"] = keys.linearTeamId;
   return headers;
 }

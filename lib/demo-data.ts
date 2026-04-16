@@ -6,8 +6,8 @@ import {
   DataSourceStatus,
   JiraIssue,
   ConfluencePage,
+  AnalyticsOverview,
 } from "./types";
-import { PendoUsageOverview } from "./pendo";
 
 // Synthetic demo data only. These names, companies, timelines, and business details
 // are intentionally fictionalized for safe public sharing and product demos.
@@ -747,34 +747,36 @@ export const DEMO_CONFLUENCE_PAGES: ConfluencePage[] = [
   },
 ];
 
-export const DEMO_PENDO_OVERVIEW: PendoUsageOverview = {
-  totalPages: 12,
-  totalFeatures: 8,
-  activePages: [
-    { id: "page-001", name: "Dashboard — Main", totalEvents: 48720, totalMinutes: 12450 },
-    { id: "page-002", name: "Feedback List", totalEvents: 31200, totalMinutes: 8930 },
-    { id: "page-003", name: "Reports — Custom Builder", totalEvents: 22150, totalMinutes: 6780 },
-    { id: "page-004", name: "Settings — Integrations", totalEvents: 15400, totalMinutes: 3200 },
-    { id: "page-005", name: "Search Results", totalEvents: 12800, totalMinutes: 2140 },
-    { id: "page-006", name: "Admin — Team Management", totalEvents: 8900, totalMinutes: 1560 },
+export const DEMO_PENDO_OVERVIEW: AnalyticsOverview = {
+  provider: "pendo",
+  topPages: [
+    { id: "page-001", name: "Dashboard — Main", count: 48720, minutes: 12450 },
+    { id: "page-002", name: "Feedback List", count: 31200, minutes: 8930 },
+    { id: "page-003", name: "Reports — Custom Builder", count: 22150, minutes: 6780 },
+    { id: "page-004", name: "Settings — Integrations", count: 15400, minutes: 3200 },
+    { id: "page-005", name: "Search Results", count: 12800, minutes: 2140 },
+    { id: "page-006", name: "Admin — Team Management", count: 8900, minutes: 1560 },
   ],
-  activeFeatures: [
-    { id: "feat-001", name: "Custom Report Builder", totalEvents: 18500, totalMinutes: 5620 },
-    { id: "feat-002", name: "Feedback Search", totalEvents: 14200, totalMinutes: 2890 },
-    { id: "feat-003", name: "Data Export", totalEvents: 9800, totalMinutes: 1240 },
-    { id: "feat-004", name: "Notification Preferences", totalEvents: 7600, totalMinutes: 890 },
-    { id: "feat-005", name: "API Key Management", totalEvents: 5400, totalMinutes: 620 },
+  topFeatures: [
+    { id: "feat-001", name: "Custom Report Builder", count: 18500, minutes: 5620 },
+    { id: "feat-002", name: "Feedback Search", count: 14200, minutes: 2890 },
+    { id: "feat-003", name: "Data Export", count: 9800, minutes: 1240 },
+    { id: "feat-004", name: "Notification Preferences", count: 7600, minutes: 890 },
+    { id: "feat-005", name: "API Key Management", count: 5400, minutes: 620 },
   ],
-  activeAccounts: [
-    { accountId: "ExampleCorp", totalEvents: 24500, totalMinutes: 6800 },
-    { accountId: "SampleBank", totalEvents: 19200, totalMinutes: 5400 },
-    { accountId: "DemoScale Co", totalEvents: 16800, totalMinutes: 4200 },
-    { accountId: "DemoSync Labs", totalEvents: 12400, totalMinutes: 3100 },
-    { accountId: "DemoMarket Solutions", totalEvents: 9600, totalMinutes: 2400 },
-    { accountId: "Northwind Demo", totalEvents: 8100, totalMinutes: 2000 },
-    { accountId: "Placeholder Field Ops", totalEvents: 4300, totalMinutes: 1100 },
-    { accountId: "Demo Automations", totalEvents: 3800, totalMinutes: 950 },
+  topEvents: [],
+  topAccounts: [
+    { id: "ExampleCorp", count: 24500, minutes: 6800 },
+    { id: "SampleBank", count: 19200, minutes: 5400 },
+    { id: "DemoScale Co", count: 16800, minutes: 4200 },
+    { id: "DemoSync Labs", count: 12400, minutes: 3100 },
+    { id: "DemoMarket Solutions", count: 9600, minutes: 2400 },
+    { id: "Northwind Demo", count: 8100, minutes: 2000 },
+    { id: "Placeholder Field Ops", count: 4300, minutes: 1100 },
+    { id: "Demo Automations", count: 3800, minutes: 950 },
   ],
+  totalTrackedPages: 12,
+  totalTrackedFeatures: 8,
   generatedAt: "2026-03-07T12:00:00Z",
 };
 

@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
 
     const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
     const posthogKey = req.headers.get("x-posthog-key") || undefined;
+    const posthogHost = req.headers.get("x-posthog-host") || undefined;
     const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude" | "posthog") || undefined;
 
     const hasPb = !!(pbKey || process.env.PRODUCTBOARD_API_TOKEN);
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     const isDemo = !hasAnyLiveKey && useDemoData;
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost);
     const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
 
     return NextResponse.json({ insights, isDemo });

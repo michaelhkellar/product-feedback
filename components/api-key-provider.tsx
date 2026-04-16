@@ -32,7 +32,7 @@ const EMPTY: ApiKeyState = {
   aiProvider: "gemini", aiModel: "", anthropicKey: "", openaiKey: "",
   analyticsProvider: "pendo", amplitudeKey: "",
   ticketProvider: "atlassian", linearKey: "",
-  posthogKey: "", linearTeamId: "",
+  posthogKey: "", posthogHost: "", linearTeamId: "",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {

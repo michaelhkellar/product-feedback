@@ -509,14 +509,15 @@ function jiraInsights(issues: JiraIssue[], now: string): Insight[] {
 
 function analyticsInsights(data: NonNullable<AgentData["analyticsOverview"]>, now: string): Insight[] {
   const insights: Insight[] = [];
+  const label = data.provider.charAt(0).toUpperCase() + data.provider.slice(1);
 
-  if (data.activePages.length > 0) {
-    const topPages = data.activePages.slice(0, 3);
+  if (data.topPages.length > 0) {
+    const topPages = data.topPages.slice(0, 3);
     insights.push({
       id: "gen-analytics-top-pages",
       type: "trend",
-      title: `Top pages: ${topPages.map((p) => `${p.name} (${p.totalEvents})`).join(", ")}`,
-      description: `Analytics shows usage concentrating on ${topPages.map((p) => `"${p.name}"`).join(", ")} recently. Across ${data.totalPages} tracked pages, these pages led by total events and are good places to validate friction, onboarding gaps, or follow-up opportunities mentioned in feedback.`,
+      title: `Top pages: ${topPages.map((p) => `${p.name} (${p.count})`).join(", ")}`,
+      description: `${label} shows usage concentrating on ${topPages.map((p) => `"${p.name}"`).join(", ")} recently. Across ${data.totalTrackedPages} tracked pages, these led by total events and are good places to validate friction, onboarding gaps, or follow-up opportunities mentioned in feedback.`,
       confidence: 0.86,
       relatedFeedbackIds: [],
       themes: ["analytics", "page-usage", "engagement"],
@@ -525,16 +526,31 @@ function analyticsInsights(data: NonNullable<AgentData["analyticsOverview"]>, no
     });
   }
 
-  if (data.activeFeatures.length > 0) {
-    const topFeatures = data.activeFeatures.slice(0, 3);
+  if (data.topFeatures.length > 0) {
+    const topFeatures = data.topFeatures.slice(0, 3);
     insights.push({
       id: "gen-analytics-top-features",
       type: "theme",
-      title: `Feature usage leaders: ${topFeatures.map((f) => `${f.name} (${f.totalEvents})`).join(", ")}`,
-      description: `Recent tagged feature activity is strongest around ${topFeatures.map((f) => `"${f.name}"`).join(", ")}. Use these usage leaders as a counterpoint to inbound feedback: high-traffic features deserve closer inspection when customers report friction or ask for adjacent improvements.`,
+      title: `Feature usage leaders: ${topFeatures.map((f) => `${f.name} (${f.count})`).join(", ")}`,
+      description: `Recent feature activity (${label}) is strongest around ${topFeatures.map((f) => `"${f.name}"`).join(", ")}. High-traffic features deserve closer inspection when customers report friction or ask for adjacent improvements.`,
       confidence: 0.84,
       relatedFeedbackIds: [],
       themes: ["analytics", "feature-adoption", "usage"],
+      impact: "medium",
+      createdAt: now,
+    });
+  }
+
+  if (data.topEvents.length > 0) {
+    const topEvents = data.topEvents.slice(0, 3);
+    insights.push({
+      id: "gen-analytics-top-events",
+      type: "trend",
+      title: `Top events: ${topEvents.map((e) => `${e.name} (${e.count})`).join(", ")}`,
+      description: `${label} shows the most popular custom events are ${topEvents.map((e) => `"${e.name}"`).join(", ")}. Cross-reference these with feedback themes to identify where product usage aligns or conflicts with customer requests.`,
+      confidence: 0.82,
+      relatedFeedbackIds: [],
+      themes: ["analytics", "events", "engagement"],
       impact: "medium",
       createdAt: now,
     });
@@ -563,6 +579,20 @@ async function generateAIInsights(data: AgentData, providerType: AIProviderType 
   if (data.jiraIssues.length > 0) {
     const highPri = data.jiraIssues.filter((j) => j.priority.toLowerCase().includes("high") || j.priority.toLowerCase().includes("critical"));
     summaryParts.push(`\nJira (${data.jiraIssues.length} issues, ${highPri.length} high/critical):\n${data.jiraIssues.slice(0, 10).map((j) => `- ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}]`).join("\n")}`);
+  }
+
+  if (data.analyticsOverview) {
+    const ao = data.analyticsOverview;
+    const parts = [`\nAnalytics (${ao.provider}):`];
+    if (ao.topPages.length > 0)
+      parts.push(`Top pages: ${ao.topPages.slice(0, 5).map((p) => `${p.name} (${p.count})`).join(", ")}`);
+    if (ao.topEvents.length > 0)
+      parts.push(`Top events: ${ao.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ")}`);
+    if (ao.topAccounts.length > 0)
+      parts.push(`Top accounts: ${ao.topAccounts.slice(0, 5).map((a) => `${a.id} (${a.count})`).join(", ")}`);
+    if (ao.limitations?.length)
+      parts.push(`Note: ${ao.limitations.join(". ")}`);
+    summaryParts.push(parts.join("\n"));
   }
 
   const prompt = `Analyze this customer feedback data and generate 3-5 actionable insights. Focus on real product trends, risks, and opportunities — NOT ratings/stars/review scores.

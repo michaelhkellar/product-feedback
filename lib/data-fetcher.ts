@@ -38,16 +38,20 @@ function cacheKey(
   atlJiraFilter?: string,
   atlConfluenceFilter?: string,
   amplitudeKey?: string,
-  analyticsProvider?: string
+  analyticsProvider?: string,
+  posthogKey?: string,
+  analyticsDays?: number
 ): string {
   const parts = [
     pbKey ? `pb:${shortHash(pbKey)}` : "",
     attKey ? `att:${shortHash(attKey)}` : "",
     pendoKey ? `pendo:${shortHash(pendoKey)}` : "",
     amplitudeKey ? `amp:${shortHash(amplitudeKey)}` : "",
+    posthogKey ? `ph:${shortHash(posthogKey)}` : "",
     atlDomain ? `atl:${shortHash(atlDomain)}` : "",
     `demo:${demo}`,
     `ap:${analyticsProvider || "pendo"}`,
+    analyticsDays ? `days:${analyticsDays}` : "",
     atlJiraFilter || "",
     atlConfluenceFilter || "",
   ];
@@ -67,7 +71,8 @@ async function fetchLiveData(
   analyticsProvider?: AnalyticsProviderType,
   amplitudeKey?: string,
   posthogKey?: string,
-  analyticsDays?: number
+  analyticsDays?: number,
+  posthogHost?: string
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -109,7 +114,7 @@ async function fetchLiveData(
   if (effectiveAnalyticsProvider === "posthog" && isPostHogConfigured(posthogKey)) {
     fetches.push(
       (async () => {
-        const overview = await getPostHogOverview(posthogKey, analyticsDays);
+        const overview = await getPostHogOverview(posthogKey, analyticsDays, posthogHost);
         if (overview) analyticsOverview = overview;
       })()
     );
@@ -160,7 +165,8 @@ export async function getData(
   analyticsProvider?: AnalyticsProviderType,
   amplitudeKey?: string,
   posthogKey?: string,
-  analyticsDays?: number
+  analyticsDays?: number,
+  posthogHost?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
@@ -175,11 +181,11 @@ export async function getData(
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], analyticsOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays);
+  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost);
   dataCache.set(key, { data, timestamp: Date.now() });
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;

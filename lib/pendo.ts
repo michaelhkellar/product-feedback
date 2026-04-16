@@ -1,4 +1,4 @@
-import { FeedbackItem } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext } from "./types";
 
 const API_BASE = "https://app.pendo.io/api/v1";
 const OVERVIEW_DAYS = 7;
@@ -17,19 +17,7 @@ export interface PendoAccountUsageItem {
   totalMinutes: number;
 }
 
-export interface PendoUsageOverview {
-  totalPages: number;
-  totalFeatures: number;
-  activePages: PendoUsageItem[];
-  activeFeatures: PendoUsageItem[];
-  activeAccounts: PendoAccountUsageItem[];
-  generatedAt: string;
-}
-
-export interface PendoLookupContext {
-  context: string;
-  sources: { type: string; id: string; title: string }[];
-}
+export type { AnalyticsOverview, AnalyticsLookupContext };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -447,7 +435,7 @@ export function isPendoConfigured(overrideKey?: string): boolean {
 export async function getPendoOverview(
   overrideKey?: string,
   days?: number
-): Promise<PendoUsageOverview | null> {
+): Promise<AnalyticsOverview | null> {
   const integrationKey = overrideKey || process.env.PENDO_INTEGRATION_KEY;
   if (!integrationKey) return null;
   const effectiveDays = days || OVERVIEW_DAYS;
@@ -465,11 +453,13 @@ export async function getPendoOverview(
     ]);
 
     return {
-      totalPages: pages.size,
-      totalFeatures: features.size,
-      activePages,
-      activeFeatures,
-      activeAccounts,
+      provider: "pendo",
+      topPages: activePages.map((p) => ({ id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes })),
+      topFeatures: activeFeatures.map((f) => ({ id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes })),
+      topEvents: [],
+      topAccounts: activeAccounts.map((a) => ({ id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes })),
+      totalTrackedPages: pages.size,
+      totalTrackedFeatures: features.size,
       generatedAt: new Date().toISOString(),
     };
   } catch (error) {
@@ -483,7 +473,7 @@ export async function getRelevantPendoContext(
   relatedFeedback: FeedbackItem[],
   overrideKey?: string,
   days?: number
-): Promise<PendoLookupContext | null> {
+): Promise<AnalyticsLookupContext | null> {
   const integrationKey = overrideKey || process.env.PENDO_INTEGRATION_KEY;
   const effectiveLookupDays = days || LOOKUP_DAYS;
   if (!integrationKey) return null;

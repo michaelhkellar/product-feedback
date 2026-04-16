@@ -1,10 +1,16 @@
-import { PendoUsageOverview, PendoLookupContext } from "./pendo";
-import { FeedbackItem } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext } from "./types";
+
+const DEFAULT_HOST = "https://app.posthog.com";
 
 function parsePostHogKey(compositeKey: string): { apiKey: string; projectId: string } | null {
   const parts = compositeKey.split(":");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
   return { apiKey: parts[0], projectId: parts[1] };
+}
+
+function resolveHost(overrideHost?: string): string {
+  const h = overrideHost || process.env.POSTHOG_HOST || DEFAULT_HOST;
+  return h.replace(/\/+$/, "");
 }
 
 export function isPostHogConfigured(overrideKey?: string): boolean {
@@ -16,9 +22,10 @@ export function isPostHogConfigured(overrideKey?: string): boolean {
 async function posthogFetch<T>(
   path: string,
   apiKey: string,
+  host: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`https://app.posthog.com${path}`, {
+  const res = await fetch(`${host}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -38,44 +45,77 @@ async function posthogFetch<T>(
 
 export async function getPostHogOverview(
   overrideKey?: string,
-  days?: number
-): Promise<PendoUsageOverview | null> {
+  days?: number,
+  overrideHost?: string
+): Promise<AnalyticsOverview | null> {
   const compositeKey = overrideKey || process.env.POSTHOG_API_KEY;
   if (!compositeKey) return null;
   const creds = parsePostHogKey(compositeKey);
   if (!creds) return null;
   const effectiveDays = days || 7;
+  const host = resolveHost(overrideHost);
 
   try {
-    const data = await posthogFetch<Record<string, unknown>>(
-      `/api/projects/${creds.projectId}/query/`,
-      creds.apiKey,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          query: {
-            kind: "HogQLQuery",
-            query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 20`,
-          },
-        }),
-      }
-    );
+    const [pageData, eventData] = await Promise.all([
+      posthogFetch<Record<string, unknown>>(
+        `/api/projects/${creds.projectId}/query/`,
+        creds.apiKey,
+        host,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: {
+              kind: "HogQLQuery",
+              query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 20`,
+            },
+          }),
+        }
+      ),
+      posthogFetch<Record<string, unknown>>(
+        `/api/projects/${creds.projectId}/query/`,
+        creds.apiKey,
+        host,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: {
+              kind: "HogQLQuery",
+              query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 10`,
+            },
+          }),
+        }
+      ).catch(() => null),
+    ]);
 
-    const results = ((data.results || []) as unknown[][]);
-    const activePages = results.slice(0, 5).map((row, i) => ({
+    const pageResults = ((pageData.results || []) as unknown[][]);
+    const topPages = pageResults.slice(0, 5).map((row, i) => ({
       id: String(row[0] || `page-${i}`),
       name: String(row[0] || `Page ${i + 1}`),
-      totalEvents: Number(row[1]) || 0,
-      totalMinutes: 0,
+      count: Number(row[1]) || 0,
     }));
 
+    let topEvents: AnalyticsOverview["topEvents"] = [];
+    if (eventData) {
+      const eventResults = ((eventData.results || []) as unknown[][]);
+      topEvents = eventResults.slice(0, 5).map((row, i) => ({
+        id: String(row[0] || `event-${i}`),
+        name: String(row[0] || `Event ${i + 1}`),
+        count: Number(row[1]) || 0,
+      }));
+    }
+
     return {
-      totalPages: results.length,
-      totalFeatures: 0,
-      activePages,
-      activeFeatures: [],
-      activeAccounts: [],
+      provider: "posthog",
+      topPages,
+      topFeatures: [],
+      topEvents,
+      topAccounts: [],
+      totalTrackedPages: pageResults.length,
+      totalTrackedFeatures: 0,
       generatedAt: new Date().toISOString(),
+      limitations: [
+        "Feature tagging requires PostHog feature flags integration",
+      ],
     };
   } catch (error) {
     console.error("Failed to load PostHog overview:", error);
@@ -87,13 +127,15 @@ export async function getRelevantPostHogContext(
   query: string,
   relatedFeedback: FeedbackItem[],
   overrideKey?: string,
-  days?: number
-): Promise<PendoLookupContext | null> {
+  days?: number,
+  overrideHost?: string
+): Promise<AnalyticsLookupContext | null> {
   const compositeKey = overrideKey || process.env.POSTHOG_API_KEY;
   if (!compositeKey) return null;
   const creds = parsePostHogKey(compositeKey);
   if (!creds) return null;
   const effectiveDays = days || 30;
+  const host = resolveHost(overrideHost);
 
   const emails = query.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
   const feedbackEmails = relatedFeedback
@@ -116,6 +158,7 @@ export async function getRelevantPostHogContext(
     const data = await posthogFetch<Record<string, unknown>>(
       `/api/projects/${creds.projectId}/query/`,
       creds.apiKey,
+      host,
       {
         method: "POST",
         body: JSON.stringify({

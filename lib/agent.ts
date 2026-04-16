@@ -1,6 +1,6 @@
 import { InMemoryVectorStore } from "./vector-store";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
-import { getRelevantPendoContext, PendoUsageOverview } from "./pendo";
+import { getRelevantPendoContext } from "./pendo";
 import { getRelevantAmplitudeContext } from "./amplitude";
 import { getRelevantPostHogContext } from "./posthog";
 import {
@@ -9,6 +9,7 @@ import {
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
+  AnalyticsOverview,
 } from "./types";
 import { ContextMode } from "./api-keys";
 
@@ -29,6 +30,7 @@ export interface AgentKeys {
   analyticsProvider?: string;
   amplitudeKey?: string;
   posthogKey?: string;
+  posthogHost?: string;
 }
 
 export interface AgentData {
@@ -38,7 +40,7 @@ export interface AgentData {
   insights: Insight[];
   jiraIssues: JiraIssue[];
   confluencePages: ConfluencePage[];
-  analyticsOverview: PendoUsageOverview | null;
+  analyticsOverview: AnalyticsOverview | null;
 }
 
 export interface ChatResult {
@@ -186,7 +188,7 @@ DATA SOURCE RULES:
 - Jira CX tickets (CX- prefix) = CUSTOMER SUCCESS issues. These reflect real customer problems. Prioritize these alongside Productboard.
 - Jira ENG tickets (ENG- prefix) = ENGINEERING/internal work. These are implementation details, not customer feedback. Reference only when the user asks about engineering status or what's being built.
 - Confluence pages = INTERNAL DOCUMENTATION. Only reference when the user specifically asks about docs, guides, or internal processes. Don't include in general feedback summaries.
-- Pendo = PRODUCT USAGE ANALYTICS. Use it to explain what users/accounts are doing in the product or how engaged they appear, but don't treat usage alone as proof of customer intent.
+- Product analytics (Pendo/Amplitude/PostHog) = PRODUCT USAGE ANALYTICS. Use it to explain what users/accounts are doing in the product or how engaged they appear, but don't treat usage alone as proof of customer intent.
 - Feedback arrives in Productboard through pipelines (Zapier, email, CRM). Zapier/email is the delivery mechanism, NOT the subject. Read the actual TITLE and CONTENT to understand what the customer wants.
 - Source is shown in brackets like [Source: productboard] or [Jira CX-1234]. A note titled "Integration Request (Salesforce)" = customer wants Salesforce integration, NOT feedback about Salesforce as a tool.
 - Prefer source citations that are directly actionable: Jira key/link, Productboard note link, and customer name/email from the note.
@@ -198,7 +200,7 @@ const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprin
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
 const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same"];
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
-const PENDO_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product"];
+const USAGE_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product"];
 
 // --- Time range extraction ---
 
@@ -209,7 +211,7 @@ interface TimeRange {
   compare?: { start: Date; end: Date; label: string };
 }
 
-function extractTimeRange(message: string): TimeRange | null {
+export function extractTimeRange(message: string): TimeRange | null {
   const q = message.toLowerCase();
   const now = new Date();
 
@@ -476,12 +478,21 @@ function wantsInsightDrilldown(query: string): boolean {
   return INSIGHT_DRILLDOWN_KEYWORDS.some((kw) => q.includes(kw));
 }
 
-const ANALYTICS_KEYWORDS = ["posthog", "amplitude", "analytics", "product analytics"];
+const ANALYTICS_KEYWORDS = [
+  "posthog", "amplitude", "analytics", "product analytics",
+  "session", "sessions", "dau", "mau", "wau",
+  "funnel", "retention", "clicks", "pageview", "page view",
+  "telemetry", "instrumentation", "tracks", "events",
+  "feature flag", "feature flags",
+];
+
+const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 
 function wantsAnalyticsContext(query: string): boolean {
   const q = query.toLowerCase();
-  if (PENDO_KEYWORDS.some((kw) => q.includes(kw))) return true;
+  if (USAGE_KEYWORDS.some((kw) => q.includes(kw))) return true;
   if (ANALYTICS_KEYWORDS.some((kw) => q.includes(kw))) return true;
+  if (EMAIL_RE.test(query)) return true;
   return false;
 }
 
@@ -727,11 +738,15 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
   if (confluencePages.length > 0) parts.push(`Confluence: ${confluencePages.length} pages`);
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
   if (analyticsOverview) {
-    const pageHotspots = analyticsOverview.activePages.slice(0, 3).map((p) => `${p.name} (${p.totalEvents})`).join(", ");
-    const featureHotspots = analyticsOverview.activeFeatures.slice(0, 3).map((f) => `${f.name} (${f.totalEvents})`).join(", ");
-    parts.push(`${analyticsLabel}: ${analyticsOverview.totalPages} tagged pages, ${analyticsOverview.totalFeatures} tagged features.`);
-    if (pageHotspots) parts.push(`${analyticsLabel} top pages: ${pageHotspots}`);
-    if (featureHotspots) parts.push(`${analyticsLabel} top features: ${featureHotspots}`);
+    const ao = analyticsOverview;
+    const pageSummary = ao.topPages.slice(0, 3).map((p) => `${p.name} (${p.count})`).join(", ");
+    const featureSummary = ao.topFeatures.slice(0, 3).map((f) => `${f.name} (${f.count})`).join(", ");
+    const eventSummary = ao.topEvents.slice(0, 3).map((e) => `${e.name} (${e.count})`).join(", ");
+    parts.push(`${analyticsLabel}: ${ao.totalTrackedPages} tracked pages, ${ao.totalTrackedFeatures} tracked features.`);
+    if (pageSummary) parts.push(`${analyticsLabel} top pages: ${pageSummary}`);
+    if (featureSummary) parts.push(`${analyticsLabel} top features: ${featureSummary}`);
+    if (eventSummary) parts.push(`${analyticsLabel} top events: ${eventSummary}`);
+    if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
   }
 
   const recentThemes = topThemesRecent(feedback, 14);
@@ -949,7 +964,7 @@ export async function chat(
     if (analyticsProvider === "amplitude") {
       analyticsLookup = await getRelevantAmplitudeContext(userMessage, relatedFeedback, keys.amplitudeKey, lookupDays);
     } else if (analyticsProvider === "posthog") {
-      analyticsLookup = await getRelevantPostHogContext(userMessage, relatedFeedback, keys.posthogKey, lookupDays);
+      analyticsLookup = await getRelevantPostHogContext(userMessage, relatedFeedback, keys.posthogKey, lookupDays, keys.posthogHost);
     } else {
       analyticsLookup = await getRelevantPendoContext(userMessage, relatedFeedback, keys.pendoKey, lookupDays);
     }
@@ -1051,7 +1066,7 @@ export async function chat(
     context = context.slice(0, Math.floor(budget * 3.5));
   }
 
-  const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length + (scopedData.analyticsOverview ? scopedData.analyticsOverview.totalPages + scopedData.analyticsOverview.totalFeatures : 0);
+  const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length;
 
   const isPrdOrTicketHistory = isPrdOrTicket;
   const followUp = isLikelyFollowUp(userMessage);
@@ -1247,10 +1262,10 @@ function generateBuiltInResponse(
   query: string, context: string,
   sources: { type: string; id: string; title: string }[], data: AgentData
 ): string {
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.analyticsOverview ? data.analyticsOverview.totalPages + data.analyticsOverview.totalFeatures : 0);
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
   const rows = sources.slice(0, 8).map((s) => `| ${s.type} | ${s.title} |`).join("\n");
 
-  return `**Found ${sources.length} relevant items across ${total} total.**
+  return `**Found ${sources.length} relevant items across ${total} total${data.analyticsOverview ? " (plus analytics)" : ""}.**
 
 | Source | Item |
 |--------|------|

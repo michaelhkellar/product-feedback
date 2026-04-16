@@ -78,6 +78,36 @@ export interface Insight {
   createdAt: string;
 }
 
+export interface AnalyticsOverviewItem {
+  id: string;
+  name: string;
+  count: number;
+  minutes?: number;
+}
+
+export interface AnalyticsAccountItem {
+  id: string;
+  count: number;
+  minutes?: number;
+}
+
+export interface AnalyticsOverview {
+  provider: "pendo" | "amplitude" | "posthog";
+  topPages: AnalyticsOverviewItem[];
+  topFeatures: AnalyticsOverviewItem[];
+  topEvents: AnalyticsOverviewItem[];
+  topAccounts: AnalyticsAccountItem[];
+  totalTrackedPages: number;
+  totalTrackedFeatures: number;
+  generatedAt: string;
+  limitations?: string[];
+}
+
+export interface AnalyticsLookupContext {
+  context: string;
+  sources: { type: string; id: string; title: string }[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";

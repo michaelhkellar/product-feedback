@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chat, InteractionMode } from "@/lib/agent";
+import { chat, extractTimeRange, InteractionMode } from "@/lib/agent";
 import { getData } from "@/lib/data-fetcher";
 import { ContextMode } from "@/lib/api-keys";
 import { AIProviderType } from "@/lib/ai-provider";
@@ -55,12 +55,20 @@ export async function POST(req: NextRequest) {
     const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
     const posthogKey = req.headers.get("x-posthog-key") || undefined;
 
+    const posthogHost = req.headers.get("x-posthog-host") || undefined;
+
     const agentKeys = {
       ...keys,
       analyticsProvider,
       amplitudeKey,
       posthogKey,
+      posthogHost,
     };
+
+    const timeRange = extractTimeRange(trimmedMessage);
+    const analyticsDays = timeRange
+      ? Math.min(Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000), 90)
+      : undefined;
 
     const data = await getData(
       keys.productboardKey, keys.attentionKey, keys.pendoKey, useDemoData !== false,
@@ -69,7 +77,9 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-atlassian-confluence-filter") || undefined,
       analyticsProvider,
       amplitudeKey,
-      posthogKey
+      posthogKey,
+      analyticsDays,
+      posthogHost
     );
 
     const generatedInsights = generateProgrammaticInsights(data);

@@ -135,8 +135,9 @@ export async function POST(req: NextRequest) {
       if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
       const parts = key.split(":");
       if (parts.length !== 2) return NextResponse.json({ valid: false, error: "Format should be apiKey:projectId" });
+      const host = (req.headers.get("x-posthog-host") || process.env.POSTHOG_HOST || "https://app.posthog.com").replace(/\/+$/, "");
       try {
-        const res = await fetch(`https://app.posthog.com/api/projects/${parts[1]}/`, {
+        const res = await fetch(`${host}/api/projects/${parts[1]}/`, {
           headers: { Authorization: `Bearer ${parts[0]}` },
         });
         if (res.ok) return NextResponse.json({ valid: true });

@@ -433,7 +433,20 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               ? renderKeyField("pendoKey", "Pendo Integration Key", "pendo_...", "Adds product usage insights and on-demand visitor/account history from Pendo")
               : (keys.analyticsProvider || "pendo") === "amplitude"
                 ? renderKeyField("amplitudeKey", "Amplitude API Key", "apiKey:secretKey", "Format: apiKey:secretKey. Get both from Amplitude project settings.")
-                : renderKeyField("posthogKey", "PostHog API Key", "phx_...:projectId", "Format: apiKey:projectId. Get both from PostHog project settings.")
+                : (<>
+                    {renderKeyField("posthogKey", "PostHog API Key", "phx_...:projectId", "Format: apiKey:projectId. Get both from PostHog project settings.")}
+                    <div className="mt-2">
+                      <label className="text-[11px] text-muted-foreground block mb-1">PostHog Host (optional)</label>
+                      <input
+                        type="text"
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-border bg-background font-mono"
+                        placeholder="https://app.posthog.com"
+                        value={keys.posthogHost || ""}
+                        onChange={(e) => setKey("posthogHost", e.target.value)}
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-0.5">For EU cloud use https://eu.posthog.com. Leave blank for US cloud.</p>
+                    </div>
+                  </>)
             }
           </div>
 

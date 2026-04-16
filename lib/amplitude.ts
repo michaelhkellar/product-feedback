@@ -1,5 +1,4 @@
-import { PendoUsageOverview, PendoUsageItem, PendoAccountUsageItem, PendoLookupContext } from "./pendo";
-import { FeedbackItem } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext } from "./types";
 
 const API_BASE = "https://amplitude.com/api/2";
 const EU_API_BASE = "https://analytics.eu.amplitude.com/api/2";
@@ -49,7 +48,7 @@ export function isAmplitudeConfigured(overrideKey?: string): boolean {
 export async function getAmplitudeOverview(
   overrideKey?: string,
   days?: number
-): Promise<PendoUsageOverview | null> {
+): Promise<AnalyticsOverview | null> {
   const compositeKey = overrideKey || process.env.AMPLITUDE_API_KEY;
   if (!compositeKey) return null;
   const creds = parseAmplitudeKey(compositeKey);
@@ -64,29 +63,51 @@ export async function getAmplitudeOverview(
     const startStr = start.toISOString().split("T")[0].replace(/-/g, "");
     const endStr = end.toISOString().split("T")[0].replace(/-/g, "");
 
-    const data = await amplitudeFetch<Record<string, unknown>>(
-      `/events/segmentation?e={"event_type":"_active"}&start=${startStr}&end=${endStr}`,
-      creds.apiKey,
-      creds.secretKey
-    );
+    const [activeData, eventsData] = await Promise.all([
+      amplitudeFetch<Record<string, unknown>>(
+        `/events/segmentation?e=${encodeURIComponent(JSON.stringify({ event_type: "_active" }))}&start=${startStr}&end=${endStr}`,
+        creds.apiKey,
+        creds.secretKey
+      ),
+      amplitudeFetch<Record<string, unknown>>(
+        `/events/segmentation?e=${encodeURIComponent(JSON.stringify({ event_type: "_all" }))}&start=${startStr}&end=${endStr}&m=uniques`,
+        creds.apiKey,
+        creds.secretKey
+      ).catch(() => null),
+    ]);
 
-    const seriesLabels = ((data.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
-    const series = ((data.data as Record<string, unknown>)?.series as number[][]) || [];
+    const seriesLabels = ((activeData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
+    const series = ((activeData.data as Record<string, unknown>)?.series as number[][]) || [];
 
-    const activePages: PendoUsageItem[] = seriesLabels.slice(0, 5).map((label, i) => ({
+    const topPages = seriesLabels.slice(0, 5).map((label, i) => ({
       id: label,
       name: label,
-      totalEvents: (series[i] || []).reduce((a, b) => a + b, 0),
-      totalMinutes: 0,
+      count: (series[i] || []).reduce((a, b) => a + b, 0),
     }));
 
+    let topEvents: AnalyticsOverview["topEvents"] = [];
+    if (eventsData) {
+      const eventLabels = ((eventsData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
+      const eventSeries = ((eventsData.data as Record<string, unknown>)?.series as number[][]) || [];
+      topEvents = eventLabels.slice(0, 10).map((label, i) => ({
+        id: label,
+        name: label,
+        count: (eventSeries[i] || []).reduce((a, b) => a + b, 0),
+      })).sort((a, b) => b.count - a.count).slice(0, 5);
+    }
+
     return {
-      totalPages: seriesLabels.length,
-      totalFeatures: 0,
-      activePages,
-      activeFeatures: [],
-      activeAccounts: [],
+      provider: "amplitude",
+      topPages,
+      topFeatures: [],
+      topEvents,
+      topAccounts: [],
+      totalTrackedPages: seriesLabels.length,
+      totalTrackedFeatures: 0,
       generatedAt: new Date().toISOString(),
+      limitations: [
+        "Feature-level and account-level analytics require Amplitude Taxonomy add-on",
+      ],
     };
   } catch (error) {
     console.error("Failed to load Amplitude overview:", error);
@@ -99,7 +120,7 @@ export async function getRelevantAmplitudeContext(
   relatedFeedback: FeedbackItem[],
   overrideKey?: string,
   days?: number
-): Promise<PendoLookupContext | null> {
+): Promise<AnalyticsLookupContext | null> {
   const compositeKey = overrideKey || process.env.AMPLITUDE_API_KEY;
   if (!compositeKey) return null;
   const creds = parseAmplitudeKey(compositeKey);
