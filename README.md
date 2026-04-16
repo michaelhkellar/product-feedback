@@ -1,6 +1,6 @@
 # Customer Feedback Intelligence Agent
 
-An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard, Attention, Zendesk, Intercom, and Slack — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Summarize** feedback, **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers.
+An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard, Attention, Zendesk, Intercom, and Slack — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Summarize** feedback, **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
 
 > Demo data in this repository is synthetic and intentionally fictionalized for safe demos and public code sharing.
 
@@ -27,9 +27,9 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 │                Provider Abstraction Layer                        │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  AI Providers         │  Analytics     │  Tickets        │   │
-│  │  ├─ Google Gemini     │  ├─ Pendo      │  ├─ Jira        │   │
-│  │  ├─ Anthropic Claude  │  └─ Amplitude  │  └─ Linear      │   │
-│  │  └─ OpenAI GPT       │               │                  │   │
+│  │  ├─ Google Gemini     │  ├─ Pendo      │  ├─ Jira (R/W)  │   │
+│  │  ├─ Anthropic Claude  │  ├─ Amplitude  │  └─ Linear (R/W)│   │
+│  │  └─ OpenAI GPT       │  └─ PostHog    │                  │   │
 │  └──────────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────────┤
 │                   Intelligence Layer                             │
@@ -39,7 +39,8 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 │  └──────────────┘  └──────────────┘  └──────────────────────┘  │
 ├──────────────────────────────────────────────────────────────────┤
 │              Data Source Integrations                             │
-│  Productboard API  ·  Attention API  ·  Jira API  ·  Demo Data │
+│  Productboard  ·  Attention  ·  Jira  ·  Linear  ·  Demo Data  │
+│  Pendo  ·  Amplitude  ·  PostHog  ·  Confluence                 │
 ├──────────────────────────────────────────────────────────────────┤
 │              Write Path (Preview → Confirm → Create)            │
 │  Jira Issues  ·  Linear Issues  ·  Confluence Pages             │
@@ -49,10 +50,14 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 ## Features
 
 ### Core Intelligence
-- **RAG Agent**: TF-IDF vector store indexes all feedback, features, calls, and insights for semantic search
+- **RAG Agent**: TF-IDF vector store indexes all feedback, features, calls, Jira issues, Linear issues, and insights for semantic search
 - **Multi-Provider AI**: Choose between Google Gemini, Anthropic Claude, or OpenAI GPT — with dynamic model selection per provider
 - **Cross-Source Intelligence**: Links feedback to features to calls — surfaces revenue impact, churn risk, and competitive signals
-- **Rich Demo Data**: 12 synthetic feedback items, 8 Productboard features, 4 Attention calls, 6 pre-computed insights — all ready to explore without any API keys
+- **Catalog Awareness**: The AI knows about all tracked pages, features, and events across analytics providers — not just the top 10
+- **Targeted Lookups**: Ask about a specific feature or event by name and the agent runs scoped queries against Pendo, Amplitude, or PostHog to retrieve its usage data
+- **Time Scoping**: Natural language time ranges ("last 30 days", "Q1", "since March") scope feedback, analytics, and ticket data — with period comparison support
+- **Token Optimization**: Context budgeting, deduplication, and adaptive response formatting to manage AI costs
+- **Rich Demo Data**: 12 synthetic feedback items, 8 Productboard features, 4 Attention calls, 6 pre-computed insights — all ready to explore without any API keys. Demo data auto-disables when real data source keys are configured
 
 ### Interaction Modes
 - **Summarize**: Query and analyze feedback with configurable context depth (quick, balanced, or full)
@@ -62,10 +67,11 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 ### Data Sources
 - **Productboard Integration**: Pull features and notes directly from the Productboard API
 - **Attention Integration**: Pull call recordings, summaries, and action items from Attention
-- **Pendo Analytics**: Usage insights and on-demand visitor/account history
-- **Amplitude Analytics**: Event analytics and user behavior data
-- **Jira Integration**: Pull existing tickets for cross-referencing; create new issues
-- **Linear Integration**: Create tickets directly from generated content
+- **Pendo Analytics**: Full catalog awareness, targeted feature/page lookups by name, track event aggregation, visitor/account history, 30-day default window with on-demand deep dives (up to 500 items)
+- **Amplitude Analytics**: Event analytics, user behavior data, targeted event lookups by name, full event catalog
+- **PostHog Analytics**: HogQL-powered queries, event/page analytics, targeted lookups, full catalog
+- **Jira Integration**: Pull all issues (open and closed) for cross-referencing; create new issues; Confluence page search and publishing
+- **Linear Integration**: Pull issues via GraphQL (up to 1000, with team filtering and pagination); create tickets from generated content
 
 ### Write Capabilities
 - **Ticket Creation**: Create Jira or Linear issues from AI-generated tickets with a preview/edit step before submission
@@ -115,17 +121,19 @@ cp .env.example .env.local
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PENDO_INTEGRATION_KEY` | Optional | Enables Pendo usage insights and on-demand visitor/account history |
+| `PENDO_INTEGRATION_KEY` | Optional | Enables Pendo usage insights, feature/page lookups, and visitor/account history |
 | `AMPLITUDE_API_KEY` | Optional | Amplitude analytics (format: `apiKey:secretKey`) |
+| `POSTHOG_API_KEY` | Optional | PostHog analytics (format: `apiKey:projectId`) |
+| `POSTHOG_HOST` | Optional | PostHog instance URL (defaults to `https://app.posthog.com`) |
 
-### Ticket Providers
+### Ticket & Issue Providers
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ATLASSIAN_DOMAIN` | Optional | Atlassian instance domain (enables Jira + Confluence read/write) |
 | `ATLASSIAN_EMAIL` | Optional | Atlassian account email for Jira/Confluence access |
 | `ATLASSIAN_API_TOKEN` | Optional | Atlassian API token for Jira/Confluence access |
-| `LINEAR_API_KEY` | Optional | Linear API key (enables Linear ticket creation) |
+| `LINEAR_API_KEY` | Optional | Linear API key (enables issue reading and ticket creation) |
 
 ### Authentication
 
@@ -186,6 +194,8 @@ Once the app is running, try asking the agent:
 │   │   ├── tickets/route.ts                # Jira/Linear ticket creation (rate-limited)
 │   │   ├── settings/
 │   │   │   ├── atlassian-resources/route.ts # Fetch Jira projects & Confluence spaces
+│   │   │   ├── invalidate-cache/route.ts   # Clear cached data on config change
+│   │   │   ├── linear-teams/route.ts       # Fetch Linear teams for team selector
 │   │   │   ├── models/route.ts             # Dynamic AI model list per provider
 │   │   │   ├── status/route.ts             # API key status check
 │   │   │   └── validate/route.ts           # API key validation (all providers)
@@ -206,7 +216,7 @@ Once the app is running, try asking the agent:
 ├── lib/
 │   ├── agent.ts                            # Core agent logic, prompts, RAG orchestration
 │   ├── ai-provider.ts                      # AI provider abstraction (Gemini/Anthropic/OpenAI)
-│   ├── amplitude.ts                        # Amplitude analytics client
+│   ├── amplitude.ts                        # Amplitude analytics client (overview + targeted lookups)
 │   ├── api-keys.ts                         # Client-side key management & header building
 │   ├── atlassian.ts                        # Jira + Confluence API client (read/write)
 │   ├── attention.ts                        # Attention API client
@@ -214,8 +224,9 @@ Once the app is running, try asking the agent:
 │   ├── demo-data.ts                        # Rich synthetic demo dataset
 │   ├── gemini.ts                           # Gemini API client
 │   ├── insights-generator.ts              # Programmatic + AI insight generation
-│   ├── linear.ts                           # Linear API client (ticket creation)
-│   ├── pendo.ts                            # Pendo API client
+│   ├── linear.ts                           # Linear API client (issue reading + ticket creation)
+│   ├── pendo.ts                            # Pendo API client (overview + targeted lookups)
+│   ├── posthog.ts                          # PostHog analytics client (HogQL queries)
 │   ├── productboard.ts                     # Productboard API client
 │   ├── ticket-provider.ts                  # Ticket provider abstraction + sanitization
 │   ├── types.ts                            # TypeScript types

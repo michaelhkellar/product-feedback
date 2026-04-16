@@ -1,6 +1,16 @@
 import { CreateTicketResult } from "./ticket-provider";
+import { LinearIssue } from "./types";
 
 const API_URL = "https://api.linear.app/graphql";
+const MAX_ISSUES = 1000;
+
+const PRIORITY_LABELS: Record<number, string> = {
+  0: "No priority",
+  1: "Urgent",
+  2: "High",
+  3: "Medium",
+  4: "Low",
+};
 
 async function linearFetch<T>(
   apiKey: string,
@@ -46,6 +56,104 @@ export async function getLinearTeams(
     return data.teams.nodes;
   } catch (error) {
     console.error("Failed to fetch Linear teams:", error);
+    return [];
+  }
+}
+
+export async function getLinearIssues(
+  overrideKey?: string,
+  teamId?: string
+): Promise<LinearIssue[]> {
+  const apiKey = overrideKey || process.env.LINEAR_API_KEY;
+  if (!apiKey) return [];
+
+  const allIssues: LinearIssue[] = [];
+  let cursor: string | null = null;
+
+  try {
+    for (let page = 0; allIssues.length < MAX_ISSUES && page < 5; page++) {
+      const filterClause = teamId ? `, filter: { team: { id: { eq: "${teamId}" } } }` : "";
+      const afterClause: string = cursor ? `, after: "${cursor}"` : "";
+
+      const data: {
+        issues: {
+          nodes: {
+            id: string;
+            identifier: string;
+            title: string;
+            description: string | null;
+            state: { name: string } | null;
+            priority: number;
+            assignee: { name: string } | null;
+            labels: { nodes: { name: string }[] };
+            createdAt: string;
+            updatedAt: string;
+            team: { name: string } | null;
+            url: string;
+          }[];
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      } = await linearFetch<{
+        issues: {
+          nodes: {
+            id: string;
+            identifier: string;
+            title: string;
+            description: string | null;
+            state: { name: string } | null;
+            priority: number;
+            assignee: { name: string } | null;
+            labels: { nodes: { name: string }[] };
+            createdAt: string;
+            updatedAt: string;
+            team: { name: string } | null;
+            url: string;
+          }[];
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+        };
+      }>(
+        apiKey,
+        `query {
+          issues(first: 250, orderBy: updatedAt${filterClause}${afterClause}) {
+            nodes {
+              id identifier title description
+              state { name }
+              priority
+              assignee { name }
+              labels { nodes { name } }
+              createdAt updatedAt
+              team { name }
+              url
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`
+      );
+
+      for (const node of data.issues.nodes) {
+        allIssues.push({
+          id: node.id,
+          identifier: node.identifier,
+          title: node.title,
+          description: node.description || "",
+          status: node.state?.name || "Unknown",
+          priority: PRIORITY_LABELS[node.priority] || "Unknown",
+          assignee: node.assignee?.name || "Unassigned",
+          labels: node.labels.nodes.map((l) => l.name),
+          created: node.createdAt,
+          updated: node.updatedAt,
+          team: node.team?.name || "",
+          url: node.url,
+        });
+      }
+
+      if (!data.issues.pageInfo.hasNextPage || !data.issues.pageInfo.endCursor) break;
+      cursor = data.issues.pageInfo.endCursor;
+    }
+
+    return allIssues;
+  } catch (error) {
+    console.error("Failed to fetch Linear issues:", error);
     return [];
   }
 }

@@ -586,6 +586,8 @@ async function generateAIInsights(data: AgentData, providerType: AIProviderType 
     const parts = [`\nAnalytics (${ao.provider}):`];
     if (ao.topPages.length > 0)
       parts.push(`Top pages: ${ao.topPages.slice(0, 5).map((p) => `${p.name} (${p.count})`).join(", ")}`);
+    if (ao.topFeatures.length > 0)
+      parts.push(`Top features: ${ao.topFeatures.slice(0, 5).map((f) => `${f.name} (${f.count})`).join(", ")}`);
     if (ao.topEvents.length > 0)
       parts.push(`Top events: ${ao.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ")}`);
     if (ao.topAccounts.length > 0)

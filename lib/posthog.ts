@@ -52,7 +52,7 @@ export async function getPostHogOverview(
   if (!compositeKey) return null;
   const creds = parsePostHogKey(compositeKey);
   if (!creds) return null;
-  const effectiveDays = days || 7;
+  const effectiveDays = days || 30;
   const host = resolveHost(overrideHost);
 
   try {
@@ -66,7 +66,7 @@ export async function getPostHogOverview(
           body: JSON.stringify({
             query: {
               kind: "HogQLQuery",
-              query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 20`,
+              query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 200`,
             },
           }),
         }
@@ -80,7 +80,7 @@ export async function getPostHogOverview(
           body: JSON.stringify({
             query: {
               kind: "HogQLQuery",
-              query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 10`,
+              query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 200`,
             },
           }),
         }
@@ -94,9 +94,12 @@ export async function getPostHogOverview(
       count: Number(row[1]) || 0,
     }));
 
+    const allPageNames = pageResults.map((row) => String(row[0] || ""));
     let topEvents: AnalyticsOverview["topEvents"] = [];
+    let allEventNames: string[] = [];
     if (eventData) {
       const eventResults = ((eventData.results || []) as unknown[][]);
+      allEventNames = eventResults.map((row) => String(row[0] || ""));
       topEvents = eventResults.slice(0, 10).map((row, i) => ({
         id: String(row[0] || `event-${i}`),
         name: String(row[0] || `Event ${i + 1}`),
@@ -116,6 +119,8 @@ export async function getPostHogOverview(
       limitations: [
         "Feature tagging requires PostHog feature flags integration",
       ],
+      allPageNames,
+      allEventNames,
     };
   } catch (error) {
     console.error("Failed to load PostHog overview:", error);
@@ -213,54 +218,80 @@ export async function getRelevantPostHogContext(
 
   const candidates = Array.from(new Set([...emails, ...feedbackEmails]));
 
-  if (candidates.length === 0) {
-    return {
-      context: "PostHog lookup: no user candidate could be inferred from the question or matched feedback. Ask with an exact email or user ID.",
-      sources: [],
-    };
-  }
+  const lines: string[] = ["PostHog usage context:"];
+  const sources: { type: string; id: string; title: string }[] = [];
 
   try {
-    const userId = candidates[0];
+    const q = query.toLowerCase();
 
-    const data = await posthogFetch<Record<string, unknown>>(
+    const eventBreakdown = await posthogFetch<Record<string, unknown>>(
       `/api/projects/${creds.projectId}/query/`,
-      creds.apiKey,
-      host,
+      creds.apiKey, host,
       {
         method: "POST",
         body: JSON.stringify({
           query: {
             kind: "HogQLQuery",
-            query: `SELECT event, timestamp, properties.$current_url AS url FROM events WHERE distinct_id = '${userId.replace(/'/g, "''")}' AND timestamp >= now() - interval ${effectiveDays} day ORDER BY timestamp DESC LIMIT 15`,
+            query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 200`,
           },
         }),
       }
-    );
+    ).catch(() => null);
 
-    const results = ((data.results || []) as unknown[][]);
-    const lines = [`PostHog user activity for ${userId}:`];
+    if (eventBreakdown) {
+      const eventRows = ((eventBreakdown.results || []) as unknown[][]);
+      const matchedEvents = eventRows
+        .map((row) => ({ name: String(row[0] || ""), count: Number(row[1]) || 0, users: Number(row[2]) || 0 }))
+        .filter((e) => e.name.length >= 3 && q.includes(e.name.toLowerCase()));
 
-    if (results.length > 0) {
-      lines.push(`Recent ${results.length} events:`);
-      for (const row of results.slice(0, 8)) {
-        const event = String(row[0] || "unknown");
-        const time = String(row[1] || "");
-        const url = String(row[2] || "");
-        lines.push(`  - ${event} at ${time}${url ? ` on ${url}` : ""}`);
+      for (const e of matchedEvents.slice(0, 5)) {
+        lines.push(`Event "${e.name}": ${e.count} occurrences, ${e.users} unique users in the last ${effectiveDays} days.`);
+        sources.push({ type: "posthog", id: `event:${e.name}`, title: `PostHog event ${e.name}` });
       }
-    } else {
-      lines.push("No recent events found.");
     }
 
-    return {
-      context: lines.join("\n"),
-      sources: [{ type: "posthog", id: `user:${userId}`, title: `PostHog user ${userId}` }],
-    };
+    if (candidates.length > 0) {
+      const userId = candidates[0];
+      const data = await posthogFetch<Record<string, unknown>>(
+        `/api/projects/${creds.projectId}/query/`,
+        creds.apiKey, host,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: {
+              kind: "HogQLQuery",
+              query: `SELECT event, timestamp, properties.$current_url AS url FROM events WHERE distinct_id = '${userId.replace(/'/g, "''")}' AND timestamp >= now() - interval ${effectiveDays} day ORDER BY timestamp DESC LIMIT 15`,
+            },
+          }),
+        }
+      );
+
+      const results = ((data.results || []) as unknown[][]);
+      lines.push(`User activity for ${userId}:`);
+
+      if (results.length > 0) {
+        lines.push(`Recent ${results.length} events:`);
+        for (const row of results.slice(0, 8)) {
+          const event = String(row[0] || "unknown");
+          const time = String(row[1] || "");
+          const url = String(row[2] || "");
+          lines.push(`  - ${event} at ${time}${url ? ` on ${url}` : ""}`);
+        }
+      } else {
+        lines.push("No recent events found.");
+      }
+      sources.push({ type: "posthog", id: `user:${userId}`, title: `PostHog user ${userId}` });
+    }
+
+    if (lines.length === 1 && sources.length === 0) {
+      lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+    }
+
+    return { context: lines.join("\n"), sources };
   } catch (error) {
     console.error("PostHog lookup failed:", error);
     return {
-      context: `PostHog lookup failed for ${candidates[0]}: ${error instanceof Error ? error.message : "unknown error"}`,
+      context: `PostHog lookup failed: ${error instanceof Error ? error.message : "unknown error"}`,
       sources: [],
     };
   }

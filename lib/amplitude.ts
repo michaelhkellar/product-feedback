@@ -53,7 +53,7 @@ export async function getAmplitudeOverview(
   if (!compositeKey) return null;
   const creds = parseAmplitudeKey(compositeKey);
   if (!creds) return null;
-  const effectiveDays = days || 7;
+  const effectiveDays = days || 30;
 
   try {
     const end = new Date();
@@ -86,9 +86,11 @@ export async function getAmplitudeOverview(
     }));
 
     let topEvents: AnalyticsOverview["topEvents"] = [];
+    let allEventNames: string[] = [];
     if (eventsData) {
       const eventLabels = ((eventsData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
       const eventSeries = ((eventsData.data as Record<string, unknown>)?.series as number[][]) || [];
+      allEventNames = eventLabels;
       topEvents = eventLabels.map((label, i) => ({
         id: label,
         name: label,
@@ -108,6 +110,8 @@ export async function getAmplitudeOverview(
       limitations: [
         "Feature-level and account-level analytics require Amplitude Taxonomy add-on",
       ],
+      allPageNames: seriesLabels,
+      allEventNames,
     };
   } catch (error) {
     console.error("Failed to load Amplitude overview:", error);
@@ -190,50 +194,69 @@ export async function getRelevantAmplitudeContext(
 
   const candidates = Array.from(new Set([...emails, ...feedbackEmails]));
 
-  if (candidates.length === 0) {
-    return {
-      context: "Amplitude lookup: no user candidate could be inferred from the question or matched feedback. Ask with an exact email or user ID.",
-      sources: [],
-    };
-  }
+  const lines: string[] = ["Amplitude usage context:"];
+  const sources: { type: string; id: string; title: string }[] = [];
 
   try {
-    const userId = candidates[0];
     const end = new Date();
     const start = new Date();
     start.setDate(start.getDate() - effectiveDays);
-
     const startStr = start.toISOString().split("T")[0].replace(/-/g, "");
     const endStr = end.toISOString().split("T")[0].replace(/-/g, "");
 
-    const data = await amplitudeFetch<Record<string, unknown>>(
-      `/useractivity?user=${encodeURIComponent(userId)}&start=${startStr}&end=${endStr}`,
-      creds.apiKey,
-      creds.secretKey
-    );
+    const q = query.toLowerCase();
+    const eventSegData = await amplitudeFetch<Record<string, unknown>>(
+      `/events/segmentation?e=${encodeURIComponent(JSON.stringify({ event_type: "_all" }))}&start=${startStr}&end=${endStr}&m=uniques`,
+      creds.apiKey, creds.secretKey
+    ).catch(() => null);
 
-    const events = ((data.events || []) as Record<string, unknown>[]).slice(0, 15);
-    const lines = [`Amplitude user activity for ${userId}:`];
+    if (eventSegData) {
+      const eventLabels = ((eventSegData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
+      const eventSeries = ((eventSegData.data as Record<string, unknown>)?.series as number[][]) || [];
+      const matchedEvents = eventLabels
+        .map((label, i) => ({ name: label, count: (eventSeries[i] || []).reduce((a, b) => a + b, 0) }))
+        .filter((e) => e.name.length >= 3 && q.includes(e.name.toLowerCase()));
 
-    if (events.length > 0) {
-      lines.push(`Recent ${events.length} events:`);
-      for (const event of events.slice(0, 8)) {
-        const type = (event.event_type as string) || "unknown";
-        const time = (event.event_time as string) || "";
-        lines.push(`  - ${type} at ${time}`);
+      if (matchedEvents.length > 0) {
+        for (const e of matchedEvents.slice(0, 5)) {
+          lines.push(`Event "${e.name}": ${e.count} unique users in the last ${effectiveDays} days.`);
+          sources.push({ type: "amplitude", id: `event:${e.name}`, title: `Amplitude event ${e.name}` });
+        }
       }
-    } else {
-      lines.push("No recent events found.");
     }
 
-    return {
-      context: lines.join("\n"),
-      sources: [{ type: "amplitude", id: `user:${userId}`, title: `Amplitude user ${userId}` }],
-    };
+    if (candidates.length > 0) {
+      const userId = candidates[0];
+      const data = await amplitudeFetch<Record<string, unknown>>(
+        `/useractivity?user=${encodeURIComponent(userId)}&start=${startStr}&end=${endStr}`,
+        creds.apiKey, creds.secretKey
+      );
+
+      const events = ((data.events || []) as Record<string, unknown>[]).slice(0, 15);
+      lines.push(`User activity for ${userId}:`);
+
+      if (events.length > 0) {
+        lines.push(`Recent ${events.length} events:`);
+        for (const event of events.slice(0, 8)) {
+          const type = (event.event_type as string) || "unknown";
+          const time = (event.event_time as string) || "";
+          lines.push(`  - ${type} at ${time}`);
+        }
+      } else {
+        lines.push("No recent events found.");
+      }
+      sources.push({ type: "amplitude", id: `user:${userId}`, title: `Amplitude user ${userId}` });
+    }
+
+    if (lines.length === 1 && sources.length === 0) {
+      lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+    }
+
+    return { context: lines.join("\n"), sources };
   } catch (error) {
     console.error("Amplitude lookup failed:", error);
     return {
-      context: `Amplitude lookup failed for ${candidates[0]}: ${error instanceof Error ? error.message : "unknown error"}`,
+      context: `Amplitude lookup failed: ${error instanceof Error ? error.message : "unknown error"}`,
       sources: [],
     };
   }

@@ -57,12 +57,17 @@ export async function POST(req: NextRequest) {
 
     const posthogHost = req.headers.get("x-posthog-host") || undefined;
 
+    const linearKey = req.headers.get("x-linear-key") || undefined;
+    const linearTeamId = req.headers.get("x-linear-team-id") || undefined;
+
     const agentKeys = {
       ...keys,
       analyticsProvider,
       amplitudeKey,
       posthogKey,
       posthogHost,
+      linearKey,
+      linearTeamId,
     };
 
     const timeRange = extractTimeRange(trimmedMessage);
@@ -79,7 +84,9 @@ export async function POST(req: NextRequest) {
       amplitudeKey,
       posthogKey,
       analyticsDays,
-      posthogHost
+      posthogHost,
+      linearKey,
+      linearTeamId
     );
 
     const generatedInsights = generateProgrammaticInsights(data);

@@ -1,7 +1,7 @@
 import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
 
 const API_BASE = "https://app.pendo.io/api/v1";
-const OVERVIEW_DAYS = 7;
+const OVERVIEW_DAYS = 30;
 const LOOKUP_DAYS = 30;
 
 export interface PendoUsageItem {
@@ -403,10 +403,11 @@ function buildUsageSummary(
   label: string,
   totals: { totalEvents: number; totalMinutes: number },
   pages: PendoUsageItem[],
-  features: PendoUsageItem[]
+  features: PendoUsageItem[],
+  days = LOOKUP_DAYS
 ): string[] {
   const lines = [
-    `${label}: ${totals.totalEvents} events and ${formatMinutes(totals.totalMinutes)} in the last ${LOOKUP_DAYS} days.`,
+    `${label}: ${totals.totalEvents} events and ${formatMinutes(totals.totalMinutes)} in the last ${days} days.`,
   ];
 
   if (pages.length > 0) {
@@ -448,21 +449,45 @@ export async function getPendoOverview(
       fetchTaggedObjects(integrationKey, "/feature"),
     ]);
 
-    const [activePages, activeFeatures, activeAccounts] = await Promise.all([
+    const [activePages, activeFeatures, activeAccounts, trackEventRows] = await Promise.all([
       topUsageForSource(integrationKey, "pageEvents", "pageId", pages, effectiveDays),
       topUsageForSource(integrationKey, "featureEvents", "featureId", features, effectiveDays),
       topAccounts(integrationKey, effectiveDays),
+      aggregate(integrationKey, {
+        response: { mimeType: "application/json" },
+        request: {
+          name: "trackEvents-top-usage",
+          pipeline: [
+            sourceRequest("trackEvents", effectiveDays),
+            { identified: "visitorId" },
+            { group: { group: ["type"], fields: [{ totalEvents: { sum: "numEvents" } }] } },
+            { sort: ["-totalEvents"] },
+          ],
+        },
+      }).catch(() => [] as Record<string, unknown>[]),
     ]);
+
+    const topEvents = trackEventRows
+      .map((row) => {
+        const type = pickString(row, ["type"]);
+        if (!type) return null;
+        return { id: type, name: type, count: numericValue(row.totalEvents) };
+      })
+      .filter((item): item is { id: string; name: string; count: number } => !!item)
+      .slice(0, 10);
 
     return {
       provider: "pendo",
       topPages: activePages.map((p) => ({ id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes })),
       topFeatures: activeFeatures.map((f) => ({ id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes })),
-      topEvents: [],
+      topEvents,
       topAccounts: activeAccounts.map((a) => ({ id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes })),
       totalTrackedPages: pages.size,
       totalTrackedFeatures: features.size,
       generatedAt: new Date().toISOString(),
+      allPageNames: Array.from(pages.values()),
+      allFeatureNames: Array.from(features.values()),
+      allEventNames: topEvents.map((e) => e.name),
     };
   } catch (error) {
     console.error("Failed to load Pendo overview:", error);
@@ -486,22 +511,92 @@ export async function getFullPendoAnalytics(
       fetchTaggedObjects(integrationKey, "/feature"),
     ]);
 
-    const [allPages, allFeatures, allAccounts] = await Promise.all([
+    const [allPages, allFeatures, allAccounts, trackEventRows] = await Promise.all([
       topUsageForSource(integrationKey, "pageEvents", "pageId", pages, effectiveDays, undefined, cap),
       topUsageForSource(integrationKey, "featureEvents", "featureId", features, effectiveDays, undefined, cap),
       topAccounts(integrationKey, effectiveDays, cap),
+      aggregate(integrationKey, {
+        response: { mimeType: "application/json" },
+        request: {
+          name: "trackEvents-full",
+          pipeline: [
+            sourceRequest("trackEvents", effectiveDays),
+            { identified: "visitorId" },
+            { group: { group: ["type"], fields: [{ totalEvents: { sum: "numEvents" } }] } },
+            { sort: ["-totalEvents"] },
+          ],
+        },
+      }).catch(() => [] as Record<string, unknown>[]),
     ]);
+
+    const events = trackEventRows
+      .map((row) => {
+        const type = pickString(row, ["type"]);
+        if (!type) return null;
+        return { id: type, name: type, count: numericValue(row.totalEvents) };
+      })
+      .filter((item): item is { id: string; name: string; count: number } => !!item)
+      .slice(0, cap);
 
     return {
       pages: allPages.map((p) => ({ id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes })),
       features: allFeatures.map((f) => ({ id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes })),
-      events: [],
+      events,
       accounts: allAccounts.map((a) => ({ id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes })),
     };
   } catch (error) {
     console.error("Failed to load full Pendo analytics:", error);
     return null;
   }
+}
+
+function matchCatalogNames(query: string, catalog: Map<string, string>): { id: string; name: string }[] {
+  const q = query.toLowerCase();
+  const matches: { id: string; name: string }[] = [];
+  catalog.forEach((name, id) => {
+    if (name.length >= 3 && q.includes(name.toLowerCase())) {
+      matches.push({ id, name });
+    }
+  });
+  return matches;
+}
+
+async function lookupNamedItems(
+  integrationKey: string,
+  pageNames: Map<string, string>,
+  featureNames: Map<string, string>,
+  matchedPages: { id: string; name: string }[],
+  matchedFeatures: { id: string; name: string }[],
+  days: number,
+): Promise<{ lines: string[]; sources: { type: string; id: string; title: string }[] }> {
+  const lines: string[] = [];
+  const sources: { type: string; id: string; title: string }[] = [];
+
+  for (const p of matchedPages.slice(0, 5)) {
+    const filter = `pageId == \`${escapeFilterValue(p.id)}\``;
+    const usage = await topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, days, filter, 1);
+    if (usage.length > 0) {
+      const u = usage[0];
+      lines.push(`Page "${p.name}": ${u.totalEvents} events, ${formatMinutes(u.totalMinutes)} in the last ${days} days.`);
+    } else {
+      lines.push(`Page "${p.name}": no usage recorded in the last ${days} days.`);
+    }
+    sources.push({ type: "pendo", id: `page:${p.id}`, title: `Pendo page ${p.name}` });
+  }
+
+  for (const f of matchedFeatures.slice(0, 5)) {
+    const filter = `featureId == \`${escapeFilterValue(f.id)}\``;
+    const usage = await topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, days, filter, 1);
+    if (usage.length > 0) {
+      const u = usage[0];
+      lines.push(`Feature "${f.name}": ${u.totalEvents} events, ${formatMinutes(u.totalMinutes)} in the last ${days} days.`);
+    } else {
+      lines.push(`Feature "${f.name}": no usage recorded in the last ${days} days.`);
+    }
+    sources.push({ type: "pendo", id: `feature:${f.id}`, title: `Pendo feature ${f.name}` });
+  }
+
+  return { lines, sources };
 }
 
 export async function getRelevantPendoContext(
@@ -514,47 +609,21 @@ export async function getRelevantPendoContext(
   const effectiveLookupDays = days || LOOKUP_DAYS;
   if (!integrationKey) return null;
 
-  const { visitorCandidates, accountCandidates, notes } = collectCandidates(query, relatedFeedback);
-  if (visitorCandidates.length === 0 && accountCandidates.length === 0) {
-    return {
-      context: "Pendo lookup: no visitor or account candidate could be inferred from the question or matched feedback. Ask with an exact email, Pendo visitor ID, or account name/ID.",
-      sources: [],
-    };
-  }
-
   const [pageNames, featureNames] = await Promise.all([
     fetchTaggedObjects(integrationKey, "/page"),
     fetchTaggedObjects(integrationKey, "/feature"),
   ]);
 
-  let matchedVisitor: { id: string; entity: Record<string, unknown> } | null = null;
-  for (const candidate of visitorCandidates) {
-    const entity = await getEntityById(integrationKey, "visitor", candidate);
-    if (entity) {
-      matchedVisitor = { id: candidate, entity };
-      break;
-    }
-  }
+  const matchedPages = matchCatalogNames(query, pageNames);
+  const matchedFeatures = matchCatalogNames(query, featureNames);
+  const hasNameMatches = matchedPages.length > 0 || matchedFeatures.length > 0;
 
-  let matchedAccount: { id: string; entity: Record<string, unknown> } | null = null;
-  const allAccountCandidates = [...accountCandidates];
-  if (matchedVisitor) {
-    const accountFromVisitor = extractAccountId(matchedVisitor.entity);
-    if (accountFromVisitor) allAccountCandidates.unshift(accountFromVisitor);
-  }
+  const { visitorCandidates, accountCandidates, notes } = collectCandidates(query, relatedFeedback);
+  const hasIdentityCandidates = visitorCandidates.length > 0 || accountCandidates.length > 0;
 
-  for (const candidate of dedupe(allAccountCandidates)) {
-    const entity = await getEntityById(integrationKey, "account", candidate);
-    if (entity) {
-      matchedAccount = { id: candidate, entity };
-      break;
-    }
-  }
-
-  if (!matchedVisitor && !matchedAccount) {
-    const tried = dedupe([...visitorCandidates, ...accountCandidates]).join(", ");
+  if (!hasIdentityCandidates && !hasNameMatches) {
     return {
-      context: `Pendo lookup: no matching visitor/account was found for ${tried}. The match was attempted from ${notes.join("; ") || "the current question"}. Ask with an exact Pendo visitor ID, email-based visitor ID, or account ID if you want a stronger lookup.`,
+      context: "Pendo lookup: no matching page, feature, visitor, or account could be inferred from the question. Ask about a specific page/feature name, or include an email or account ID.",
       sources: [],
     };
   }
@@ -562,45 +631,82 @@ export async function getRelevantPendoContext(
   const lines: string[] = ["Pendo usage context:"];
   const sources: { type: string; id: string; title: string }[] = [];
 
-  if (matchedVisitor) {
-    const visitorLabel = entityDisplay(matchedVisitor.entity, matchedVisitor.id);
-    lines.push(`Matched visitor: ${visitorLabel}.`);
-    const fields = interestingFields(matchedVisitor.entity)
-      .map(([key, value]) => `${key}=${value}`)
-      .slice(0, 5);
-    if (fields.length > 0) lines.push(`Visitor metadata: ${fields.join("; ")}.`);
-
-    const [totals, pages, features, history] = await Promise.all([
-      entityTotals(integrationKey, "visitorId", matchedVisitor.id, effectiveLookupDays),
-      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
-      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
-      getVisitorHistory(integrationKey, matchedVisitor.id),
-    ]);
-
-    lines.push(...buildUsageSummary("Visitor activity", totals, pages, features));
-    if (history.length > 0) {
-      lines.push(`Recent visitor history sample (last 24h summary): ${history.map(summarizeHistoryItem).filter(Boolean).slice(0, 5).join("; ")}.`);
-    }
-
-    sources.push({ type: "pendo", id: `visitor:${matchedVisitor.id}`, title: `Pendo visitor ${visitorLabel}` });
+  if (hasNameMatches) {
+    const namedResult = await lookupNamedItems(integrationKey, pageNames, featureNames, matchedPages, matchedFeatures, effectiveLookupDays);
+    lines.push(...namedResult.lines);
+    sources.push(...namedResult.sources);
   }
 
-  if (matchedAccount) {
-    const accountLabel = entityDisplay(matchedAccount.entity, matchedAccount.id);
-    lines.push(`Matched account: ${accountLabel}.`);
-    const fields = interestingFields(matchedAccount.entity)
-      .map(([key, value]) => `${key}=${value}`)
-      .slice(0, 5);
-    if (fields.length > 0) lines.push(`Account metadata: ${fields.join("; ")}.`);
+  if (hasIdentityCandidates) {
+    let matchedVisitor: { id: string; entity: Record<string, unknown> } | null = null;
+    for (const candidate of visitorCandidates) {
+      const entity = await getEntityById(integrationKey, "visitor", candidate);
+      if (entity) {
+        matchedVisitor = { id: candidate, entity };
+        break;
+      }
+    }
 
-    const [totals, pages, features] = await Promise.all([
-      entityTotals(integrationKey, "accountId", matchedAccount.id, effectiveLookupDays),
-      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
-      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
-    ]);
+    let matchedAccount: { id: string; entity: Record<string, unknown> } | null = null;
+    const allAccountCandidates = [...accountCandidates];
+    if (matchedVisitor) {
+      const accountFromVisitor = extractAccountId(matchedVisitor.entity);
+      if (accountFromVisitor) allAccountCandidates.unshift(accountFromVisitor);
+    }
 
-    lines.push(...buildUsageSummary("Account activity", totals, pages, features));
-    sources.push({ type: "pendo", id: `account:${matchedAccount.id}`, title: `Pendo account ${accountLabel}` });
+    for (const candidate of dedupe(allAccountCandidates)) {
+      const entity = await getEntityById(integrationKey, "account", candidate);
+      if (entity) {
+        matchedAccount = { id: candidate, entity };
+        break;
+      }
+    }
+
+    if (matchedVisitor) {
+      const visitorLabel = entityDisplay(matchedVisitor.entity, matchedVisitor.id);
+      lines.push(`Matched visitor: ${visitorLabel}.`);
+      const fields = interestingFields(matchedVisitor.entity)
+        .map(([key, value]) => `${key}=${value}`)
+        .slice(0, 5);
+      if (fields.length > 0) lines.push(`Visitor metadata: ${fields.join("; ")}.`);
+
+      const [totals, pages, features, history] = await Promise.all([
+        entityTotals(integrationKey, "visitorId", matchedVisitor.id, effectiveLookupDays),
+        topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
+        topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
+        getVisitorHistory(integrationKey, matchedVisitor.id),
+      ]);
+
+      lines.push(...buildUsageSummary("Visitor activity", totals, pages, features, effectiveLookupDays));
+      if (history.length > 0) {
+        lines.push(`Recent visitor history sample (last 24h summary): ${history.map(summarizeHistoryItem).filter(Boolean).slice(0, 5).join("; ")}.`);
+      }
+
+      sources.push({ type: "pendo", id: `visitor:${matchedVisitor.id}`, title: `Pendo visitor ${visitorLabel}` });
+    }
+
+    if (matchedAccount) {
+      const accountLabel = entityDisplay(matchedAccount.entity, matchedAccount.id);
+      lines.push(`Matched account: ${accountLabel}.`);
+      const fields = interestingFields(matchedAccount.entity)
+        .map(([key, value]) => `${key}=${value}`)
+        .slice(0, 5);
+      if (fields.length > 0) lines.push(`Account metadata: ${fields.join("; ")}.`);
+
+      const [totals, pages, features] = await Promise.all([
+        entityTotals(integrationKey, "accountId", matchedAccount.id, effectiveLookupDays),
+        topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
+        topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
+      ]);
+
+      lines.push(...buildUsageSummary("Account activity", totals, pages, features, effectiveLookupDays));
+      sources.push({ type: "pendo", id: `account:${matchedAccount.id}`, title: `Pendo account ${accountLabel}` });
+    }
+
+    if (!matchedVisitor && !matchedAccount && !hasNameMatches) {
+      const tried = dedupe([...visitorCandidates, ...accountCandidates]).join(", ");
+      lines.push(`Identity lookup: no matching visitor/account was found for ${tried}.`);
+    }
   }
 
   if (notes.length > 0) {

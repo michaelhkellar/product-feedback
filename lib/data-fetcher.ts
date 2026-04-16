@@ -5,6 +5,7 @@ import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atla
 import { getPendoOverview, isPendoConfigured } from "./pendo";
 import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
 import { getPostHogOverview, isPostHogConfigured } from "./posthog";
+import { getLinearIssues, isLinearConfigured } from "./linear";
 import { AnalyticsProviderType } from "./api-keys";
 import { createHash } from "crypto";
 import {
@@ -72,7 +73,9 @@ async function fetchLiveData(
   amplitudeKey?: string,
   posthogKey?: string,
   analyticsDays?: number,
-  posthogHost?: string
+  posthogHost?: string,
+  linearKey?: string,
+  linearTeamId?: string
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -80,6 +83,7 @@ async function fetchLiveData(
   const insights = useDemoFallback ? [...DEMO_INSIGHTS] : [];
   let jiraIssues: AgentData["jiraIssues"] = useDemoFallback ? [...DEMO_JIRA_ISSUES] : [];
   let confluencePages: AgentData["confluencePages"] = useDemoFallback ? [...DEMO_CONFLUENCE_PAGES] : [];
+  let linearIssues: AgentData["linearIssues"] = [];
   let analyticsOverview: AgentData["analyticsOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
 
   const fetches: Promise<void>[] = [];
@@ -147,9 +151,18 @@ async function fetchLiveData(
     );
   }
 
+  if (isLinearConfigured(linearKey)) {
+    fetches.push(
+      (async () => {
+        const issues = await getLinearIssues(linearKey, linearTeamId);
+        if (issues.length > 0) linearIssues = issues;
+      })()
+    );
+  }
+
   if (fetches.length > 0) await Promise.allSettled(fetches);
 
-  return { feedback, features, calls, insights, jiraIssues, confluencePages, analyticsOverview };
+  return { feedback, features, calls, insights, jiraIssues, confluencePages, linearIssues, analyticsOverview };
 }
 
 export async function getData(
@@ -166,7 +179,9 @@ export async function getData(
   amplitudeKey?: string,
   posthogKey?: string,
   analyticsDays?: number,
-  posthogHost?: string
+  posthogHost?: string,
+  linearKey?: string,
+  linearTeamId?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
@@ -174,22 +189,23 @@ export async function getData(
   const hasAmplitude = isAmplitudeConfigured(amplitudeKey);
   const hasPostHog = isPostHogConfigured(posthogKey);
   const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
-  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl;
+  const hasLinear = isLinearConfigured(linearKey);
+  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
 
   if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
-    return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], analyticsOverview: null };
+    return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
 
   const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost);
+  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId);
   dataCache.set(key, { data, timestamp: Date.now() });
 
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
-  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.analyticsOverview ? ", analytics overview" : ""})`);
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
+  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.linearIssues.length} linear, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.analyticsOverview ? ", analytics overview" : ""})`);
 
   return data;
 }

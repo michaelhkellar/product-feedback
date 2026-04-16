@@ -9,7 +9,7 @@ import {
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
-  AnalyticsOverview, FullAnalyticsResult,
+  AnalyticsOverview, FullAnalyticsResult, LinearIssue,
 } from "./types";
 import { ContextMode } from "./api-keys";
 
@@ -31,6 +31,8 @@ export interface AgentKeys {
   amplitudeKey?: string;
   posthogKey?: string;
   posthogHost?: string;
+  linearKey?: string;
+  linearTeamId?: string;
 }
 
 export interface AgentData {
@@ -40,6 +42,7 @@ export interface AgentData {
   insights: Insight[];
   jiraIssues: JiraIssue[];
   confluencePages: ConfluencePage[];
+  linearIssues: LinearIssue[];
   analyticsOverview: AnalyticsOverview | null;
 }
 
@@ -56,7 +59,7 @@ function estimateTokens(text: string): number {
 let cachedStore: { fingerprint: string; store: InMemoryVectorStore } | null = null;
 
 function dataFingerprint(data: AgentData): string {
-  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}`;
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}`;
 }
 
 function buildStore(data: AgentData): InMemoryVectorStore {
@@ -69,6 +72,7 @@ function buildStore(data: AgentData): InMemoryVectorStore {
   if (data.calls.length) store.addCalls(data.calls);
   if (data.insights.length) store.addInsights(data.insights);
   if (data.jiraIssues.length) store.addJiraIssues(data.jiraIssues);
+  if (data.linearIssues.length) store.addLinearIssues(data.linearIssues);
   if (data.confluencePages.length) store.addConfluencePages(data.confluencePages);
   store.buildIndex();
   cachedStore = { fingerprint: fp, store };
@@ -80,6 +84,7 @@ export function getDemoData(): AgentData {
     feedback: DEMO_FEEDBACK, features: DEMO_PRODUCTBOARD_FEATURES,
     calls: DEMO_ATTENTION_CALLS, insights: DEMO_INSIGHTS,
     jiraIssues: DEMO_JIRA_ISSUES, confluencePages: DEMO_CONFLUENCE_PAGES,
+    linearIssues: [],
     analyticsOverview: DEMO_PENDO_OVERVIEW,
   };
 }
@@ -172,6 +177,13 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
       details.push(`[Jira ${jira.key}${link ? ` (${link})` : ""}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
       continue;
     }
+    const linear = data.linearIssues.find((l) => l.id === id);
+    if (linear) {
+      const w = shortDate(linear as unknown as Record<string, unknown>);
+      const desc = detailed && linear.description ? `\n  Description: "${linear.description.slice(0, descLen)}"` : "";
+      details.push(`[Linear ${linear.identifier}, ${w}] ${linear.title} — ${linear.status}/${linear.priority}, assigned: ${linear.assignee}${desc}`);
+      continue;
+    }
     const page = data.confluencePages.find((p) => p.id === id);
     if (page) {
       const excerpt = detailed && page.excerpt ? `: ${page.excerpt.slice(0, descLen)}` : "";
@@ -187,6 +199,7 @@ DATA SOURCE RULES:
 - Productboard notes/features = CUSTOMER FEEDBACK. This is the primary voice-of-customer source. Prioritize this.
 - Jira CX tickets (CX- prefix) = CUSTOMER SUCCESS issues. These reflect real customer problems. Prioritize these alongside Productboard.
 - Jira ENG tickets (ENG- prefix) = ENGINEERING/internal work. These are implementation details, not customer feedback. Reference only when the user asks about engineering status or what's being built.
+- Linear issues = ENGINEERING/PROJECT WORK from Linear. Treat like Jira engineering tickets — reference when the user asks about engineering status, sprints, or what's being worked on.
 - Confluence pages = INTERNAL DOCUMENTATION. Only reference when the user specifically asks about docs, guides, or internal processes. Don't include in general feedback summaries.
 - Product analytics (Pendo/Amplitude/PostHog) = PRODUCT USAGE ANALYTICS. Use it to explain what users/accounts are doing in the product or how engaged they appear, but don't treat usage alone as proof of customer intent.
 - Feedback arrives in Productboard through pipelines (Zapier, email, CRM). Zapier/email is the delivery mechanism, NOT the subject. Read the actual TITLE and CONTENT to understand what the customer wants.
@@ -200,7 +213,7 @@ const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprin
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
 const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same"];
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
-const USAGE_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product"];
+const USAGE_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product", "how is", "how often", "who uses", "how many users", "usage of", "clicked", "feature usage", "page usage"];
 
 // --- Time range extraction ---
 
@@ -341,6 +354,7 @@ function filterByTimeRange(data: AgentData, range: TimeRange): AgentData {
     insights: data.insights,
     jiraIssues: data.jiraIssues.filter((j) => inRange(j as unknown as Record<string, unknown>)),
     confluencePages: data.confluencePages.filter((p) => inRange(p as unknown as Record<string, unknown>)),
+    linearIssues: data.linearIssues.filter((l) => inRange(l as unknown as Record<string, unknown>)),
     analyticsOverview: data.analyticsOverview,
   };
 }
@@ -484,6 +498,7 @@ const ANALYTICS_KEYWORDS = [
   "funnel", "retention", "clicks", "pageview", "page view",
   "telemetry", "instrumentation", "tracks", "events",
   "feature flag", "feature flags",
+  "feature", "page", "event",
 ];
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
@@ -568,6 +583,13 @@ function buildExpandedDataContext(data: AgentData, limit = 100): string {
     parts.push(`\n--- Expanded calls (${items.length} of ${data.calls.length}) ---`);
     for (const c of items) {
       parts.push(`- ${c.title} (${c.date}) — ${c.summary.slice(0, 80)}`);
+    }
+  }
+  if (data.linearIssues.length > 0) {
+    const items = data.linearIssues.slice(0, limit);
+    parts.push(`\n--- Expanded Linear (${items.length} of ${data.linearIssues.length}) ---`);
+    for (const l of items) {
+      parts.push(`- ${l.identifier} ${l.title} [${l.status}/${l.priority}]`);
     }
   }
   if (data.confluencePages.length > 0) {
@@ -799,7 +821,7 @@ function topThemesRecent(feedback: FeedbackItem[], days: number): string {
 }
 
 function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string {
-  const { feedback, features, calls, insights, jiraIssues, confluencePages, analyticsOverview } = data;
+  const { feedback, features, calls, insights, jiraIssues, confluencePages, linearIssues, analyticsOverview } = data;
   const parts: string[] = [];
 
   parts.push(`Today: ${new Date().toLocaleDateString()}`);
@@ -818,6 +840,13 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
     parts.push(`Jira statuses: ${Object.entries(byStatus).sort(([, a], [, b]) => b - a).slice(0, 6).map(([s, c]) => `${s}: ${c}`).join(", ")}`);
   }
 
+  if (linearIssues.length > 0) {
+    parts.push(temporalSummary(linearIssues as unknown as Record<string, unknown>[], "Linear"));
+    const byStatus: Record<string, number> = {};
+    for (const l of linearIssues) byStatus[l.status] = (byStatus[l.status] || 0) + 1;
+    parts.push(`Linear statuses: ${Object.entries(byStatus).sort(([, a], [, b]) => b - a).slice(0, 6).map(([s, c]) => `${s}: ${c}`).join(", ")}`);
+  }
+
   if (calls.length > 0) parts.push(temporalSummary(calls as unknown as Record<string, unknown>[], "Calls"));
   if (confluencePages.length > 0) parts.push(`Confluence: ${confluencePages.length} pages`);
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
@@ -832,6 +861,15 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
     if (featureSummary) parts.push(`${analyticsLabel} top features: ${featureSummary}`);
     if (eventSummary) parts.push(`${analyticsLabel} top events: ${eventSummary}`);
     if (accountSummary) parts.push(`${analyticsLabel} top accounts: ${accountSummary}`);
+    if (ao.allPageNames && ao.allPageNames.length > ao.topPages.length) {
+      parts.push(`${analyticsLabel} all known pages (${ao.allPageNames.length}): ${ao.allPageNames.join(", ")}`);
+    }
+    if (ao.allFeatureNames && ao.allFeatureNames.length > ao.topFeatures.length) {
+      parts.push(`${analyticsLabel} all known features (${ao.allFeatureNames.length}): ${ao.allFeatureNames.join(", ")}`);
+    }
+    if (ao.allEventNames && ao.allEventNames.length > ao.topEvents.length) {
+      parts.push(`${analyticsLabel} all known events (${ao.allEventNames.length}): ${ao.allEventNames.join(", ")}`);
+    }
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
   }
 
@@ -858,6 +896,7 @@ function buildComputedCounts(data: AgentData): string {
   lines.push(`Total features: ${data.features.length}`);
   lines.push(`Total calls: ${data.calls.length}`);
   lines.push(`Total Jira issues: ${data.jiraIssues.length}`);
+  lines.push(`Total Linear issues: ${data.linearIssues.length}`);
   lines.push(`Total Confluence pages: ${data.confluencePages.length}`);
   lines.push(`Total insights: ${data.insights.length}`);
 
@@ -935,6 +974,15 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
     }
   }
 
+  if (data.linearIssues.length > 0) {
+    const recent = recentItems(data.linearIssues, 12);
+    parts.push(`\nLinear issues (${recent.length} of ${data.linearIssues.length}):`);
+    for (const l of recent) {
+      const when = shortDate(l as unknown as Record<string, unknown>);
+      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}]`);
+    }
+  }
+
   if (includeConfluence && data.confluencePages.length > 0) {
     parts.push(`\nConfluence (${data.confluencePages.length} pages): ${data.confluencePages.slice(0, 8).map((p) => p.title).join(", ")}`);
   }
@@ -978,6 +1026,15 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
     const recent = recentItems(data.calls, 5);
     parts.push(`\nCalls:`);
     for (const c of recent) parts.push(`- [${shortDate(c as unknown as Record<string, unknown>)}] ${c.title} — ${c.summary.slice(0, 100)}`);
+  }
+
+  if (data.linearIssues.length > 0) {
+    const recent = recentItems(data.linearIssues, 20);
+    parts.push(`\nLinear issues (${recent.length} of ${data.linearIssues.length}):`);
+    for (const l of recent) {
+      const when = shortDate(l as unknown as Record<string, unknown>);
+      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}] → ${l.assignee}`);
+    }
   }
 
   if (includeConfluence && data.confluencePages.length > 0) {
@@ -1032,7 +1089,7 @@ export async function chat(
   const includeEng = wantsEngineering(userMessage);
 
   const results = rawResults.filter((r) => {
-    if (r.document.type === "confluence" && !includeConfluence) return false;
+    if (r.document.type === "confluence" && !includeConfluence && contextMode === "focused") return false;
     if (r.document.type === "jira") {
       const j = scopedData.jiraIssues.find((j) => j.id === r.document.id);
       if (j && /^ENG-/i.test(j.key) && !includeEng) return false;
@@ -1093,6 +1150,9 @@ export async function chat(
     } else if (doc.type === "confluence") {
       const p = scopedData.confluencePages.find((p) => p.id === doc.id);
       if (p) { title = p.title; url = p.url; }
+    } else if (doc.type === "linear") {
+      const l = scopedData.linearIssues.find((l) => l.id === doc.id);
+      if (l) { title = `${l.identifier}: ${l.title}`; url = l.url; }
     }
     sources.push({ type: doc.type, id: doc.id, title, url });
   }
@@ -1179,7 +1239,7 @@ export async function chat(
     context = context.slice(0, Math.floor(budget * 3.5));
   }
 
-  const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length;
+  const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length + scopedData.linearIssues.length;
 
   const isPrdOrTicketHistory = isPrdOrTicket;
   const followUp = isLikelyFollowUp(userMessage);
@@ -1375,7 +1435,7 @@ function generateBuiltInResponse(
   query: string, context: string,
   sources: { type: string; id: string; title: string }[], data: AgentData
 ): string {
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
   const rows = sources.slice(0, 8).map((s) => `| ${s.type} | ${s.title} |`).join("\n");
 
   return `**Found ${sources.length} relevant items across ${total} total${data.analyticsOverview ? " (plus analytics)" : ""}.**

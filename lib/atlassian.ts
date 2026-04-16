@@ -178,8 +178,7 @@ function buildJiraJql(projectFilter: string | undefined): string {
     });
     conditions.push(`project IN (${quoted.join(", ")})`);
   }
-  conditions.push(`statusCategory != Done`);
-  return `${conditions.join(" AND ")} ORDER BY updated DESC`;
+  return `${conditions.length > 0 ? conditions.join(" AND ") + " " : ""}ORDER BY updated DESC`;
 }
 
 export async function getJiraProjects(

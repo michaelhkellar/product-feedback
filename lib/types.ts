@@ -101,6 +101,24 @@ export interface AnalyticsOverview {
   totalTrackedFeatures: number;
   generatedAt: string;
   limitations?: string[];
+  allPageNames?: string[];
+  allFeatureNames?: string[];
+  allEventNames?: string[];
+}
+
+export interface LinearIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  assignee: string;
+  labels: string[];
+  created: string;
+  updated: string;
+  team: string;
+  url: string;
 }
 
 export interface AnalyticsLookupContext {

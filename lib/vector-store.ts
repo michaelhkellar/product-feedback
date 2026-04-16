@@ -1,8 +1,8 @@
-import { FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage } from "./types";
+import { FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage, LinearIssue } from "./types";
 
 interface VectorDocument {
   id: string;
-  type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence";
+  type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | "linear";
   text: string;
   themes: string[];
   metadata: Record<string, string>;
@@ -100,6 +100,25 @@ export class InMemoryVectorStore {
           priority: issue.priority,
           project: issue.project,
           assignee: issue.assignee,
+        },
+      });
+    }
+  }
+
+  addLinearIssues(issues: LinearIssue[]) {
+    for (const issue of issues) {
+      this.documents.push({
+        id: issue.id,
+        type: "linear",
+        text: `${issue.identifier} ${issue.title} ${issue.description} ${issue.labels.join(" ")} ${issue.team} ${issue.status}`,
+        themes: issue.labels,
+        metadata: {
+          key: issue.identifier,
+          status: issue.status,
+          priority: issue.priority,
+          team: issue.team,
+          assignee: issue.assignee,
+          url: issue.url,
         },
       });
     }

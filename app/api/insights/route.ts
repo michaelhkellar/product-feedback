@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
     const posthogKey = req.headers.get("x-posthog-key") || undefined;
     const posthogHost = req.headers.get("x-posthog-host") || undefined;
     const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude" | "posthog") || undefined;
+    const linearKey = req.headers.get("x-linear-key") || undefined;
+    const linearTeamId = req.headers.get("x-linear-team-id") || undefined;
 
     const hasPb = !!(pbKey || process.env.PRODUCTBOARD_API_TOKEN);
     const hasAtt = !!(attKey || process.env.ATTENTION_API_KEY);
@@ -29,7 +31,8 @@ export async function GET(req: NextRequest) {
     const hasAmplitude = !!(amplitudeKey || process.env.AMPLITUDE_API_KEY);
     const hasPostHog = !!(posthogKey || process.env.POSTHOG_API_KEY);
     const hasAtl = !!(atlDomain && atlEmail && atlToken) || !!(process.env.ATLASSIAN_DOMAIN && process.env.ATLASSIAN_EMAIL && process.env.ATLASSIAN_API_TOKEN);
-    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl;
+    const hasLinear = !!(linearKey || process.env.LINEAR_API_KEY);
+    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
 
     if (!hasAnyLiveKey && !useDemoData) {
       return NextResponse.json({ insights: [], isDemo: false });
@@ -38,7 +41,7 @@ export async function GET(req: NextRequest) {
     const isDemo = !hasAnyLiveKey && useDemoData;
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost, linearKey, linearTeamId);
     const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
 
     return NextResponse.json({ insights, isDemo });
