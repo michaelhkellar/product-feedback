@@ -765,9 +765,28 @@ function getFormatInstructions(mode: InteractionMode): string {
   return SUMMARIZE_FORMAT;
 }
 
-const PRD_SYSTEM_PROMPT = `You are a senior product manager writing a Product Requirements Document. Synthesize ALL provided feedback data, analytics context, and conversation history into a structured, actionable PRD. Ground every claim in specific customer evidence from the provided data. Be opinionated about priorities.`;
+const PRD_SYSTEM_PROMPT = `You are a senior product manager writing a product pitch — a concise, opinionated document that presents a bet worth making. Follow these principles:
 
-const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concise, actionable engineering ticket. Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Ground every requirement in specific customer evidence. Be precise and avoid ambiguity.`;
+- Write like a Shape Up pitch: start with the problem story, not the feature. Never present a solution without first establishing why the status quo is broken.
+- Title the document around the outcome you want to achieve, not the feature you want to build. Bad: "Add Tags to Work Orders." Good: "Help maintenance coordinators process work orders 50% faster."
+- Set appetite to constrain scope. State how much time you'd invest, and let that shape the solution. A six-week solution looks very different from a two-week one.
+- Surface rabbit holes and no-gos explicitly. Call out known risks worth avoiding and scope you are intentionally excluding. This prevents scope creep and protects the team.
+- Include both qualitative success criteria (what users should think, feel, and do differently) and quantitative metrics. Don't skip qualitative goals just because they're hard to measure.
+- Ground every claim in specific customer evidence from the provided data. Include direct quotes with source attribution. State how many customers are affected when possible.
+- Ask "why" one more time than feels necessary. If you're describing a symptom, dig into the underlying cause.
+
+Synthesize ALL provided feedback data, analytics context, and conversation history into the pitch. Be opinionated about priorities and honest about unknowns.`;
+
+const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concise, actionable engineering ticket. Follow these principles:
+
+- Start with why this matters, not what to build. Never present a solution without first establishing the problem it solves and who is affected.
+- Be precise about scope boundaries. Explicitly state what is out of scope so engineers don't gold-plate or expand the work beyond the intended investment.
+- Flag rabbit holes — known technical or UX pitfalls where the team could get stuck. This is not a risk register; these are concrete "watch out for X" warnings.
+- Ground the priority in customer impact data, not opinion. State how many customers are affected and what the user impact is. If you'd run a query to find affected users, describe that query.
+- Acceptance criteria must be specific and testable. Each one should unambiguously pass or fail — avoid subjective language like "should feel fast."
+- Keep the title concise and actionable. Describe what changes, not what the feature is called.
+
+Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Be precise and avoid ambiguity.`;
 
 const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
@@ -791,64 +810,70 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
 CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
-const PRD_FORMAT = `Generate a structured PRD in markdown with these sections:
+const PRD_FORMAT = `Generate a product pitch in markdown using this structure:
 
-# [Feature/Initiative Title]
+# [Outcome-Oriented Title — describe the change you want to see, not the feature to build]
 
-## Problem Statement
-[2-3 sentences describing the problem, grounded in customer evidence]
+## Problem
+Tell the story of what's broken today using a specific customer example from the data. Why does this matter now? What is the cost of inaction — what happens if we don't solve this in the next quarter? Who is affected and how many? Establish a clear baseline so we can judge whether any solution actually improves the status quo.
 
-## Goals
-- [Measurable goal 1]
-- [Measurable goal 2]
-- [Measurable goal 3]
+## Appetite
+Suggest a scope constraint: Small Batch (1-2 weeks) or Big Batch (up to 6 weeks). Explain what this time box means for the solution — what level of ambition fits this investment? A better solution always exists; the question is whether THIS solution is good enough for THIS time box.
 
-## User Stories
-- As a [persona], I want [action] so that [outcome]
-- [Additional user stories]
+## Solution
+Describe the key elements of the proposed approach at the right level of abstraction — concrete enough that engineers and designers can "get it," but rough enough that they have room to make implementation decisions. Focus on how users will experience the change (flows and affordances), not pixel-level details.
 
-## Requirements
-### Must Have
-- [Requirement grounded in feedback]
+## Rabbit Holes
+Call out specific risks, technical complexities, or edge cases worth flagging. These are the parts of the solution where teams could get stuck or waste time if they aren't warned. Include any decisions you've already made to avoid these traps.
 
-### Nice to Have
-- [Requirement]
+## No Gos
+Explicitly list what we are NOT doing in this scope. What use cases, features, or user segments are intentionally excluded to fit the appetite? Being clear about boundaries prevents scope creep and keeps the team focused.
 
 ## Success Metrics
-| Metric | Current | Target |
+| Metric | Current Baseline | Target |
 | --- | --- | --- |
-[Include 3-5 measurable KPIs]
-
-## Evidence & Customer Feedback
-[Summarize the key feedback themes and specific quotes that support this PRD. Cite sources.]
-
-## Open Questions
-- [Question 1]
-- [Question 2]
-
-CONSTRAINTS: Be thorough but concise. Every requirement MUST trace back to customer evidence from the provided data. Include direct customer quotes where available with source attribution.`;
-
-const TICKET_FORMAT = `Generate a structured ticket in markdown with these sections:
-
-## Title
-[Concise, actionable title — max 80 characters]
-
-## Description
-[2-3 sentences describing what needs to be built and why, grounded in customer evidence]
-
-## Acceptance Criteria
-- [ ] [Specific, testable criterion]
-- [ ] [Specific, testable criterion]
-- [ ] [Specific, testable criterion]
-
-## Priority
-[Suggested priority: Critical / High / Medium / Low] — [1 sentence justification based on customer impact]
+[Include 3-5 rows. Mix quantitative KPIs with qualitative goals — what should users think, feel, or do differently? If a metric is hard to measure exactly, describe what "awesome" looks like instead.]
 
 ## Customer Evidence
-- [Quote or reference 1 with source]
-- [Quote or reference 2 with source]
+Summarize the key feedback themes and volume. Include direct customer quotes with specific source attribution (Jira key, Productboard note title, feedback item). State how many customers raised each theme when the data supports it.
 
-CONSTRAINTS: Be concise and actionable. Every criterion must be testable. Ground the priority in customer data. Keep the title under 80 characters.`;
+## Open Questions
+List unresolved decisions and assumptions that need validation. For each, note who might have the answer or what experiment could close the gap.
+
+CONSTRAINTS: Be thorough but concise. Every claim MUST trace to customer evidence from the provided data. Title must describe an outcome, not a feature. Include direct quotes with source attribution. Rabbit Holes and No Gos sections must not be empty — if there are truly none, explain why.`;
+
+const TICKET_FORMAT = `Generate a structured ticket in markdown using this structure:
+
+## Title
+[Concise, actionable — max 80 chars. Describe what changes, not the feature name.]
+
+## Problem
+1-2 sentences: what is broken and who is affected. Ground in customer evidence from the data. State how many customers raised this issue when the data supports it.
+
+## Proposed Solution
+What to build, at the right level of abstraction. Be concrete enough that an engineer understands the intent, but leave room for implementation decisions. Focus on user-facing behavior, not internal architecture.
+
+## Acceptance Criteria
+- [ ] [Specific, testable — should unambiguously pass or fail]
+- [ ] [Specific, testable]
+- [ ] [Specific, testable]
+
+## Out of Scope
+- [What is explicitly excluded from this ticket]
+- [Prevents scope creep — list at least one item]
+
+## Rabbit Holes
+- [Known risks, technical complexities, or edge cases to watch for]
+- [Concrete "watch out for X" warnings, not generic risk statements]
+
+## Priority
+[Critical / High / Medium / Low] — [Justification grounded in customer impact and volume. State who is affected and how many.]
+
+## Customer Evidence
+- [N customers affected. Direct quote with specific source attribution (Jira key, Productboard note, feedback item)]
+- [Additional quotes/references with sources]
+
+CONSTRAINTS: Be concise and actionable. Every acceptance criterion must be testable. Out of Scope and Rabbit Holes must not be empty. Ground priority in customer data. Keep title under 80 characters. Every claim must trace to evidence from the provided data.`;
 
 function generateBuiltInResponse(
   query: string, context: string,
