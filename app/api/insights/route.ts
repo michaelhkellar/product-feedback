@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getData } from "@/lib/data-fetcher";
 import { generateInsights } from "@/lib/insights-generator";
 import { DEMO_INSIGHTS } from "@/lib/demo-data";
+import { AIProviderType } from "@/lib/ai-provider";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,12 +14,20 @@ export async function GET(req: NextRequest) {
     const atlDomain = req.headers.get("x-atlassian-domain") || undefined;
     const atlEmail = req.headers.get("x-atlassian-email") || undefined;
     const atlToken = req.headers.get("x-atlassian-token") || undefined;
+    const aiProvider = (req.headers.get("x-ai-provider") as AIProviderType) || undefined;
+    const anthropicKey = req.headers.get("x-anthropic-key") || undefined;
+    const openaiKey = req.headers.get("x-openai-key") || undefined;
+    const aiModel = req.headers.get("x-ai-model") || undefined;
+
+    const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
+    const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude") || undefined;
 
     const hasPb = !!(pbKey || process.env.PRODUCTBOARD_API_TOKEN);
     const hasAtt = !!(attKey || process.env.ATTENTION_API_KEY);
     const hasPendo = !!(pendoKey || process.env.PENDO_INTEGRATION_KEY);
+    const hasAmplitude = !!(amplitudeKey || process.env.AMPLITUDE_API_KEY);
     const hasAtl = !!(atlDomain && atlEmail && atlToken) || !!(process.env.ATLASSIAN_DOMAIN && process.env.ATLASSIAN_EMAIL && process.env.ATLASSIAN_API_TOKEN);
-    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAtl;
+    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasAtl;
 
     if (!hasAnyLiveKey && useDemoData) {
       return NextResponse.json({ insights: DEMO_INSIGHTS, isDemo: true });
@@ -29,8 +38,8 @@ export async function GET(req: NextRequest) {
 
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter);
-    const insights = await generateInsights(data, geminiKey);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey);
+    const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
 
     return NextResponse.json({ insights, isDemo: false });
   } catch (error) {

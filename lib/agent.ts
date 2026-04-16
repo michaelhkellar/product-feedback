@@ -1,5 +1,5 @@
 import { InMemoryVectorStore } from "./vector-store";
-import { generateWithGemini, isGeminiConfigured } from "./gemini";
+import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 import { getRelevantPendoContext, PendoUsageOverview } from "./pendo";
 import {
   DEMO_FEEDBACK, DEMO_PRODUCTBOARD_FEATURES, DEMO_ATTENTION_CALLS, DEMO_INSIGHTS,
@@ -9,6 +9,8 @@ import {
 } from "./types";
 import { ContextMode } from "./api-keys";
 
+export type InteractionMode = "summarize" | "prd" | "ticket";
+
 export interface AgentKeys {
   geminiKey?: string;
   productboardKey?: string;
@@ -17,6 +19,10 @@ export interface AgentKeys {
   atlassianDomain?: string;
   atlassianEmail?: string;
   atlassianToken?: string;
+  aiProvider?: AIProviderType;
+  aiModel?: string;
+  anthropicKey?: string;
+  openaiKey?: string;
 }
 
 export interface AgentData {
@@ -583,7 +589,9 @@ export async function chat(
   conversationHistory: { role: "user" | "assistant"; content: string }[],
   data: AgentData,
   keys: AgentKeys = {},
-  contextMode: ContextMode = "focused"
+  contextMode: ContextMode = "focused",
+  mode: InteractionMode = "summarize",
+  accumulatedSourceIds?: string[]
 ): Promise<ChatResult> {
   const store = buildStore(data);
   const countQuery = wantsCount(userMessage);
@@ -672,32 +680,96 @@ export async function chat(
   const drilldownContext = buildInsightDrilldownContext(userMessage, data, matchedInsightIds, keys);
   const searchContext = [searchParts.join("\n"), drilldownContext, pendoLookup?.context || ""].filter(Boolean).join("\n");
 
-  const effectiveMode =
-    (countQuery || drilldownQuery) && contextMode === "focused"
+  // For PRD/Ticket modes, always use deep context + full history
+  const isPrdOrTicket = mode === "prd" || mode === "ticket";
+
+  // Include accumulated sources context for PRD/Ticket modes
+  if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
+    const accDetails = lookupDetails(accumulatedSourceIds, data, true, keys);
+    if (accDetails.length > 0) {
+      searchParts.push("Previously referenced items from conversation:\n" + accDetails.join("\n"));
+    }
+  }
+
+  const effectiveContextMode = isPrdOrTicket
+    ? "deep"
+    : (countQuery || drilldownQuery) && contextMode === "focused"
       ? "deep"
       : isBroadQuery(userMessage) && contextMode === "focused"
         ? "standard"
         : contextMode;
 
   let context: string;
-  switch (effectiveMode) {
-    case "deep": context = buildDeepContext(data, searchContext, includeEng, includeConfluence); break;
+  switch (effectiveContextMode) {
+    case "deep": context = buildDeepContext(data, searchContext, isPrdOrTicket || includeEng, isPrdOrTicket || includeConfluence); break;
     case "standard": context = buildStandardContext(data, searchContext, includeEng, includeConfluence); break;
     default: context = buildFocusedContext(data, searchContext);
   }
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.pendoOverview ? data.pendoOverview.totalPages + data.pendoOverview.totalFeatures : 0);
 
-  const historyText = conversationHistory
-    .slice(-3)
-    .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content.slice(0, 200)}`)
+  // For PRD/Ticket modes, use full conversation history; for summarize use last 3 turns
+  const historySlice = isPrdOrTicket ? conversationHistory : conversationHistory.slice(-3);
+  const historyText = historySlice
+    .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content.slice(0, isPrdOrTicket ? 500 : 200)}`)
     .join("\n");
+
+  const systemPrompt = getSystemPrompt(mode);
+  const formatInstructions = getFormatInstructions(mode);
 
   const prompt = `${context}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
 
-USE THIS EXACT FORMAT:
+${formatInstructions}`;
+
+  const inputTokens = estimateTokens(systemPrompt) + estimateTokens(prompt);
+
+  const aiProvider = keys.aiProvider || "gemini";
+  const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+
+  if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
+    const provider = getAIProvider(aiProvider);
+    const aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
+    if (aiResponse) {
+      const outputTokens = estimateTokens(aiResponse);
+      return {
+        response: aiResponse,
+        sources,
+        tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
+      };
+    }
+  }
+
+  if (total === 0) {
+    return {
+      response: `I don't have any data loaded. Add API keys in Settings or enable demo data.`,
+      sources: [],
+      tokenEstimate: { input: 0, output: 0, total: 0 },
+    };
+  }
+
+  const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, data);
+  return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 } };
+}
+
+function getSystemPrompt(mode: InteractionMode): string {
+  if (mode === "prd") return PRD_SYSTEM_PROMPT;
+  if (mode === "ticket") return TICKET_SYSTEM_PROMPT;
+  return SYSTEM_PROMPT;
+}
+
+function getFormatInstructions(mode: InteractionMode): string {
+  if (mode === "prd") return PRD_FORMAT;
+  if (mode === "ticket") return TICKET_FORMAT;
+  return SUMMARIZE_FORMAT;
+}
+
+const PRD_SYSTEM_PROMPT = `You are a senior product manager writing a Product Requirements Document. Synthesize ALL provided feedback data, analytics context, and conversation history into a structured, actionable PRD. Ground every claim in specific customer evidence from the provided data. Be opinionated about priorities.`;
+
+const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concise, actionable engineering ticket. Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Ground every requirement in specific customer evidence. Be precise and avoid ambiguity.`;
+
+const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
 **[1-2 sentence answer to the question. Be specific.]**
 
@@ -719,31 +791,64 @@ USE THIS EXACT FORMAT:
 
 CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
-  const inputTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(prompt);
+const PRD_FORMAT = `Generate a structured PRD in markdown with these sections:
 
-  if (isGeminiConfigured(keys.geminiKey)) {
-    const geminiResponse = await generateWithGemini(SYSTEM_PROMPT, prompt, keys.geminiKey);
-    if (geminiResponse) {
-      const outputTokens = estimateTokens(geminiResponse);
-      return {
-        response: geminiResponse,
-        sources,
-        tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
-      };
-    }
-  }
+# [Feature/Initiative Title]
 
-  if (total === 0) {
-    return {
-      response: `I don't have any data loaded. Add API keys in Settings or enable demo data.`,
-      sources: [],
-      tokenEstimate: { input: 0, output: 0, total: 0 },
-    };
-  }
+## Problem Statement
+[2-3 sentences describing the problem, grounded in customer evidence]
 
-  const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, data);
-  return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 } };
-}
+## Goals
+- [Measurable goal 1]
+- [Measurable goal 2]
+- [Measurable goal 3]
+
+## User Stories
+- As a [persona], I want [action] so that [outcome]
+- [Additional user stories]
+
+## Requirements
+### Must Have
+- [Requirement grounded in feedback]
+
+### Nice to Have
+- [Requirement]
+
+## Success Metrics
+| Metric | Current | Target |
+| --- | --- | --- |
+[Include 3-5 measurable KPIs]
+
+## Evidence & Customer Feedback
+[Summarize the key feedback themes and specific quotes that support this PRD. Cite sources.]
+
+## Open Questions
+- [Question 1]
+- [Question 2]
+
+CONSTRAINTS: Be thorough but concise. Every requirement MUST trace back to customer evidence from the provided data. Include direct customer quotes where available with source attribution.`;
+
+const TICKET_FORMAT = `Generate a structured ticket in markdown with these sections:
+
+## Title
+[Concise, actionable title — max 80 characters]
+
+## Description
+[2-3 sentences describing what needs to be built and why, grounded in customer evidence]
+
+## Acceptance Criteria
+- [ ] [Specific, testable criterion]
+- [ ] [Specific, testable criterion]
+- [ ] [Specific, testable criterion]
+
+## Priority
+[Suggested priority: Critical / High / Medium / Low] — [1 sentence justification based on customer impact]
+
+## Customer Evidence
+- [Quote or reference 1 with source]
+- [Quote or reference 2 with source]
+
+CONSTRAINTS: Be concise and actionable. Every criterion must be testable. Ground the priority in customer data. Keep the title under 80 characters.`;
 
 function generateBuiltInResponse(
   query: string, context: string,
@@ -761,7 +866,7 @@ ${rows}
 ${context.slice(0, 1200)}
 
 ---
-Connect your Gemini API key in Settings for AI-powered analysis.`;
+Connect an AI provider key in Settings for AI-powered analysis.`;
 }
 
 export function getInsights(useDemoData = true): Insight[] {

@@ -9,6 +9,10 @@ export async function GET(req: NextRequest) {
   const atlEmail = req.headers.get("x-atlassian-email") || process.env.ATLASSIAN_EMAIL;
   const atlToken = req.headers.get("x-atlassian-token") || process.env.ATLASSIAN_API_TOKEN;
   const atlConfigured = !!(atlDomain && atlEmail && atlToken);
+  const anthropic = req.headers.get("x-anthropic-key") || process.env.ANTHROPIC_API_KEY;
+  const openai = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY;
+  const amplitude = req.headers.get("x-amplitude-key") || process.env.AMPLITUDE_API_KEY;
+  const linear = req.headers.get("x-linear-key") || process.env.LINEAR_API_KEY;
 
   return NextResponse.json({
     status: {
@@ -31,6 +35,22 @@ export async function GET(req: NextRequest) {
       atlassianKey: {
         configured: atlConfigured,
         source: req.headers.get("x-atlassian-token") ? "app" : (process.env.ATLASSIAN_API_TOKEN ? "env" : null),
+      },
+      anthropicKey: {
+        configured: !!anthropic,
+        source: req.headers.get("x-anthropic-key") ? "app" : process.env.ANTHROPIC_API_KEY ? "env" : null,
+      },
+      openaiKey: {
+        configured: !!openai,
+        source: req.headers.get("x-openai-key") ? "app" : process.env.OPENAI_API_KEY ? "env" : null,
+      },
+      amplitudeKey: {
+        configured: !!amplitude,
+        source: req.headers.get("x-amplitude-key") ? "app" : process.env.AMPLITUDE_API_KEY ? "env" : null,
+      },
+      linearKey: {
+        configured: !!linear,
+        source: req.headers.get("x-linear-key") ? "app" : process.env.LINEAR_API_KEY ? "env" : null,
       },
     },
   });

@@ -9,7 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@google/generative-ai": "^0.21.0",
+    "@linear/sdk": "^29.0.0",
+    "openai": "^4.82.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^11.15.0",

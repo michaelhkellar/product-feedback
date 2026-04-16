@@ -1,4 +1,8 @@
+import { AIProviderType } from "./ai-provider";
+
 export type ContextMode = "focused" | "standard" | "deep";
+export type AnalyticsProviderType = "pendo" | "amplitude";
+export type TicketProviderType = "atlassian" | "linear";
 
 export interface ApiKeyState {
   geminiKey: string;
@@ -11,6 +15,14 @@ export interface ApiKeyState {
   atlassianJiraFilter: string;
   atlassianConfluenceFilter: string;
   contextMode: ContextMode;
+  aiProvider: AIProviderType;
+  aiModel: string;
+  anthropicKey: string;
+  openaiKey: string;
+  analyticsProvider: AnalyticsProviderType;
+  amplitudeKey: string;
+  ticketProvider: TicketProviderType;
+  linearKey: string;
 }
 
 export interface ApiKeyStatus {
@@ -19,6 +31,10 @@ export interface ApiKeyStatus {
   attentionKey: { configured: boolean; source: "app" | "env" | null };
   pendoKey: { configured: boolean; source: "app" | "env" | null };
   atlassianKey: { configured: boolean; source: "app" | "env" | null };
+  anthropicKey: { configured: boolean; source: "app" | "env" | null };
+  openaiKey: { configured: boolean; source: "app" | "env" | null };
+  amplitudeKey: { configured: boolean; source: "app" | "env" | null };
+  linearKey: { configured: boolean; source: "app" | "env" | null };
 }
 
 const LEGACY_STORAGE_KEY = "feedback-agent-api-keys";
@@ -40,6 +56,14 @@ const EMPTY_KEYS: ApiKeyState = {
   atlassianJiraFilter: "",
   atlassianConfluenceFilter: "",
   contextMode: "focused",
+  aiProvider: "gemini",
+  aiModel: "",
+  anthropicKey: "",
+  openaiKey: "",
+  analyticsProvider: "pendo",
+  amplitudeKey: "",
+  ticketProvider: "atlassian",
+  linearKey: "",
 };
 
 interface EncryptedPayload {
@@ -59,6 +83,14 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     atlassianJiraFilter: parsed?.atlassianJiraFilter || "",
     atlassianConfluenceFilter: parsed?.atlassianConfluenceFilter || "",
     contextMode: parsed?.contextMode || "focused",
+    aiProvider: (parsed?.aiProvider as ApiKeyState["aiProvider"]) || "gemini",
+    aiModel: parsed?.aiModel || "",
+    anthropicKey: parsed?.anthropicKey || "",
+    openaiKey: parsed?.openaiKey || "",
+    analyticsProvider: (parsed?.analyticsProvider as ApiKeyState["analyticsProvider"]) || "pendo",
+    amplitudeKey: parsed?.amplitudeKey || "",
+    ticketProvider: (parsed?.ticketProvider as ApiKeyState["ticketProvider"]) || "atlassian",
+    linearKey: parsed?.linearKey || "",
   };
 }
 
@@ -73,7 +105,15 @@ function hasStoredValues(keys: ApiKeyState): boolean {
     keys.atlassianToken ||
     keys.atlassianJiraFilter ||
     keys.atlassianConfluenceFilter ||
-    keys.contextMode !== "focused"
+    keys.contextMode !== "focused" ||
+    keys.aiProvider !== "gemini" ||
+    keys.aiModel ||
+    keys.anthropicKey ||
+    keys.openaiKey ||
+    keys.analyticsProvider !== "pendo" ||
+    keys.amplitudeKey ||
+    keys.ticketProvider !== "atlassian" ||
+    keys.linearKey
   );
 }
 
@@ -269,6 +309,14 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.atlassianToken) headers["x-atlassian-token"] = keys.atlassianToken;
   if (keys.atlassianJiraFilter) headers["x-atlassian-jira-filter"] = keys.atlassianJiraFilter;
   if (keys.atlassianConfluenceFilter) headers["x-atlassian-confluence-filter"] = keys.atlassianConfluenceFilter;
+  if (keys.aiProvider) headers["x-ai-provider"] = keys.aiProvider;
+  if (keys.aiModel) headers["x-ai-model"] = keys.aiModel;
+  if (keys.anthropicKey) headers["x-anthropic-key"] = keys.anthropicKey;
+  if (keys.openaiKey) headers["x-openai-key"] = keys.openaiKey;
+  if (keys.analyticsProvider) headers["x-analytics-provider"] = keys.analyticsProvider;
+  if (keys.amplitudeKey) headers["x-amplitude-key"] = keys.amplitudeKey;
+  if (keys.ticketProvider) headers["x-ticket-provider"] = keys.ticketProvider;
+  if (keys.linearKey) headers["x-linear-key"] = keys.linearKey;
   return headers;
 }
 

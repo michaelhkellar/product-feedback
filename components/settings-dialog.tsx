@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { useApiKeys } from "./api-key-provider";
 import { buildKeyHeaders, ApiKeyState } from "@/lib/api-keys";
+import { AIProviderType } from "@/lib/ai-provider";
 import {
   X, Settings, Key, CheckCircle2, XCircle, Loader2,
-  Trash2, Save, AlertTriangle,
+  Trash2, Save, AlertTriangle, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,10 +18,8 @@ interface KeyFieldState {
 }
 
 const SIMPLE_KEYS: { id: keyof ApiKeyState; label: string; placeholder: string; description: string }[] = [
-  { id: "geminiKey", label: "Gemini API Key", placeholder: "AIza...", description: "Powers AI analysis. Get one at ai.google.dev" },
   { id: "productboardKey", label: "Productboard API Token", placeholder: "pb_...", description: "Fetches features and notes from Productboard" },
   { id: "attentionKey", label: "Attention API Key", placeholder: "att_...", description: "Fetches call recordings from Attention" },
-  { id: "pendoKey", label: "Pendo Integration Key", placeholder: "pendo_...", description: "Adds product usage insights and on-demand visitor/account history from Pendo" },
 ];
 
 const ATLASSIAN_AUTH_FIELDS: { id: keyof ApiKeyState; label: string; placeholder: string; type: string }[] = [
@@ -43,6 +42,12 @@ function parseFilterList(filter: string | undefined): string[] {
   return filter.split(/[,;\n]+/).map((s) => s.trim()).filter((s) => s.length > 0);
 }
 
+const AI_PROVIDERS: { id: AIProviderType; label: string; keyField: keyof ApiKeyState; placeholder: string; notice: string }[] = [
+  { id: "gemini", label: "Google Gemini", keyField: "geminiKey", placeholder: "AIza...", notice: "Your feedback data will be sent to Google for processing." },
+  { id: "anthropic", label: "Anthropic", keyField: "anthropicKey", placeholder: "sk-ant-...", notice: "Your feedback data will be sent to Anthropic for processing." },
+  { id: "openai", label: "OpenAI", keyField: "openaiKey", placeholder: "sk-...", notice: "Your feedback data will be sent to OpenAI for processing." },
+];
+
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const { keys, status, setKey, removeKey, clearAllKeys, useDemoData, setUseDemoData, refreshStatus } = useApiKeys();
   const [fields, setFields] = useState<Record<string, KeyFieldState>>({});
@@ -52,23 +57,35 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [loadingResources, setLoadingResources] = useState(false);
   const [jiraSearch, setJiraSearch] = useState("");
   const [confluenceSearch, setConfluenceSearch] = useState("");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  const allKeyFields = [
+    ...SIMPLE_KEYS,
+    ...AI_PROVIDERS.map((p) => ({ id: p.keyField, label: p.label, placeholder: p.placeholder, description: "" })),
+    { id: "pendoKey" as keyof ApiKeyState, label: "Pendo Integration Key", placeholder: "pendo_...", description: "" },
+    { id: "amplitudeKey" as keyof ApiKeyState, label: "Amplitude API Key", placeholder: "apiKey:secretKey", description: "" },
+    { id: "linearKey" as keyof ApiKeyState, label: "Linear API Key", placeholder: "lin_api_...", description: "" },
+  ];
 
   useEffect(() => {
     if (open) {
       const initial: Record<string, KeyFieldState> = {};
-      for (const cfg of SIMPLE_KEYS) {
+      for (const cfg of allKeyFields) {
         initial[cfg.id] = { value: keys[cfg.id], visible: false, dirty: false, validating: false, valid: keys[cfg.id] ? true : null, error: null };
       }
       for (const cfg of ATLASSIAN_FIELDS) {
         initial[cfg.id] = { value: keys[cfg.id], visible: cfg.type !== "password", dirty: false, validating: false, valid: keys[cfg.id] ? true : null, error: null };
       }
+      initial["aiModel"] = { value: keys.aiModel, visible: true, dirty: false, validating: false, valid: null, error: null };
       setFields(initial);
       setSaveMessage(null);
       if (keys.atlassianDomain && keys.atlassianEmail && keys.atlassianToken) {
         fetchAtlassianResources();
       }
     }
-  }, [open, keys]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const updateField = useCallback((id: string, updates: Partial<KeyFieldState>) => {
     setFields((prev) => ({ ...prev, [id]: { ...prev[id], ...updates } }));
@@ -89,6 +106,27 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     } catch { /* ignore */ }
     setLoadingResources(false);
   }
+
+  async function fetchModels(provider: AIProviderType) {
+    setLoadingModels(true);
+    try {
+      const res = await fetch(`/api/settings/models?provider=${provider}`, {
+        headers: buildKeyHeaders(keys),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableModels(data.models || []);
+      }
+    } catch { /* ignore */ }
+    setLoadingModels(false);
+  }
+
+  useEffect(() => {
+    if (open) {
+      fetchModels(keys.aiProvider || "gemini");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, keys.aiProvider]);
 
   function showSave(msg: string, nextKeys?: Partial<ApiKeyState>) {
     setSaveMessage(msg);
@@ -136,13 +174,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (trimmed) setKey(id as keyof ApiKeyState, trimmed);
     else removeKey(id as keyof ApiKeyState);
     updateField(id, { dirty: false });
-    showSave(`${SIMPLE_KEYS.find((cfg) => cfg.id === id)?.label || "Key"} ${trimmed ? "saved" : "removed"}`, nextKeys);
+    showSave(`Setting saved`, nextKeys);
   }
 
   function handleRemove(id: string) {
     removeKey(id as keyof ApiKeyState);
     updateField(id, { value: "", dirty: false, valid: null, error: null });
-    showSave(`${SIMPLE_KEYS.find((cfg) => cfg.id === id)?.label || "Key"} removed`, { [id]: "" } as Partial<ApiKeyState>);
+    showSave(`Setting removed`, { [id]: "" } as Partial<ApiKeyState>);
   }
 
   function handleSaveAtlassian() {
@@ -170,10 +208,61 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     showSave("Atlassian settings removed", nextKeys);
   }
 
+  function renderKeyField(id: keyof ApiKeyState, label: string, placeholder: string, description?: string) {
+    const field = fields[id];
+    if (!field) return null;
+    const envConfigured = (status as unknown as Record<string, { source: string | null }>)[id]?.source === "env";
+    return (
+      <div key={id} className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Key className="w-3.5 h-3.5 text-muted-foreground" />
+            <label className="text-xs font-medium">{label}</label>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {envConfigured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-medium">ENV</span>}
+            {field.valid === true && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+            {field.valid === false && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+            {keys[id] && !field.dirty && <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">Saved</span>}
+          </div>
+        </div>
+        {description && <p className="text-[10px] text-muted-foreground">{description}</p>}
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <input type="password" value={field.value}
+              onChange={(e) => updateField(id, { value: e.target.value, dirty: true })}
+              placeholder={placeholder}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
+          </div>
+          <button onClick={() => handleSave(id)}
+            disabled={!field.dirty && !!keys[id]}
+            className={cn("px-3 py-2 rounded-lg text-[10px] font-medium flex items-center gap-1.5 transition-colors",
+              field.dirty || !keys[id] ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-muted text-muted-foreground cursor-not-allowed")}>
+            <Save className="w-3 h-3" />Save
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => handleValidate(id)} disabled={!field.value.trim() || field.validating}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium bg-muted hover:bg-accent transition-colors disabled:opacity-50">
+            {field.validating ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}Test
+          </button>
+          {keys[id] && (
+            <button onClick={() => handleRemove(id)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
+              <Trash2 className="w-3 h-3" />Remove
+            </button>
+          )}
+        </div>
+        {field.error && <div className="flex items-center gap-1.5 text-[10px] text-red-500"><AlertTriangle className="w-3 h-3" />{field.error}</div>}
+      </div>
+    );
+  }
+
   if (!open) return null;
 
   const atlDirty = ATLASSIAN_FIELDS.some((af) => fields[af.id]?.dirty);
   const atlConfigured = !!(keys.atlassianDomain && keys.atlassianEmail && keys.atlassianToken);
+  const currentAIProvider = AI_PROVIDERS.find((p) => p.id === (keys.aiProvider || "gemini"))!;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -185,8 +274,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <Settings className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold">API Key Settings</h2>
-              <p className="text-[10px] text-muted-foreground">Configure keys to connect live data sources</p>
+              <h2 className="text-sm font-semibold">Settings</h2>
+              <p className="text-[10px] text-muted-foreground">Configure providers and API keys</p>
             </div>
           </div>
           <button onClick={onClose} className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
@@ -201,6 +290,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
           )}
 
+          {/* Demo toggle */}
           <div className="p-3 rounded-xl bg-muted/50 border border-border">
             <div className="flex items-center justify-between">
               <div>
@@ -213,16 +303,61 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
           </div>
 
-          <div className="p-3 rounded-xl bg-muted/30 border border-border">
-            <p className="text-xs font-medium">Local key storage</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              Saved API keys are stored in encrypted browser storage when supported. Older plaintext local storage entries are migrated automatically.
-            </p>
+          {/* AI Provider */}
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
+            <p className="text-xs font-medium">AI Provider</p>
+            <div className="flex gap-1.5">
+              {AI_PROVIDERS.map((p) => (
+                <button key={p.id}
+                  onClick={() => { setKey("aiProvider", p.id); fetchModels(p.id); }}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    keys.aiProvider === p.id || (!keys.aiProvider && p.id === "gemini")
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{p.label}</div>
+                </button>
+              ))}
+            </div>
+
+            {/* Data notice */}
+            <div className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-amber-500/5 border border-amber-500/20">
+              <Info className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
+              <p className="text-[9px] text-amber-600">{currentAIProvider.notice}</p>
+            </div>
+
+            {/* AI Key field */}
+            {renderKeyField(
+              currentAIProvider.keyField,
+              `${currentAIProvider.label} API Key`,
+              currentAIProvider.placeholder,
+              `Powers AI analysis. Required for ${currentAIProvider.label}.`
+            )}
+
+            {/* Model selector */}
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground font-medium">Model</label>
+              <div className="flex gap-2 items-center">
+                <select
+                  value={keys.aiModel || ""}
+                  onChange={(e) => setKey("aiModel", e.target.value)}
+                  className="flex-1 px-3 py-1.5 rounded-lg border border-border bg-card text-xs focus:outline-none focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="">Auto (recommended)</option>
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                {loadingModels && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
+              </div>
+            </div>
           </div>
 
+          {/* Context Mode */}
           <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-2">
             <p className="text-xs font-medium">AI Context Mode</p>
-            <p className="text-[10px] text-muted-foreground">Controls how much data is sent to Gemini per query. Less = cheaper + faster.</p>
+            <p className="text-[10px] text-muted-foreground">Controls how much data is sent per chat query. PRD and ticket generation always use full context.</p>
             <div className="flex gap-1.5">
               {([
                 { key: "focused" as const, label: "Focused", desc: "Search results only (~500 tokens)" },
@@ -242,59 +377,66 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               ))}
             </div>
-            <p className="text-[9px] text-muted-foreground">Broad queries (like &ldquo;executive summary&rdquo;) auto-upgrade from Focused to Standard.</p>
           </div>
 
-          {SIMPLE_KEYS.map((cfg) => {
-            const field = fields[cfg.id];
-            if (!field) return null;
-            const envConfigured = (status as unknown as Record<string, { source: string | null }>)[cfg.id]?.source === "env";
-            return (
-              <div key={cfg.id} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Key className="w-3.5 h-3.5 text-muted-foreground" />
-                    <label className="text-xs font-medium">{cfg.label}</label>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {envConfigured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-medium">ENV</span>}
-                    {field.valid === true && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                    {field.valid === false && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-                    {keys[cfg.id] && !field.dirty && <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">Saved</span>}
-                  </div>
-                </div>
-                <p className="text-[10px] text-muted-foreground">{cfg.description}</p>
-                <div className="flex gap-2">
-                  <div className="flex-1 relative">
-                    <input type="password" value={field.value}
-                      onChange={(e) => updateField(cfg.id, { value: e.target.value, dirty: true })}
-                      placeholder={cfg.placeholder}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
-                  </div>
-                  <button onClick={() => { handleSave(cfg.id); }}
-                    disabled={!field.dirty && !!keys[cfg.id]}
-                    className={cn("px-3 py-2 rounded-lg text-[10px] font-medium flex items-center gap-1.5 transition-colors",
-                      field.dirty || !keys[cfg.id] ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-muted text-muted-foreground cursor-not-allowed")}>
-                    <Save className="w-3 h-3" />Save
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => handleValidate(cfg.id)} disabled={!field.value.trim() || field.validating}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium bg-muted hover:bg-accent transition-colors disabled:opacity-50">
-                    {field.validating ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}Test
-                  </button>
-                  {keys[cfg.id] && (
-                    <button onClick={() => { handleRemove(cfg.id); }}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
-                      <Trash2 className="w-3 h-3" />Remove
-                    </button>
-                  )}
-                </div>
-                {field.error && <div className="flex items-center gap-1.5 text-[10px] text-red-500"><AlertTriangle className="w-3 h-3" />{field.error}</div>}
-              </div>
-            );
-          })}
+          {/* Analytics Provider */}
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
+            <p className="text-xs font-medium">Analytics Provider</p>
+            <div className="flex gap-1.5">
+              {([
+                { key: "pendo" as const, label: "Pendo" },
+                { key: "amplitude" as const, label: "Amplitude" },
+              ]).map((p) => (
+                <button key={p.key}
+                  onClick={() => setKey("analyticsProvider", p.key)}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    (keys.analyticsProvider || "pendo") === p.key
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{p.label}</div>
+                </button>
+              ))}
+            </div>
+            {(keys.analyticsProvider || "pendo") === "pendo"
+              ? renderKeyField("pendoKey", "Pendo Integration Key", "pendo_...", "Adds product usage insights and on-demand visitor/account history from Pendo")
+              : renderKeyField("amplitudeKey", "Amplitude API Key", "apiKey:secretKey", "Format: apiKey:secretKey. Get both from Amplitude project settings.")
+            }
+          </div>
 
+          {/* Ticket Provider */}
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
+            <p className="text-xs font-medium">Ticket Provider</p>
+            <div className="flex gap-1.5">
+              {([
+                { key: "atlassian" as const, label: "Atlassian (Jira)" },
+                { key: "linear" as const, label: "Linear" },
+              ]).map((p) => (
+                <button key={p.key}
+                  onClick={() => setKey("ticketProvider", p.key)}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    (keys.ticketProvider || "atlassian") === p.key
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{p.label}</div>
+                </button>
+              ))}
+            </div>
+            {(keys.ticketProvider || "atlassian") === "linear" &&
+              renderKeyField("linearKey", "Linear API Key", "lin_api_...", "Personal API key from Linear Settings > API")
+            }
+          </div>
+
+          {/* Data Sources */}
+          <div className="pt-1 border-t border-border">
+            <p className="text-xs font-medium mb-3">Data Sources</p>
+            {SIMPLE_KEYS.map((cfg) => renderKeyField(cfg.id, cfg.label, cfg.placeholder, cfg.description))}
+          </div>
+
+          {/* Atlassian */}
           <div className="pt-3 border-t border-border space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -306,22 +448,20 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 {atlConfigured && !atlDirty && <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">Saved</span>}
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground">Supports both classic (full access) and scoped tokens. Create one at id.atlassian.com/manage-profile/security/api-tokens. For scoped tokens, enable <strong>read:jira-work</strong> and <strong>read:confluence-content.all</strong> scopes.</p>
+            <p className="text-[10px] text-muted-foreground">Supports both classic and scoped tokens.</p>
             {ATLASSIAN_AUTH_FIELDS.map((af) => {
               const field = fields[af.id];
               if (!field) return null;
               return (
                 <div key={af.id} className="space-y-1">
                   <label className="text-[10px] text-muted-foreground font-medium">{af.label}</label>
-                  <div className="relative">
-                    <input
-                      type={af.type === "password" ? "password" : "text"}
-                      value={field.value}
-                      onChange={(e) => updateField(af.id, { value: e.target.value, dirty: true })}
-                      placeholder={af.placeholder}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
-                    />
-                  </div>
+                  <input
+                    type={af.type === "password" ? "password" : "text"}
+                    value={field.value}
+                    onChange={(e) => updateField(af.id, { value: e.target.value, dirty: true })}
+                    placeholder={af.placeholder}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40"
+                  />
                 </div>
               );
             })}
@@ -363,9 +503,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     placeholder="PROD, ENG, SUP (or Test Connection to see projects)"
                     className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
                 )}
-                <p className="text-[9px] text-muted-foreground">
-                  {fields.atlassianJiraFilter?.value ? `Selected: ${fields.atlassianJiraFilter.value}` : "Leave blank for all projects"}
-                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -399,9 +536,6 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     placeholder="PROD, ENG, KB (or Test Connection to see spaces)"
                     className="w-full px-3 py-1.5 rounded-lg border border-border bg-card text-xs placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40" />
                 )}
-                <p className="text-[9px] text-muted-foreground">
-                  {fields.atlassianConfluenceFilter?.value ? `Selected: ${fields.atlassianConfluenceFilter.value}` : "Leave blank for all spaces"}
-                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -426,24 +560,21 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {fields.atlassianToken?.error && <div className="flex items-center gap-1.5 text-[10px] text-red-500"><AlertTriangle className="w-3 h-3" />{fields.atlassianToken.error}</div>}
           </div>
 
+          <div className="p-3 rounded-xl bg-muted/30 border border-border">
+            <p className="text-xs font-medium">Local key storage</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Saved API keys are stored in encrypted browser storage when supported.
+            </p>
+          </div>
+
           <div className="pt-2 border-t border-border">
             <button onClick={() => {
               clearAllKeys();
               const initial: Record<string, KeyFieldState> = {};
-              for (const cfg of SIMPLE_KEYS) initial[cfg.id] = { value: "", visible: false, dirty: false, validating: false, valid: null, error: null };
+              for (const cfg of allKeyFields) initial[cfg.id] = { value: "", visible: false, dirty: false, validating: false, valid: null, error: null };
               for (const af of ATLASSIAN_FIELDS) initial[af.id] = { value: "", visible: af.type !== "password", dirty: false, validating: false, valid: null, error: null };
               setFields(initial);
-              showSave("All keys cleared", {
-                geminiKey: "",
-                productboardKey: "",
-                attentionKey: "",
-                pendoKey: "",
-                atlassianDomain: "",
-                atlassianEmail: "",
-                atlassianToken: "",
-                atlassianJiraFilter: "",
-                atlassianConfluenceFilter: "",
-              });
+              showSave("All keys cleared");
             }} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-red-500 hover:bg-red-500/10 transition-colors">
               <Trash2 className="w-3.5 h-3.5" />Clear All Keys
             </button>

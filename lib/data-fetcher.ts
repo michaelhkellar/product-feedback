@@ -3,6 +3,8 @@ import { getFeatures, getNotes, isProductboardConfigured } from "./productboard"
 import { getCalls, isAttentionConfigured } from "./attention";
 import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atlassian";
 import { getPendoOverview, isPendoConfigured } from "./pendo";
+import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
+import { AnalyticsProviderType } from "./api-keys";
 import {
   DEMO_FEEDBACK,
   DEMO_PRODUCTBOARD_FEATURES,
@@ -25,9 +27,10 @@ function cacheKey(
   atlDomain: string | undefined,
   demo: boolean,
   atlJiraFilter?: string,
-  atlConfluenceFilter?: string
+  atlConfluenceFilter?: string,
+  amplitudeKey?: string
 ): string {
-  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${pendoKey ? "pendo" : ""}:${atlDomain ? "atl" : ""}:${demo}:${atlJiraFilter || ""}:${atlConfluenceFilter || ""}`;
+  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${pendoKey ? "pendo" : ""}:${amplitudeKey ? "amp" : ""}:${atlDomain ? "atl" : ""}:${demo}:${atlJiraFilter || ""}:${atlConfluenceFilter || ""}`;
 }
 
 async function fetchLiveData(
@@ -39,7 +42,9 @@ async function fetchLiveData(
   atlToken: string | undefined,
   useDemoFallback: boolean,
   atlJiraFilter?: string,
-  atlConfluenceFilter?: string
+  atlConfluenceFilter?: string,
+  analyticsProvider?: AnalyticsProviderType,
+  amplitudeKey?: string
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -77,7 +82,15 @@ async function fetchLiveData(
     );
   }
 
-  if (isPendoConfigured(pendoKey)) {
+  const effectiveAnalyticsProvider = analyticsProvider || "pendo";
+  if (effectiveAnalyticsProvider === "amplitude" && isAmplitudeConfigured(amplitudeKey)) {
+    fetches.push(
+      (async () => {
+        const overview = await getAmplitudeOverview(amplitudeKey);
+        if (overview) pendoOverview = overview;
+      })()
+    );
+  } else if (isPendoConfigured(pendoKey)) {
     fetches.push(
       (async () => {
         const overview = await getPendoOverview(pendoKey);
@@ -113,24 +126,27 @@ export async function getData(
   atlEmail?: string,
   atlToken?: string,
   atlJiraFilter?: string,
-  atlConfluenceFilter?: string
+  atlConfluenceFilter?: string,
+  analyticsProvider?: AnalyticsProviderType,
+  amplitudeKey?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
   const hasPendo = isPendoConfigured(pendoKey);
+  const hasAmplitude = isAmplitudeConfigured(amplitudeKey);
   const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
-  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAtl;
+  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasAtl;
 
   if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], pendoOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter);
+  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey);
   dataCache.set(key, { data, timestamp: Date.now() });
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;

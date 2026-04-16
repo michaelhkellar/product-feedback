@@ -352,6 +352,83 @@ function extractTextFromADF(adf: unknown): string {
   return text.trim();
 }
 
+export async function createJiraIssue(
+  summary: string,
+  description: Record<string, unknown>,
+  projectKey: string,
+  issueType = "Task",
+  priority?: string,
+  d?: string,
+  e?: string,
+  t?: string
+): Promise<{ id: string; key: string; url: string }> {
+  const rawAuth = getAuth(d, e, t);
+  if (!rawAuth) throw new Error("Atlassian credentials not configured");
+
+  const auth = await resolveAuth(rawAuth);
+  const bases = jiraBases(auth);
+
+  const body = {
+    fields: {
+      project: { key: projectKey },
+      summary,
+      description,
+      issuetype: { name: issueType },
+      ...(priority ? { priority: { name: priority } } : {}),
+    },
+  };
+
+  for (const base of bases) {
+    const { data, error } = await atlFetch(`${base}/issue`, auth, "POST", body);
+    if (data && !error) {
+      const result = data as Record<string, unknown>;
+      const key = (result.key as string) || "";
+      const id = (result.id as string) || "";
+      const url = `https://${auth.domain}.atlassian.net/browse/${key}`;
+      return { id, key, url };
+    }
+  }
+
+  throw new Error("Failed to create Jira issue across all API endpoints");
+}
+
+export async function createConfluencePage(
+  title: string,
+  spaceId: string,
+  body: string,
+  d?: string,
+  e?: string,
+  t?: string
+): Promise<{ id: string; url: string }> {
+  const rawAuth = getAuth(d, e, t);
+  if (!rawAuth) throw new Error("Atlassian credentials not configured");
+
+  const auth = await resolveAuth(rawAuth);
+  const base = confluenceV2Base(auth);
+
+  const payload = {
+    spaceId,
+    status: "current",
+    title,
+    body: {
+      representation: "storage",
+      value: body,
+    },
+  };
+
+  const { data, error } = await atlFetch(`${base}/pages`, auth, "POST", payload);
+  if (error || !data) {
+    throw new Error(`Failed to create Confluence page: ${error || "No response"}`);
+  }
+
+  const result = data as Record<string, unknown>;
+  const id = String(result.id || "");
+  const webui = ((result._links as Record<string, unknown>)?.webui as string) || "";
+  const url = `https://${auth.domain}.atlassian.net/wiki${webui}`;
+
+  return { id, url };
+}
+
 export function isAtlassianConfigured(d?: string, e?: string, t?: string): boolean {
   return !!getAuth(d, e, t);
 }

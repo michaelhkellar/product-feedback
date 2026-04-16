@@ -29,6 +29,9 @@ const EMPTY: ApiKeyState = {
   atlassianDomain: "", atlassianEmail: "", atlassianToken: "",
   atlassianJiraFilter: "", atlassianConfluenceFilter: "",
   contextMode: "focused",
+  aiProvider: "gemini", aiModel: "", anthropicKey: "", openaiKey: "",
+  analyticsProvider: "pendo", amplitudeKey: "",
+  ticketProvider: "atlassian", linearKey: "",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {
@@ -37,6 +40,10 @@ const EMPTY_STATUS: ApiKeyStatus = {
   attentionKey: { configured: false, source: null },
   pendoKey: { configured: false, source: null },
   atlassianKey: { configured: false, source: null },
+  anthropicKey: { configured: false, source: null },
+  openaiKey: { configured: false, source: null },
+  amplitudeKey: { configured: false, source: null },
+  linearKey: { configured: false, source: null },
 };
 
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
@@ -95,7 +102,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const keyHeaders = buildKeyHeaders(keys);
-  const hasAnyKey = !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken);
+  const hasAnyKey = !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey);
 
   return (
     <ApiKeyContext.Provider

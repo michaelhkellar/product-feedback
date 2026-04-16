@@ -1,9 +1,68 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findWorkingModel } from "@/lib/gemini";
+import { validateLinearKey } from "@/lib/linear";
 
 export async function POST(req: NextRequest) {
   try {
     const { keyName } = await req.json();
+
+    if (keyName === "anthropicKey") {
+      const key = req.headers.get("x-anthropic-key") || process.env.ANTHROPIC_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/models?limit=1", {
+          headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+        });
+        if (res.ok) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
+      } catch (err: unknown) {
+        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      }
+    }
+
+    if (keyName === "openaiKey") {
+      const key = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      try {
+        const res = await fetch("https://api.openai.com/v1/models?limit=1", {
+          headers: { Authorization: `Bearer ${key}` },
+        });
+        if (res.ok) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
+      } catch (err: unknown) {
+        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      }
+    }
+
+    if (keyName === "amplitudeKey") {
+      const key = req.headers.get("x-amplitude-key") || process.env.AMPLITUDE_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      const parts = key.split(":");
+      if (parts.length !== 2) return NextResponse.json({ valid: false, error: "Format should be apiKey:secretKey" });
+      try {
+        const encoded = Buffer.from(`${parts[0]}:${parts[1]}`).toString("base64");
+        const res = await fetch("https://amplitude.com/api/2/export?start=20240101T00&end=20240101T01", {
+          headers: { Authorization: `Basic ${encoded}` },
+        });
+        if (res.ok || res.status === 200 || res.status === 204) return NextResponse.json({ valid: true });
+        if (res.status === 404) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
+      } catch (err: unknown) {
+        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      }
+    }
+
+    if (keyName === "linearKey") {
+      const key = req.headers.get("x-linear-key") || process.env.LINEAR_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      try {
+        const valid = await validateLinearKey(key);
+        if (valid) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: "Linear rejected the API key" });
+      } catch (err: unknown) {
+        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      }
+    }
 
     if (keyName === "geminiKey") {
       const key = req.headers.get("x-gemini-key") || process.env.GEMINI_API_KEY;
