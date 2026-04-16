@@ -1,0 +1,156 @@
+import { PendoUsageOverview, PendoLookupContext } from "./pendo";
+import { FeedbackItem } from "./types";
+
+function parsePostHogKey(compositeKey: string): { apiKey: string; projectId: string } | null {
+  const parts = compositeKey.split(":");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { apiKey: parts[0], projectId: parts[1] };
+}
+
+export function isPostHogConfigured(overrideKey?: string): boolean {
+  const key = overrideKey || process.env.POSTHOG_API_KEY;
+  if (!key) return false;
+  return parsePostHogKey(key) !== null;
+}
+
+async function posthogFetch<T>(
+  path: string,
+  apiKey: string,
+  init?: RequestInit
+): Promise<T> {
+  const res = await fetch(`https://app.posthog.com${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const message = await res.text().catch(() => "");
+    throw new Error(`PostHog API ${res.status}: ${message || res.statusText}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export async function getPostHogOverview(
+  overrideKey?: string,
+  days?: number
+): Promise<PendoUsageOverview | null> {
+  const compositeKey = overrideKey || process.env.POSTHOG_API_KEY;
+  if (!compositeKey) return null;
+  const creds = parsePostHogKey(compositeKey);
+  if (!creds) return null;
+  const effectiveDays = days || 7;
+
+  try {
+    const data = await posthogFetch<Record<string, unknown>>(
+      `/api/projects/${creds.projectId}/query/`,
+      creds.apiKey,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          query: {
+            kind: "HogQLQuery",
+            query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 20`,
+          },
+        }),
+      }
+    );
+
+    const results = ((data.results || []) as unknown[][]);
+    const activePages = results.slice(0, 5).map((row, i) => ({
+      id: String(row[0] || `page-${i}`),
+      name: String(row[0] || `Page ${i + 1}`),
+      totalEvents: Number(row[1]) || 0,
+      totalMinutes: 0,
+    }));
+
+    return {
+      totalPages: results.length,
+      totalFeatures: 0,
+      activePages,
+      activeFeatures: [],
+      activeAccounts: [],
+      generatedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error("Failed to load PostHog overview:", error);
+    return null;
+  }
+}
+
+export async function getRelevantPostHogContext(
+  query: string,
+  relatedFeedback: FeedbackItem[],
+  overrideKey?: string,
+  days?: number
+): Promise<PendoLookupContext | null> {
+  const compositeKey = overrideKey || process.env.POSTHOG_API_KEY;
+  if (!compositeKey) return null;
+  const creds = parsePostHogKey(compositeKey);
+  if (!creds) return null;
+  const effectiveDays = days || 30;
+
+  const emails = query.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  const feedbackEmails = relatedFeedback
+    .slice(0, 5)
+    .map((fb) => fb.metadata?.userEmail || (/\S+@\S+/.test(fb.customer) ? fb.customer : ""))
+    .filter(Boolean);
+
+  const candidates = Array.from(new Set([...emails, ...feedbackEmails]));
+
+  if (candidates.length === 0) {
+    return {
+      context: "PostHog lookup: no user candidate could be inferred from the question or matched feedback. Ask with an exact email or user ID.",
+      sources: [],
+    };
+  }
+
+  try {
+    const userId = candidates[0];
+
+    const data = await posthogFetch<Record<string, unknown>>(
+      `/api/projects/${creds.projectId}/query/`,
+      creds.apiKey,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          query: {
+            kind: "HogQLQuery",
+            query: `SELECT event, timestamp, properties.$current_url AS url FROM events WHERE distinct_id = '${userId.replace(/'/g, "''")}' AND timestamp >= now() - interval ${effectiveDays} day ORDER BY timestamp DESC LIMIT 10`,
+          },
+        }),
+      }
+    );
+
+    const results = ((data.results || []) as unknown[][]);
+    const lines = [`PostHog user activity for ${userId}:`];
+
+    if (results.length > 0) {
+      lines.push(`Recent ${results.length} events:`);
+      for (const row of results.slice(0, 5)) {
+        const event = String(row[0] || "unknown");
+        const time = String(row[1] || "");
+        const url = String(row[2] || "");
+        lines.push(`  - ${event} at ${time}${url ? ` on ${url}` : ""}`);
+      }
+    } else {
+      lines.push("No recent events found.");
+    }
+
+    return {
+      context: lines.join("\n"),
+      sources: [{ type: "posthog", id: `user:${userId}`, title: `PostHog user ${userId}` }],
+    };
+  } catch (error) {
+    console.error("PostHog lookup failed:", error);
+    return {
+      context: `PostHog lookup failed for ${candidates[0]}: ${error instanceof Error ? error.message : "unknown error"}`,
+      sources: [],
+    };
+  }
+}

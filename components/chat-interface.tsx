@@ -483,7 +483,7 @@ Try one of the suggested queries below to get started.`;
           description,
           priority,
           projectKey: keys.atlassianJiraFilter?.split(",")[0]?.trim() || "",
-          teamId: "",
+          teamId: keys.linearTeamId || "",
         }),
       });
       const data = await res.json();

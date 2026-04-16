@@ -4,6 +4,7 @@ import { getCalls, isAttentionConfigured } from "./attention";
 import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atlassian";
 import { getPendoOverview, isPendoConfigured } from "./pendo";
 import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
+import { getPostHogOverview, isPostHogConfigured } from "./posthog";
 import { AnalyticsProviderType } from "./api-keys";
 import { createHash } from "crypto";
 import {
@@ -64,7 +65,9 @@ async function fetchLiveData(
   atlJiraFilter?: string,
   atlConfluenceFilter?: string,
   analyticsProvider?: AnalyticsProviderType,
-  amplitudeKey?: string
+  amplitudeKey?: string,
+  posthogKey?: string,
+  analyticsDays?: number
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -72,7 +75,7 @@ async function fetchLiveData(
   const insights = useDemoFallback ? [...DEMO_INSIGHTS] : [];
   let jiraIssues: AgentData["jiraIssues"] = useDemoFallback ? [...DEMO_JIRA_ISSUES] : [];
   let confluencePages: AgentData["confluencePages"] = useDemoFallback ? [...DEMO_CONFLUENCE_PAGES] : [];
-  let pendoOverview: AgentData["pendoOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
+  let analyticsOverview: AgentData["analyticsOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
 
   const fetches: Promise<void>[] = [];
 
@@ -103,18 +106,25 @@ async function fetchLiveData(
   }
 
   const effectiveAnalyticsProvider = analyticsProvider || "pendo";
-  if (effectiveAnalyticsProvider === "amplitude" && isAmplitudeConfigured(amplitudeKey)) {
+  if (effectiveAnalyticsProvider === "posthog" && isPostHogConfigured(posthogKey)) {
     fetches.push(
       (async () => {
-        const overview = await getAmplitudeOverview(amplitudeKey);
-        if (overview) pendoOverview = overview;
+        const overview = await getPostHogOverview(posthogKey, analyticsDays);
+        if (overview) analyticsOverview = overview;
+      })()
+    );
+  } else if (effectiveAnalyticsProvider === "amplitude" && isAmplitudeConfigured(amplitudeKey)) {
+    fetches.push(
+      (async () => {
+        const overview = await getAmplitudeOverview(amplitudeKey, analyticsDays);
+        if (overview) analyticsOverview = overview;
       })()
     );
   } else if (isPendoConfigured(pendoKey)) {
     fetches.push(
       (async () => {
-        const overview = await getPendoOverview(pendoKey);
-        if (overview) pendoOverview = overview;
+        const overview = await getPendoOverview(pendoKey, analyticsDays);
+        if (overview) analyticsOverview = overview;
       })()
     );
   }
@@ -134,7 +144,7 @@ async function fetchLiveData(
 
   if (fetches.length > 0) await Promise.allSettled(fetches);
 
-  return { feedback, features, calls, insights, jiraIssues, confluencePages, pendoOverview };
+  return { feedback, features, calls, insights, jiraIssues, confluencePages, analyticsOverview };
 }
 
 export async function getData(
@@ -148,29 +158,32 @@ export async function getData(
   atlJiraFilter?: string,
   atlConfluenceFilter?: string,
   analyticsProvider?: AnalyticsProviderType,
-  amplitudeKey?: string
+  amplitudeKey?: string,
+  posthogKey?: string,
+  analyticsDays?: number
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
   const hasPendo = isPendoConfigured(pendoKey);
   const hasAmplitude = isAmplitudeConfigured(amplitudeKey);
+  const hasPostHog = isPostHogConfigured(posthogKey);
   const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
-  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasAtl;
+  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl;
 
   if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
-    return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], pendoOverview: null };
+    return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], analyticsOverview: null };
   }
 
   const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey);
+  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays);
   dataCache.set(key, { data, timestamp: Date.now() });
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length;
-  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.pendoOverview ? ", pendo overview" : ""})`);
+  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.analyticsOverview ? ", analytics overview" : ""})`);
 
   return data;
 }

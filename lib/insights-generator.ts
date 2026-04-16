@@ -123,8 +123,8 @@ export function generateProgrammaticInsights(data: AgentData): Insight[] {
     insights.push(...jiraInsights(data.jiraIssues, now));
   }
 
-  if (data.pendoOverview) {
-    insights.push(...pendoInsights(data.pendoOverview, now));
+  if (data.analyticsOverview) {
+    insights.push(...analyticsInsights(data.analyticsOverview, now));
   }
 
   return insights;
@@ -507,19 +507,19 @@ function jiraInsights(issues: JiraIssue[], now: string): Insight[] {
   return insights;
 }
 
-function pendoInsights(data: NonNullable<AgentData["pendoOverview"]>, now: string): Insight[] {
+function analyticsInsights(data: NonNullable<AgentData["analyticsOverview"]>, now: string): Insight[] {
   const insights: Insight[] = [];
 
   if (data.activePages.length > 0) {
     const topPages = data.activePages.slice(0, 3);
     insights.push({
-      id: "gen-pendo-top-pages",
+      id: "gen-analytics-top-pages",
       type: "trend",
-      title: `Pendo page hotspots: ${topPages.map((p) => `${p.name} (${p.totalEvents})`).join(", ")}`,
-      description: `Pendo shows usage concentrating on ${topPages.map((p) => `"${p.name}"`).join(", ")} over the last 7 days. Across ${data.totalPages} tagged pages, these pages led by total events and are good places to validate friction, onboarding gaps, or follow-up opportunities mentioned in feedback.`,
+      title: `Top pages: ${topPages.map((p) => `${p.name} (${p.totalEvents})`).join(", ")}`,
+      description: `Analytics shows usage concentrating on ${topPages.map((p) => `"${p.name}"`).join(", ")} recently. Across ${data.totalPages} tracked pages, these pages led by total events and are good places to validate friction, onboarding gaps, or follow-up opportunities mentioned in feedback.`,
       confidence: 0.86,
       relatedFeedbackIds: [],
-      themes: ["pendo", "page-usage", "engagement"],
+      themes: ["analytics", "page-usage", "engagement"],
       impact: "medium",
       createdAt: now,
     });
@@ -528,13 +528,13 @@ function pendoInsights(data: NonNullable<AgentData["pendoOverview"]>, now: strin
   if (data.activeFeatures.length > 0) {
     const topFeatures = data.activeFeatures.slice(0, 3);
     insights.push({
-      id: "gen-pendo-top-features",
+      id: "gen-analytics-top-features",
       type: "theme",
-      title: `Pendo feature usage leaders: ${topFeatures.map((f) => `${f.name} (${f.totalEvents})`).join(", ")}`,
+      title: `Feature usage leaders: ${topFeatures.map((f) => `${f.name} (${f.totalEvents})`).join(", ")}`,
       description: `Recent tagged feature activity is strongest around ${topFeatures.map((f) => `"${f.name}"`).join(", ")}. Use these usage leaders as a counterpoint to inbound feedback: high-traffic features deserve closer inspection when customers report friction or ask for adjacent improvements.`,
       confidence: 0.84,
       relatedFeedbackIds: [],
-      themes: ["pendo", "feature-adoption", "usage"],
+      themes: ["analytics", "feature-adoption", "usage"],
       impact: "medium",
       createdAt: now,
     });

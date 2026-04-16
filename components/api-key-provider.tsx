@@ -32,6 +32,7 @@ const EMPTY: ApiKeyState = {
   aiProvider: "gemini", aiModel: "", anthropicKey: "", openaiKey: "",
   analyticsProvider: "pendo", amplitudeKey: "",
   ticketProvider: "atlassian", linearKey: "",
+  posthogKey: "", linearTeamId: "",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {
@@ -44,6 +45,7 @@ const EMPTY_STATUS: ApiKeyStatus = {
   openaiKey: { configured: false, source: null },
   amplitudeKey: { configured: false, source: null },
   linearKey: { configured: false, source: null },
+  posthogKey: { configured: false, source: null },
 };
 
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
@@ -102,7 +104,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const keyHeaders = useMemo(() => buildKeyHeaders(keys), [keys]);
-  const hasAnyKey = useMemo(() => !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey), [keys]);
+  const hasAnyKey = useMemo(() => !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey || keys.posthogKey), [keys]);
 
   return (
     <ApiKeyContext.Provider

@@ -47,17 +47,19 @@ export function isAmplitudeConfigured(overrideKey?: string): boolean {
 }
 
 export async function getAmplitudeOverview(
-  overrideKey?: string
+  overrideKey?: string,
+  days?: number
 ): Promise<PendoUsageOverview | null> {
   const compositeKey = overrideKey || process.env.AMPLITUDE_API_KEY;
   if (!compositeKey) return null;
   const creds = parseAmplitudeKey(compositeKey);
   if (!creds) return null;
+  const effectiveDays = days || 7;
 
   try {
     const end = new Date();
     const start = new Date();
-    start.setDate(start.getDate() - 7);
+    start.setDate(start.getDate() - effectiveDays);
 
     const startStr = start.toISOString().split("T")[0].replace(/-/g, "");
     const endStr = end.toISOString().split("T")[0].replace(/-/g, "");
@@ -95,12 +97,14 @@ export async function getAmplitudeOverview(
 export async function getRelevantAmplitudeContext(
   query: string,
   relatedFeedback: FeedbackItem[],
-  overrideKey?: string
+  overrideKey?: string,
+  days?: number
 ): Promise<PendoLookupContext | null> {
   const compositeKey = overrideKey || process.env.AMPLITUDE_API_KEY;
   if (!compositeKey) return null;
   const creds = parseAmplitudeKey(compositeKey);
   if (!creds) return null;
+  const effectiveDays = days || 30;
 
   const emails = query.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
   const feedbackEmails = relatedFeedback
@@ -121,10 +125,13 @@ export async function getRelevantAmplitudeContext(
     const userId = candidates[0];
     const end = new Date();
     const start = new Date();
-    start.setDate(start.getDate() - 30);
+    start.setDate(start.getDate() - effectiveDays);
+
+    const startStr = start.toISOString().split("T")[0].replace(/-/g, "");
+    const endStr = end.toISOString().split("T")[0].replace(/-/g, "");
 
     const data = await amplitudeFetch<Record<string, unknown>>(
-      `/useractivity?user=${encodeURIComponent(userId)}`,
+      `/useractivity?user=${encodeURIComponent(userId)}&start=${startStr}&end=${endStr}`,
       creds.apiKey,
       creds.secretKey
     );

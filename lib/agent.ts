@@ -1,6 +1,8 @@
 import { InMemoryVectorStore } from "./vector-store";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 import { getRelevantPendoContext, PendoUsageOverview } from "./pendo";
+import { getRelevantAmplitudeContext } from "./amplitude";
+import { getRelevantPostHogContext } from "./posthog";
 import {
   DEMO_FEEDBACK, DEMO_PRODUCTBOARD_FEATURES, DEMO_ATTENTION_CALLS, DEMO_INSIGHTS,
   DEMO_JIRA_ISSUES, DEMO_CONFLUENCE_PAGES, DEMO_PENDO_OVERVIEW,
@@ -24,6 +26,9 @@ export interface AgentKeys {
   aiModel?: string;
   anthropicKey?: string;
   openaiKey?: string;
+  analyticsProvider?: string;
+  amplitudeKey?: string;
+  posthogKey?: string;
 }
 
 export interface AgentData {
@@ -33,7 +38,7 @@ export interface AgentData {
   insights: Insight[];
   jiraIssues: JiraIssue[];
   confluencePages: ConfluencePage[];
-  pendoOverview: PendoUsageOverview | null;
+  analyticsOverview: PendoUsageOverview | null;
 }
 
 export interface ChatResult {
@@ -73,7 +78,7 @@ export function getDemoData(): AgentData {
     feedback: DEMO_FEEDBACK, features: DEMO_PRODUCTBOARD_FEATURES,
     calls: DEMO_ATTENTION_CALLS, insights: DEMO_INSIGHTS,
     jiraIssues: DEMO_JIRA_ISSUES, confluencePages: DEMO_CONFLUENCE_PAGES,
-    pendoOverview: DEMO_PENDO_OVERVIEW,
+    analyticsOverview: DEMO_PENDO_OVERVIEW,
   };
 }
 
@@ -195,6 +200,257 @@ const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", 
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
 const PENDO_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product"];
 
+// --- Time range extraction ---
+
+interface TimeRange {
+  start: Date;
+  end: Date;
+  label: string;
+  compare?: { start: Date; end: Date; label: string };
+}
+
+function extractTimeRange(message: string): TimeRange | null {
+  const q = message.toLowerCase();
+  const now = new Date();
+
+  const compareParts = q.match(/(.+?)\s+(?:vs\.?|versus|compared?\s+to|against)\s+(.+)/i);
+  if (compareParts) {
+    const a = parseSingleTimeRange(compareParts[1].trim(), now);
+    const b = parseSingleTimeRange(compareParts[2].trim(), now);
+    if (a && b) return { ...a, compare: b };
+  }
+
+  return parseSingleTimeRange(q, now);
+}
+
+function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  if (/\byesterday\b/.test(text)) {
+    const start = new Date(today); start.setDate(start.getDate() - 1);
+    return { start, end: today, label: "yesterday" };
+  }
+  if (/\btoday\b/.test(text)) {
+    return { start: today, end: now, label: "today" };
+  }
+  if (/\bthis\s+week\b/.test(text)) {
+    const start = new Date(today); start.setDate(start.getDate() - start.getDay());
+    return { start, end: now, label: "this week" };
+  }
+  if (/\bthis\s+month\b/.test(text)) {
+    return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now, label: "this month" };
+  }
+  if (/\bthis\s+quarter\b/.test(text)) {
+    const qMonth = Math.floor(now.getMonth() / 3) * 3;
+    return { start: new Date(now.getFullYear(), qMonth, 1), end: now, label: "this quarter" };
+  }
+  if (/\bytd\b|\byear\s+to\s+date\b/.test(text)) {
+    return { start: new Date(now.getFullYear(), 0, 1), end: now, label: "YTD" };
+  }
+
+  const lastN = text.match(/(?:last|past)\s+(\d+)\s+(day|week|month|quarter)s?/);
+  if (lastN) {
+    const n = parseInt(lastN[1], 10);
+    const unit = lastN[2];
+    const start = new Date(today);
+    if (unit === "day") start.setDate(start.getDate() - n);
+    else if (unit === "week") start.setDate(start.getDate() - n * 7);
+    else if (unit === "month") start.setMonth(start.getMonth() - n);
+    else if (unit === "quarter") start.setMonth(start.getMonth() - n * 3);
+    return { start, end: now, label: `last ${n} ${unit}${n > 1 ? "s" : ""}` };
+  }
+
+  if (/\blast\s+week\b/.test(text)) {
+    const end = new Date(today); end.setDate(end.getDate() - end.getDay());
+    const start = new Date(end); start.setDate(start.getDate() - 7);
+    return { start, end, label: "last week" };
+  }
+  if (/\blast\s+month\b/.test(text)) {
+    const end = new Date(now.getFullYear(), now.getMonth(), 1);
+    const start = new Date(end); start.setMonth(start.getMonth() - 1);
+    return { start, end, label: "last month" };
+  }
+  if (/\blast\s+quarter\b/.test(text)) {
+    const qMonth = Math.floor(now.getMonth() / 3) * 3;
+    const end = new Date(now.getFullYear(), qMonth, 1);
+    const start = new Date(end); start.setMonth(start.getMonth() - 3);
+    return { start, end, label: "last quarter" };
+  }
+
+  const monthNames = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  const monthAbbrevs = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+  const rangeMatch = text.match(new RegExp(`(${monthNames.join("|")}|${monthAbbrevs.join("|")})\\s+(?:to|through|-)\\s+(${monthNames.join("|")}|${monthAbbrevs.join("|")})`, "i"));
+  if (rangeMatch) {
+    const startIdx = monthNames.indexOf(rangeMatch[1].toLowerCase()) !== -1 ? monthNames.indexOf(rangeMatch[1].toLowerCase()) : monthAbbrevs.indexOf(rangeMatch[1].toLowerCase());
+    const endIdx = monthNames.indexOf(rangeMatch[2].toLowerCase()) !== -1 ? monthNames.indexOf(rangeMatch[2].toLowerCase()) : monthAbbrevs.indexOf(rangeMatch[2].toLowerCase());
+    if (startIdx >= 0 && endIdx >= 0) {
+      const start = new Date(now.getFullYear(), startIdx, 1);
+      const end = new Date(now.getFullYear(), endIdx + 1, 0, 23, 59, 59);
+      return { start, end, label: `${monthNames[startIdx]} to ${monthNames[endIdx]}` };
+    }
+  }
+
+  const inMonth = text.match(new RegExp(`(?:in|during|for)\\s+(${monthNames.join("|")}|${monthAbbrevs.join("|")})`, "i"));
+  if (inMonth) {
+    const idx = monthNames.indexOf(inMonth[1].toLowerCase()) !== -1 ? monthNames.indexOf(inMonth[1].toLowerCase()) : monthAbbrevs.indexOf(inMonth[1].toLowerCase());
+    if (idx >= 0) {
+      const year = idx > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
+      return { start: new Date(year, idx, 1), end: new Date(year, idx + 1, 0, 23, 59, 59), label: monthNames[idx] };
+    }
+  }
+
+  const sinceMonth = text.match(new RegExp(`since\\s+(${monthNames.join("|")}|${monthAbbrevs.join("|")})`, "i"));
+  if (sinceMonth) {
+    const idx = monthNames.indexOf(sinceMonth[1].toLowerCase()) !== -1 ? monthNames.indexOf(sinceMonth[1].toLowerCase()) : monthAbbrevs.indexOf(sinceMonth[1].toLowerCase());
+    if (idx >= 0) {
+      const year = idx > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
+      return { start: new Date(year, idx, 1), end: now, label: `since ${monthNames[idx]}` };
+    }
+  }
+
+  const inQ = text.match(/(?:in|during|for)\s+q([1-4])/i);
+  if (inQ) {
+    const qNum = parseInt(inQ[1], 10);
+    const qMonth = (qNum - 1) * 3;
+    return { start: new Date(now.getFullYear(), qMonth, 1), end: new Date(now.getFullYear(), qMonth + 3, 0, 23, 59, 59), label: `Q${qNum}` };
+  }
+
+  return null;
+}
+
+function timeRangeDays(range: TimeRange): number {
+  return Math.max(1, Math.ceil((range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60 * 24)));
+}
+
+// --- Data filtering by time range ---
+
+function filterByTimeRange(data: AgentData, range: TimeRange): AgentData {
+  const inRange = (item: Record<string, unknown>): boolean => {
+    const d = parseDate(item);
+    if (!d) return true;
+    return d >= range.start && d <= range.end;
+  };
+
+  return {
+    feedback: data.feedback.filter((fb) => inRange(fb as unknown as Record<string, unknown>)),
+    features: data.features,
+    calls: data.calls.filter((c) => inRange(c as unknown as Record<string, unknown>)),
+    insights: data.insights,
+    jiraIssues: data.jiraIssues.filter((j) => inRange(j as unknown as Record<string, unknown>)),
+    confluencePages: data.confluencePages.filter((p) => inRange(p as unknown as Record<string, unknown>)),
+    analyticsOverview: data.analyticsOverview,
+  };
+}
+
+// --- Comparison context ---
+
+function buildComparisonBlock(data: AgentData, range: TimeRange): string {
+  if (!range.compare) return "";
+
+  const a = filterByTimeRange(data, range);
+  const b = filterByTimeRange(data, { start: range.compare.start, end: range.compare.end, label: range.compare.label });
+
+  const themesA = extractTopThemes(a.feedback, 8);
+  const themesB = extractTopThemes(b.feedback, 8);
+  const themeNamesA = new Set(themesA.map((t) => t[0]));
+  const themeNamesB = new Set(themesB.map((t) => t[0]));
+  const gained = Array.from(themeNamesB).filter((t) => !themeNamesA.has(t));
+  const lost = Array.from(themeNamesA).filter((t) => !themeNamesB.has(t));
+
+  const sentA = sentimentBreakdown(a.feedback);
+  const sentB = sentimentBreakdown(b.feedback);
+
+  const lines = [
+    `\n---\nPERIOD COMPARISON`,
+    `\nPERIOD A: ${range.label} (${a.feedback.length} feedback, ${a.jiraIssues.length} Jira issues)`,
+    `Top themes: ${themesA.map(([t, c]) => `${t} (${c})`).join(", ") || "none"}`,
+    `Sentiment: ${sentA}`,
+    `\nPERIOD B: ${range.compare.label} (${b.feedback.length} feedback, ${b.jiraIssues.length} Jira issues)`,
+    `Top themes: ${themesB.map(([t, c]) => `${t} (${c})`).join(", ") || "none"}`,
+    `Sentiment: ${sentB}`,
+    `\nCHANGES: ${b.feedback.length - a.feedback.length >= 0 ? "+" : ""}${b.feedback.length - a.feedback.length} feedback items`,
+  ];
+  if (gained.length) lines.push(`Themes gained: ${gained.join(", ")}`);
+  if (lost.length) lines.push(`Themes lost: ${lost.join(", ")}`);
+
+  return lines.join("\n");
+}
+
+function extractTopThemes(feedback: FeedbackItem[], limit: number): [string, number][] {
+  const counts: Record<string, number> = {};
+  for (const fb of feedback) {
+    for (const t of fb.themes) {
+      const lower = t.toLowerCase().trim();
+      if (lower.length > 1 && lower.length < 50 && !NOISE_THEMES.test(lower)) {
+        counts[lower] = (counts[lower] || 0) + 1;
+      }
+    }
+  }
+  return Object.entries(counts).sort(([, a], [, b]) => b - a).slice(0, limit);
+}
+
+function sentimentBreakdown(feedback: FeedbackItem[]): string {
+  const counts: Record<string, number> = {};
+  for (const fb of feedback) counts[fb.sentiment] = (counts[fb.sentiment] || 0) + 1;
+  return Object.entries(counts).map(([s, c]) => `${s}: ${c}`).join(", ") || "no data";
+}
+
+// --- Query classification ---
+
+type QueryType = "detailed" | "conversational" | "comparison" | "count";
+
+function classifyQueryType(
+  message: string,
+  conversationHistory: { role: "user" | "assistant"; content: string }[],
+  hasComparison: boolean
+): QueryType {
+  if (hasComparison) return "comparison";
+  if (wantsCount(message)) return "count";
+  if (isLikelyFollowUp(message) || conversationHistory.filter((m) => m.role === "user").length >= 2) return "conversational";
+  if (isBroadQuery(message) || message.length > 60) return "detailed";
+  return "conversational";
+}
+
+// --- Adaptive format variants ---
+
+const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or forced):
+
+**[1-2 sentence answer to the question. Be specific.]**
+
+## [Heading]
+
+[1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
+
+> "[direct customer quote if available]" — Customer Name or Email. Source: [Jira CX-123](link) or [Productboard note title](link if available)
+
+| Source | What | When |
+| --- | --- | --- |
+[max 5 rows. Include the table only if citing 3+ distinct sources. Source = Jira key/link or Productboard note title. What = actual request/issue. When = relative date.]
+
+## Next Steps
+
+1. [owner] [action] [by when]
+
+Include Next Steps only if the answer implies actionable follow-up. Skip if the question is purely informational.
+
+CONSTRAINTS: 300 words max. No :--- in tables. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count.`;
+
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No table unless comparing items. No Next Steps unless the user asks "what should we do." 150 words max.`;
+
+const COMPARISON_FORMAT = `Structure the response as a comparison:
+
+## [Period/Dimension A] vs [Period/Dimension B]
+
+| Dimension | [A label] | [B label] |
+| --- | --- | --- |
+[rows for volume, top themes, sentiment, key items]
+
+### Key Changes
+[2-3 bullet points highlighting what shifted and why it matters]
+
+CONSTRAINTS: Focus on what changed, not what stayed the same. 250 words max. No :--- in tables.`;
+
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
   return BROAD_KEYWORDS.some((kw) => q.includes(kw));
@@ -220,10 +476,13 @@ function wantsInsightDrilldown(query: string): boolean {
   return INSIGHT_DRILLDOWN_KEYWORDS.some((kw) => q.includes(kw));
 }
 
-function wantsPendoContext(query: string): boolean {
+const ANALYTICS_KEYWORDS = ["posthog", "amplitude", "analytics", "product analytics"];
+
+function wantsAnalyticsContext(query: string): boolean {
   const q = query.toLowerCase();
-  if (q.includes("pendo")) return true;
-  return PENDO_KEYWORDS.some((kw) => q.includes(kw));
+  if (PENDO_KEYWORDS.some((kw) => q.includes(kw))) return true;
+  if (ANALYTICS_KEYWORDS.some((kw) => q.includes(kw))) return true;
+  return false;
 }
 
 function isLikelyFollowUp(query: string): boolean {
@@ -444,8 +703,8 @@ function topThemesRecent(feedback: FeedbackItem[], days: number): string {
   return `Top themes (last ${days}d, ${count} items): ${top.map(([t, c]) => `${t} (${c})`).join(", ")}`;
 }
 
-function buildStatsHeader(data: AgentData): string {
-  const { feedback, features, calls, insights, jiraIssues, confluencePages, pendoOverview } = data;
+function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string {
+  const { feedback, features, calls, insights, jiraIssues, confluencePages, analyticsOverview } = data;
   const parts: string[] = [];
 
   parts.push(`Today: ${new Date().toLocaleDateString()}`);
@@ -467,12 +726,12 @@ function buildStatsHeader(data: AgentData): string {
   if (calls.length > 0) parts.push(temporalSummary(calls as unknown as Record<string, unknown>[], "Calls"));
   if (confluencePages.length > 0) parts.push(`Confluence: ${confluencePages.length} pages`);
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
-  if (pendoOverview) {
-    const pageHotspots = pendoOverview.activePages.slice(0, 3).map((p) => `${p.name} (${p.totalEvents})`).join(", ");
-    const featureHotspots = pendoOverview.activeFeatures.slice(0, 3).map((f) => `${f.name} (${f.totalEvents})`).join(", ");
-    parts.push(`Pendo: ${pendoOverview.totalPages} tagged pages, ${pendoOverview.totalFeatures} tagged features.`);
-    if (pageHotspots) parts.push(`Pendo top pages (last 7d): ${pageHotspots}`);
-    if (featureHotspots) parts.push(`Pendo top features (last 7d): ${featureHotspots}`);
+  if (analyticsOverview) {
+    const pageHotspots = analyticsOverview.activePages.slice(0, 3).map((p) => `${p.name} (${p.totalEvents})`).join(", ");
+    const featureHotspots = analyticsOverview.activeFeatures.slice(0, 3).map((f) => `${f.name} (${f.totalEvents})`).join(", ");
+    parts.push(`${analyticsLabel}: ${analyticsOverview.totalPages} tagged pages, ${analyticsOverview.totalFeatures} tagged features.`);
+    if (pageHotspots) parts.push(`${analyticsLabel} top pages: ${pageHotspots}`);
+    if (featureHotspots) parts.push(`${analyticsLabel} top features: ${featureHotspots}`);
   }
 
   const recentThemes = topThemesRecent(feedback, 14);
@@ -484,9 +743,9 @@ function buildStatsHeader(data: AgentData): string {
   return parts.join("\n");
 }
 
-function buildFocusedContext(data: AgentData, searchResults: string): string {
+function buildFocusedContext(data: AgentData, searchResults: string, analyticsLabel = "Analytics"): string {
   const parts: string[] = [];
-  parts.push(buildStatsHeader(data));
+  parts.push(buildStatsHeader(data, analyticsLabel));
   parts.push(`\n---\nRelevant items:\n${searchResults || "(No matches)"}`);
   return parts.join("\n");
 }
@@ -546,9 +805,9 @@ function filterJiraForContext(issues: JiraIssue[], includeEng: boolean): JiraIss
   return issues.filter((j) => !/^ENG-/i.test(j.key));
 }
 
-function buildStandardContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false): string {
+function buildStandardContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false, analyticsLabel = "Analytics"): string {
   const parts: string[] = [];
-  parts.push(buildStatsHeader(data));
+  parts.push(buildStatsHeader(data, analyticsLabel));
 
   const recentFb = recentItems(data.feedback, 10);
   if (recentFb.length > 0) {
@@ -583,9 +842,9 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
   return parts.join("\n");
 }
 
-function buildDeepContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false): string {
+function buildDeepContext(data: AgentData, searchResults: string, includeEng = false, includeConfluence = false, analyticsLabel = "Analytics"): string {
   const parts: string[] = [];
-  parts.push(buildStatsHeader(data));
+  parts.push(buildStatsHeader(data, analyticsLabel));
 
   const recentFb = recentItems(data.feedback, 25);
   if (recentFb.length > 0) {
@@ -633,6 +892,8 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
   return parts.join("\n");
 }
 
+const MAX_CONTEXT_TOKENS: Record<string, number> = { focused: 4000, standard: 6000, deep: 10000 };
+
 export async function chat(
   userMessage: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
@@ -642,7 +903,10 @@ export async function chat(
   mode: InteractionMode = "summarize",
   accumulatedSourceIds?: string[]
 ): Promise<ChatResult> {
-  const store = buildStore(data);
+  const timeRange = extractTimeRange(userMessage);
+  const scopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
+
+  const store = buildStore(scopedData);
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
@@ -667,7 +931,7 @@ export async function chat(
   const results = rawResults.filter((r) => {
     if (r.document.type === "confluence" && !includeConfluence) return false;
     if (r.document.type === "jira") {
-      const j = data.jiraIssues.find((j) => j.id === r.document.id);
+      const j = scopedData.jiraIssues.find((j) => j.id === r.document.id);
       if (j && /^ENG-/i.test(j.key) && !includeEng) return false;
     }
     return true;
@@ -675,71 +939,83 @@ export async function chat(
 
   const relatedFeedback = results
     .filter((r) => r.document.type === "feedback")
-    .map((r) => data.feedback.find((f) => f.id === r.document.id))
+    .map((r) => scopedData.feedback.find((f) => f.id === r.document.id))
     .filter((item): item is FeedbackItem => !!item);
 
-  const pendoLookup = wantsPendoContext(userMessage)
-    ? await getRelevantPendoContext(userMessage, relatedFeedback, keys.pendoKey)
-    : null;
+  const analyticsProvider = keys.analyticsProvider || "pendo";
+  let analyticsLookup: { context: string; sources: { type: string; id: string; title: string }[] } | null = null;
+  if (wantsAnalyticsContext(userMessage)) {
+    const lookupDays = timeRange ? Math.min(timeRangeDays(timeRange), 90) : undefined;
+    if (analyticsProvider === "amplitude") {
+      analyticsLookup = await getRelevantAmplitudeContext(userMessage, relatedFeedback, keys.amplitudeKey, lookupDays);
+    } else if (analyticsProvider === "posthog") {
+      analyticsLookup = await getRelevantPostHogContext(userMessage, relatedFeedback, keys.posthogKey, lookupDays);
+    } else {
+      analyticsLookup = await getRelevantPendoContext(userMessage, relatedFeedback, keys.pendoKey, lookupDays);
+    }
+  }
 
   const sources: { type: string; id: string; title: string; url?: string }[] = [];
   const searchParts: string[] = [];
+  const recentItemIds = new Set<string>();
   const detailed = wantsDetail(userMessage) || drilldownQuery;
 
   for (const r of results) {
     const doc = r.document;
-    const details = lookupDetails([doc.id], data, detailed, keys);
+    const details = lookupDetails([doc.id], scopedData, detailed, keys);
     if (details.length > 0) searchParts.push(details[0]);
+    recentItemIds.add(doc.id);
 
     let title = doc.id;
     let url: string | undefined;
     if (doc.type === "feedback") {
-      const fb = data.feedback.find((f) => f.id === doc.id);
+      const fb = scopedData.feedback.find((f) => f.id === doc.id);
       const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
       const contact = email || fb?.customer || fb?.company || "";
       title = fb ? `${cleanFeedbackTitle(fb)}${contact ? ` — ${contact}` : ""}` : title;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
     } else if (doc.type === "feature") {
-      title = data.features.find((f) => f.id === doc.id)?.name || title;
+      title = scopedData.features.find((f) => f.id === doc.id)?.name || title;
     } else if (doc.type === "call") {
-      title = data.calls.find((c) => c.id === doc.id)?.title || title;
+      title = scopedData.calls.find((c) => c.id === doc.id)?.title || title;
     } else if (doc.type === "insight") {
-      title = data.insights.find((i) => i.id === doc.id)?.title || title;
+      title = scopedData.insights.find((i) => i.id === doc.id)?.title || title;
     } else if (doc.type === "jira") {
-      const j = data.jiraIssues.find((j) => j.id === doc.id);
+      const j = scopedData.jiraIssues.find((j) => j.id === doc.id);
       if (j) {
         title = `${j.key}: ${j.summary}`;
         const domain = keys.atlassianDomain || process.env.ATLASSIAN_DOMAIN || "";
         if (domain) url = `https://${domain.replace(/\.atlassian\.net\/?$/, "")}.atlassian.net/browse/${j.key}`;
       }
     } else if (doc.type === "confluence") {
-      const p = data.confluencePages.find((p) => p.id === doc.id);
+      const p = scopedData.confluencePages.find((p) => p.id === doc.id);
       if (p) { title = p.title; url = p.url; }
     }
     sources.push({ type: doc.type, id: doc.id, title, url });
   }
 
-  if (pendoLookup?.sources.length) {
-    for (const source of pendoLookup.sources) {
-      sources.push(source);
-    }
+  if (analyticsLookup?.sources.length) {
+    for (const source of analyticsLookup.sources) sources.push(source);
   }
 
   const matchedInsightIds = results.filter((r) => r.document.type === "insight").map((r) => r.document.id);
-  const drilldownContext = buildInsightDrilldownContext(userMessage, data, matchedInsightIds, keys);
+  const drilldownContext = buildInsightDrilldownContext(userMessage, scopedData, matchedInsightIds, keys);
 
-  // For PRD/Ticket modes, always use deep context + full history
   const isPrdOrTicket = mode === "prd" || mode === "ticket";
 
-  // Include accumulated sources context for PRD/Ticket modes — must happen before searchContext is built
   if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
-    const accDetails = lookupDetails(accumulatedSourceIds, data, true, keys);
-    if (accDetails.length > 0) {
-      searchParts.push("Previously referenced items from conversation:\n" + accDetails.join("\n"));
+    const uniqueAccIds = accumulatedSourceIds.filter((id) => !recentItemIds.has(id));
+    if (uniqueAccIds.length > 0) {
+      const accDetails = lookupDetails(uniqueAccIds, scopedData, true, keys);
+      if (accDetails.length > 0) {
+        searchParts.push("Previously referenced items from conversation:\n" + accDetails.join("\n"));
+      }
     }
   }
 
-  const searchContext = [searchParts.join("\n"), drilldownContext, pendoLookup?.context || ""].filter(Boolean).join("\n");
+  const searchContext = [searchParts.join("\n"), drilldownContext, analyticsLookup?.context || ""].filter(Boolean).join("\n");
+
+  const analyticsLabel = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
 
   const effectiveContextMode = isPrdOrTicket
     ? "deep"
@@ -751,25 +1027,44 @@ export async function chat(
 
   let context: string;
   switch (effectiveContextMode) {
-    case "deep": context = buildDeepContext(data, searchContext, isPrdOrTicket || includeEng, isPrdOrTicket || includeConfluence); break;
-    case "standard": context = buildStandardContext(data, searchContext, includeEng, includeConfluence); break;
-    default: context = buildFocusedContext(data, searchContext);
+    case "deep": context = buildDeepContext(scopedData, searchContext, isPrdOrTicket || includeEng, isPrdOrTicket || includeConfluence, analyticsLabel); break;
+    case "standard": context = buildStandardContext(scopedData, searchContext, includeEng, includeConfluence, analyticsLabel); break;
+    default: context = buildFocusedContext(scopedData, searchContext, analyticsLabel);
+  }
+
+  if (timeRange) {
+    const totalItems = data.feedback.length + data.jiraIssues.length + data.calls.length;
+    const scopedItems = scopedData.feedback.length + scopedData.jiraIssues.length + scopedData.calls.length;
+    context = `Time scope: ${timeRange.label} (${timeRange.start.toLocaleDateString()} – ${timeRange.end.toLocaleDateString()}). Showing ${scopedItems} of ${totalItems} time-sensitive items in this range.\n\n` + context;
+  }
+
+  if (timeRange?.compare) {
+    context += buildComparisonBlock(data, timeRange);
   }
 
   if (countQuery) {
-    context += buildComputedCounts(data);
+    context += buildComputedCounts(scopedData);
   }
 
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.pendoOverview ? data.pendoOverview.totalPages + data.pendoOverview.totalFeatures : 0);
+  const budget = MAX_CONTEXT_TOKENS[effectiveContextMode] || 6000;
+  if (estimateTokens(context) > budget) {
+    context = context.slice(0, Math.floor(budget * 3.5));
+  }
 
-  // For PRD/Ticket modes, use full conversation history; for summarize use last 3 turns
-  const historySlice = isPrdOrTicket ? conversationHistory : conversationHistory.slice(-3);
+  const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length + (scopedData.analyticsOverview ? scopedData.analyticsOverview.totalPages + scopedData.analyticsOverview.totalFeatures : 0);
+
+  const isPrdOrTicketHistory = isPrdOrTicket;
+  const followUp = isLikelyFollowUp(userMessage);
+  const priorUserTurns = conversationHistory.filter((m) => m.role === "user").length;
+  const skipHistory = !isPrdOrTicketHistory && !followUp && priorUserTurns < 2;
+  const historySlice = isPrdOrTicketHistory ? conversationHistory : skipHistory ? [] : conversationHistory.slice(-3);
   const historyText = historySlice
-    .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content.slice(0, isPrdOrTicket ? 500 : 200)}`)
+    .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content.slice(0, isPrdOrTicketHistory ? 500 : 200)}`)
     .join("\n");
 
   const systemPrompt = getSystemPrompt(mode);
-  const formatInstructions = getFormatInstructions(mode);
+  const hasComparison = !!timeRange?.compare;
+  const formatInstructions = getFormatInstructions(mode, userMessage, conversationHistory, hasComparison);
 
   const evidencePack = sources.length > 0
     ? "\n---\nAvailable Evidence (cite by ID only — do not reference sources not in this list):\n" +
@@ -808,7 +1103,7 @@ ${formatInstructions}`;
     };
   }
 
-  const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, data);
+  const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, scopedData);
   return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 } };
 }
 
@@ -818,9 +1113,23 @@ function getSystemPrompt(mode: InteractionMode): string {
   return SYSTEM_PROMPT;
 }
 
-function getFormatInstructions(mode: InteractionMode): string {
+function getFormatInstructions(
+  mode: InteractionMode,
+  message?: string,
+  history?: { role: "user" | "assistant"; content: string }[],
+  hasComparison?: boolean
+): string {
   if (mode === "prd") return PRD_FORMAT;
   if (mode === "ticket") return TICKET_FORMAT;
+  if (message && history) {
+    const qType = classifyQueryType(message, history, !!hasComparison);
+    switch (qType) {
+      case "comparison": return COMPARISON_FORMAT;
+      case "conversational": return CONVERSATIONAL_FORMAT;
+      case "count": return SUMMARIZE_FORMAT;
+      default: return DETAILED_FORMAT;
+    }
+  }
   return SUMMARIZE_FORMAT;
 }
 
@@ -938,7 +1247,7 @@ function generateBuiltInResponse(
   query: string, context: string,
   sources: { type: string; id: string; title: string }[], data: AgentData
 ): string {
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.pendoOverview ? data.pendoOverview.totalPages + data.pendoOverview.totalFeatures : 0);
+  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.analyticsOverview ? data.analyticsOverview.totalPages + data.analyticsOverview.totalFeatures : 0);
   const rows = sources.slice(0, 8).map((s) => `| ${s.type} | ${s.title} |`).join("\n");
 
   return `**Found ${sources.length} relevant items across ${total} total.**
@@ -953,25 +1262,3 @@ ${context.slice(0, 1200)}
 Connect an AI provider key in Settings for AI-powered analysis.`;
 }
 
-export function getInsights(useDemoData = true): Insight[] {
-  return useDemoData ? DEMO_INSIGHTS : [];
-}
-
-export function searchFeedback(
-  query: string, data: AgentData, options?: { limit?: number; type?: string }
-): { type: string; id: string; title: string; score: number }[] {
-  const store = buildStore(data);
-  return store.search(query, {
-    limit: options?.limit || 10,
-    type: options?.type as "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | undefined,
-  }).map((r) => {
-    let title = r.document.id;
-    if (r.document.type === "feedback") title = data.feedback.find((f) => f.id === r.document.id)?.title || title;
-    else if (r.document.type === "feature") title = data.features.find((f) => f.id === r.document.id)?.name || title;
-    else if (r.document.type === "call") title = data.calls.find((c) => c.id === r.document.id)?.title || title;
-    else if (r.document.type === "insight") title = data.insights.find((i) => i.id === r.document.id)?.title || title;
-    else if (r.document.type === "jira") { const j = data.jiraIssues.find((j) => j.id === r.document.id); title = j ? `${j.key}: ${j.summary}` : title; }
-    else if (r.document.type === "confluence") title = data.confluencePages.find((p) => p.id === r.document.id)?.title || title;
-    return { type: r.document.type, id: r.document.id, title, score: r.score };
-  });
-}

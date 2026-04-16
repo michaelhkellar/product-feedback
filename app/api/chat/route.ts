@@ -51,8 +51,16 @@ export async function POST(req: NextRequest) {
       openaiKey: req.headers.get("x-openai-key") || undefined,
     };
 
-    const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude") || undefined;
+    const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude" | "posthog") || undefined;
     const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
+    const posthogKey = req.headers.get("x-posthog-key") || undefined;
+
+    const agentKeys = {
+      ...keys,
+      analyticsProvider,
+      amplitudeKey,
+      posthogKey,
+    };
 
     const data = await getData(
       keys.productboardKey, keys.attentionKey, keys.pendoKey, useDemoData !== false,
@@ -60,7 +68,8 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-atlassian-jira-filter") || undefined,
       req.headers.get("x-atlassian-confluence-filter") || undefined,
       analyticsProvider,
-      amplitudeKey
+      amplitudeKey,
+      posthogKey
     );
 
     const generatedInsights = generateProgrammaticInsights(data);
@@ -77,7 +86,7 @@ export async function POST(req: NextRequest) {
     const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket") ? interactionMode : "summarize";
     const sourceIds = Array.isArray(accumulatedSourceIds) ? accumulatedSourceIds : undefined;
 
-    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, keys, ctxMode, chatMode, sourceIds);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds);
 
     return NextResponse.json(result);
   } catch (error) {

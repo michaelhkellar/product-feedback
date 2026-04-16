@@ -10,6 +10,7 @@ const ENV_KEY_VARS = [
   "AMPLITUDE_API_KEY",
   "ATLASSIAN_API_TOKEN",
   "LINEAR_API_KEY",
+  "POSTHOG_API_KEY",
 ];
 
 function hasAnyEnvKey(): boolean {

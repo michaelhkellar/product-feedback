@@ -1,26 +1,9 @@
 import { TicketProviderType } from "./api-keys";
 
-export interface TicketIssue {
-  id: string;
-  key: string;
-  title: string;
-  description: string;
-  status: string;
-  url?: string;
-}
-
 export interface CreateTicketResult {
   id: string;
   key: string;
   url: string;
-}
-
-export interface TicketProvider {
-  createIssue(
-    title: string,
-    body: string,
-    meta?: Record<string, string>
-  ): Promise<CreateTicketResult>;
 }
 
 // Jira wiki markup injection patterns to strip

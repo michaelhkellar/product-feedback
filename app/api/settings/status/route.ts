@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const openai = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY;
   const amplitude = req.headers.get("x-amplitude-key") || process.env.AMPLITUDE_API_KEY;
   const linear = req.headers.get("x-linear-key") || process.env.LINEAR_API_KEY;
+  const posthog = req.headers.get("x-posthog-key") || process.env.POSTHOG_API_KEY;
 
   return NextResponse.json({
     status: {
@@ -51,6 +52,10 @@ export async function GET(req: NextRequest) {
       linearKey: {
         configured: !!linear,
         source: req.headers.get("x-linear-key") ? "app" : process.env.LINEAR_API_KEY ? "env" : null,
+      },
+      posthogKey: {
+        configured: !!posthog,
+        source: req.headers.get("x-posthog-key") ? "app" : process.env.POSTHOG_API_KEY ? "env" : null,
       },
     },
   });

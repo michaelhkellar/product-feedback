@@ -1,7 +1,7 @@
 import { AIProviderType } from "./ai-provider";
 
 export type ContextMode = "focused" | "standard" | "deep";
-export type AnalyticsProviderType = "pendo" | "amplitude";
+export type AnalyticsProviderType = "pendo" | "amplitude" | "posthog";
 export type TicketProviderType = "atlassian" | "linear";
 
 export interface ApiKeyState {
@@ -23,6 +23,8 @@ export interface ApiKeyState {
   amplitudeKey: string;
   ticketProvider: TicketProviderType;
   linearKey: string;
+  posthogKey: string;
+  linearTeamId: string;
 }
 
 export interface ApiKeyStatus {
@@ -35,6 +37,7 @@ export interface ApiKeyStatus {
   openaiKey: { configured: boolean; source: "app" | "env" | null };
   amplitudeKey: { configured: boolean; source: "app" | "env" | null };
   linearKey: { configured: boolean; source: "app" | "env" | null };
+  posthogKey: { configured: boolean; source: "app" | "env" | null };
 }
 
 const LEGACY_STORAGE_KEY = "feedback-agent-api-keys";
@@ -64,6 +67,8 @@ const EMPTY_KEYS: ApiKeyState = {
   amplitudeKey: "",
   ticketProvider: "atlassian",
   linearKey: "",
+  posthogKey: "",
+  linearTeamId: "",
 };
 
 interface EncryptedPayload {
@@ -91,6 +96,8 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     amplitudeKey: parsed?.amplitudeKey || "",
     ticketProvider: (parsed?.ticketProvider as ApiKeyState["ticketProvider"]) || "atlassian",
     linearKey: parsed?.linearKey || "",
+    posthogKey: parsed?.posthogKey || "",
+    linearTeamId: parsed?.linearTeamId || "",
   };
 }
 
@@ -113,7 +120,9 @@ function hasStoredValues(keys: ApiKeyState): boolean {
     keys.analyticsProvider !== "pendo" ||
     keys.amplitudeKey ||
     keys.ticketProvider !== "atlassian" ||
-    keys.linearKey
+    keys.linearKey ||
+    keys.posthogKey ||
+    keys.linearTeamId
   );
 }
 
@@ -314,6 +323,8 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.amplitudeKey) headers["x-amplitude-key"] = keys.amplitudeKey;
   if (keys.ticketProvider) headers["x-ticket-provider"] = keys.ticketProvider;
   if (keys.linearKey) headers["x-linear-key"] = keys.linearKey;
+  if (keys.posthogKey) headers["x-posthog-key"] = keys.posthogKey;
+  if (keys.linearTeamId) headers["x-linear-team-id"] = keys.linearTeamId;
   return headers;
 }
 

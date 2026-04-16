@@ -130,6 +130,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (keyName === "posthogKey") {
+      const key = req.headers.get("x-posthog-key") || process.env.POSTHOG_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      const parts = key.split(":");
+      if (parts.length !== 2) return NextResponse.json({ valid: false, error: "Format should be apiKey:projectId" });
+      try {
+        const res = await fetch(`https://app.posthog.com/api/projects/${parts[1]}/`, {
+          headers: { Authorization: `Bearer ${parts[0]}` },
+        });
+        if (res.ok) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
+      } catch (err: unknown) {
+        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      }
+    }
+
     if (keyName === "atlassianToken") {
       const domain = req.headers.get("x-atlassian-domain") || process.env.ATLASSIAN_DOMAIN;
       const email = req.headers.get("x-atlassian-email") || process.env.ATLASSIAN_EMAIL;

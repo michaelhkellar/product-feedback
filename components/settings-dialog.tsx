@@ -59,12 +59,15 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [confluenceSearch, setConfluenceSearch] = useState("");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [linearTeams, setLinearTeams] = useState<{ id: string; name: string }[]>([]);
+  const [loadingLinearTeams, setLoadingLinearTeams] = useState(false);
 
   const allKeyFields = [
     ...SIMPLE_KEYS,
     ...AI_PROVIDERS.map((p) => ({ id: p.keyField, label: p.label, placeholder: p.placeholder, description: "" })),
     { id: "pendoKey" as keyof ApiKeyState, label: "Pendo Integration Key", placeholder: "pendo_...", description: "" },
     { id: "amplitudeKey" as keyof ApiKeyState, label: "Amplitude API Key", placeholder: "apiKey:secretKey", description: "" },
+    { id: "posthogKey" as keyof ApiKeyState, label: "PostHog API Key", placeholder: "phx_...:projectId", description: "" },
     { id: "linearKey" as keyof ApiKeyState, label: "Linear API Key", placeholder: "lin_api_...", description: "" },
   ];
 
@@ -82,6 +85,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setSaveMessage(null);
       if (keys.atlassianDomain && keys.atlassianEmail && keys.atlassianToken) {
         fetchAtlassianResources();
+      }
+      if (keys.linearKey) {
+        void fetchLinearTeams();
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,6 +138,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setSaveMessage(msg);
     setTimeout(() => setSaveMessage(null), 2000);
     refreshStatus(nextKeys);
+    void fetch("/api/settings/invalidate-cache", { method: "POST" }).catch(() => {});
   }
 
   async function handleValidate(id: string) {
@@ -160,6 +167,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           if (afField) (testKeys as Record<string, string>)[af.id] = afField.value;
         }
         fetchAtlassianResources(testKeys);
+      }
+      if (data.valid && id === "linearKey") {
+        void fetchLinearTeams(field.value);
       }
     } catch {
       updateField(id, { validating: false, valid: false, error: "Could not reach validation endpoint" });
@@ -196,6 +206,25 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
     }
     showSave("Atlassian settings saved", nextKeys);
+  }
+
+  async function fetchLinearTeams(linearKeyValue?: string) {
+    const key = linearKeyValue || keys.linearKey;
+    if (!key) return;
+    setLoadingLinearTeams(true);
+    try {
+      const res = await fetch("/api/settings/linear-teams", {
+        headers: { "x-linear-key": key },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLinearTeams(data.teams || []);
+        if (data.teams?.length > 0 && !keys.linearTeamId) {
+          setKey("linearTeamId", data.teams[0].id);
+        }
+      }
+    } catch { /* ignore */ }
+    setLoadingLinearTeams(false);
   }
 
   function handleRemoveAtlassian() {
@@ -386,6 +415,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               {([
                 { key: "pendo" as const, label: "Pendo" },
                 { key: "amplitude" as const, label: "Amplitude" },
+                { key: "posthog" as const, label: "PostHog" },
               ]).map((p) => (
                 <button key={p.key}
                   onClick={() => setKey("analyticsProvider", p.key)}
@@ -401,7 +431,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
             {(keys.analyticsProvider || "pendo") === "pendo"
               ? renderKeyField("pendoKey", "Pendo Integration Key", "pendo_...", "Adds product usage insights and on-demand visitor/account history from Pendo")
-              : renderKeyField("amplitudeKey", "Amplitude API Key", "apiKey:secretKey", "Format: apiKey:secretKey. Get both from Amplitude project settings.")
+              : (keys.analyticsProvider || "pendo") === "amplitude"
+                ? renderKeyField("amplitudeKey", "Amplitude API Key", "apiKey:secretKey", "Format: apiKey:secretKey. Get both from Amplitude project settings.")
+                : renderKeyField("posthogKey", "PostHog API Key", "phx_...:projectId", "Format: apiKey:projectId. Get both from PostHog project settings.")
             }
           </div>
 
@@ -425,9 +457,30 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               ))}
             </div>
-            {(keys.ticketProvider || "atlassian") === "linear" &&
-              renderKeyField("linearKey", "Linear API Key", "lin_api_...", "Personal API key from Linear Settings > API")
-            }
+            {(keys.ticketProvider || "atlassian") === "linear" && (
+              <>
+                {renderKeyField("linearKey", "Linear API Key", "lin_api_...", "Personal API key from Linear Settings > API")}
+                {linearTeams.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Team</label>
+                    <select
+                      value={keys.linearTeamId || ""}
+                      onChange={(e) => setKey("linearTeamId", e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs focus:outline-none focus:ring-2 focus:ring-primary/20">
+                      <option value="">Select a team...</option>
+                      {linearTeams.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {loadingLinearTeams && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />Loading teams...
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Data Sources */}

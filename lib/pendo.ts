@@ -445,10 +445,12 @@ export function isPendoConfigured(overrideKey?: string): boolean {
 }
 
 export async function getPendoOverview(
-  overrideKey?: string
+  overrideKey?: string,
+  days?: number
 ): Promise<PendoUsageOverview | null> {
   const integrationKey = overrideKey || process.env.PENDO_INTEGRATION_KEY;
   if (!integrationKey) return null;
+  const effectiveDays = days || OVERVIEW_DAYS;
 
   try {
     const [pages, features] = await Promise.all([
@@ -457,9 +459,9 @@ export async function getPendoOverview(
     ]);
 
     const [activePages, activeFeatures, activeAccounts] = await Promise.all([
-      topUsageForSource(integrationKey, "pageEvents", "pageId", pages),
-      topUsageForSource(integrationKey, "featureEvents", "featureId", features),
-      topAccounts(integrationKey),
+      topUsageForSource(integrationKey, "pageEvents", "pageId", pages, effectiveDays),
+      topUsageForSource(integrationKey, "featureEvents", "featureId", features, effectiveDays),
+      topAccounts(integrationKey, effectiveDays),
     ]);
 
     return {
@@ -479,9 +481,11 @@ export async function getPendoOverview(
 export async function getRelevantPendoContext(
   query: string,
   relatedFeedback: FeedbackItem[],
-  overrideKey?: string
+  overrideKey?: string,
+  days?: number
 ): Promise<PendoLookupContext | null> {
   const integrationKey = overrideKey || process.env.PENDO_INTEGRATION_KEY;
+  const effectiveLookupDays = days || LOOKUP_DAYS;
   if (!integrationKey) return null;
 
   const { visitorCandidates, accountCandidates, notes } = collectCandidates(query, relatedFeedback);
@@ -541,9 +545,9 @@ export async function getRelevantPendoContext(
     if (fields.length > 0) lines.push(`Visitor metadata: ${fields.join("; ")}.`);
 
     const [totals, pages, features, history] = await Promise.all([
-      entityTotals(integrationKey, "visitorId", matchedVisitor.id),
-      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, LOOKUP_DAYS, entityFilter("visitorId", matchedVisitor.id)),
-      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, LOOKUP_DAYS, entityFilter("visitorId", matchedVisitor.id)),
+      entityTotals(integrationKey, "visitorId", matchedVisitor.id, effectiveLookupDays),
+      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
+      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("visitorId", matchedVisitor.id)),
       getVisitorHistory(integrationKey, matchedVisitor.id),
     ]);
 
@@ -564,9 +568,9 @@ export async function getRelevantPendoContext(
     if (fields.length > 0) lines.push(`Account metadata: ${fields.join("; ")}.`);
 
     const [totals, pages, features] = await Promise.all([
-      entityTotals(integrationKey, "accountId", matchedAccount.id),
-      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, LOOKUP_DAYS, entityFilter("accountId", matchedAccount.id)),
-      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, LOOKUP_DAYS, entityFilter("accountId", matchedAccount.id)),
+      entityTotals(integrationKey, "accountId", matchedAccount.id, effectiveLookupDays),
+      topUsageForSource(integrationKey, "pageEvents", "pageId", pageNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
+      topUsageForSource(integrationKey, "featureEvents", "featureId", featureNames, effectiveLookupDays, entityFilter("accountId", matchedAccount.id)),
     ]);
 
     lines.push(...buildUsageSummary("Account activity", totals, pages, features));

@@ -19,14 +19,16 @@ export async function GET(req: NextRequest) {
     const aiModel = req.headers.get("x-ai-model") || undefined;
 
     const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
-    const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude") || undefined;
+    const posthogKey = req.headers.get("x-posthog-key") || undefined;
+    const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude" | "posthog") || undefined;
 
     const hasPb = !!(pbKey || process.env.PRODUCTBOARD_API_TOKEN);
     const hasAtt = !!(attKey || process.env.ATTENTION_API_KEY);
     const hasPendo = !!(pendoKey || process.env.PENDO_INTEGRATION_KEY);
     const hasAmplitude = !!(amplitudeKey || process.env.AMPLITUDE_API_KEY);
+    const hasPostHog = !!(posthogKey || process.env.POSTHOG_API_KEY);
     const hasAtl = !!(atlDomain && atlEmail && atlToken) || !!(process.env.ATLASSIAN_DOMAIN && process.env.ATLASSIAN_EMAIL && process.env.ATLASSIAN_API_TOKEN);
-    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasAtl;
+    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl;
 
     if (!hasAnyLiveKey && !useDemoData) {
       return NextResponse.json({ insights: [], isDemo: false });
@@ -35,7 +37,7 @@ export async function GET(req: NextRequest) {
     const isDemo = !hasAnyLiveKey && useDemoData;
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey);
     const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
 
     return NextResponse.json({ insights, isDemo });
