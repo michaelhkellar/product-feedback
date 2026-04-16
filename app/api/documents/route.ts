@@ -9,17 +9,21 @@ function getRateLimitKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for") || req.ip || "unknown";
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function markdownToConfluenceStorage(markdown: string): string {
   let html = markdown;
 
-  // Headers
-  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
+  // Headers — escape content then wrap
+  html = html.replace(/^### (.+)$/gm, (_m, p1) => `<h3>${escapeHtml(p1)}</h3>`);
+  html = html.replace(/^## (.+)$/gm, (_m, p1) => `<h2>${escapeHtml(p1)}</h2>`);
+  html = html.replace(/^# (.+)$/gm, (_m, p1) => `<h1>${escapeHtml(p1)}</h1>`);
 
-  // Bold and italic
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  // Bold and italic (escape inner text)
+  html = html.replace(/\*\*(.+?)\*\*/g, (_m, p1) => `<strong>${escapeHtml(p1)}</strong>`);
+  html = html.replace(/\*(.+?)\*/g, (_m, p1) => `<em>${escapeHtml(p1)}</em>`);
 
   // Bullet lists (simple single-level)
   html = html.replace(
@@ -27,15 +31,15 @@ function markdownToConfluenceStorage(markdown: string): string {
     (match) => {
       const items = match
         .split("\n")
-        .map((line) => `<li>${line.replace(/^- /, "")}</li>`)
+        .map((line) => `<li>${escapeHtml(line.replace(/^- /, ""))}</li>`)
         .join("");
       return `<ul>${items}</ul>`;
     }
   );
 
   // Checkboxes
-  html = html.replace(/- \[ \] (.+)/g, '<ac:task-list><ac:task><ac:task-status>incomplete</ac:task-status><ac:task-body>$1</ac:task-body></ac:task></ac:task-list>');
-  html = html.replace(/- \[x\] (.+)/g, '<ac:task-list><ac:task><ac:task-status>complete</ac:task-status><ac:task-body>$1</ac:task-body></ac:task></ac:task-list>');
+  html = html.replace(/- \[ \] (.+)/g, (_m, p1) => `<ac:task-list><ac:task><ac:task-status>incomplete</ac:task-status><ac:task-body>${escapeHtml(p1)}</ac:task-body></ac:task></ac:task-list>`);
+  html = html.replace(/- \[x\] (.+)/g, (_m, p1) => `<ac:task-list><ac:task><ac:task-status>complete</ac:task-status><ac:task-body>${escapeHtml(p1)}</ac:task-body></ac:task></ac:task-list>`);
 
   // Tables
   html = html.replace(
@@ -43,9 +47,9 @@ function markdownToConfluenceStorage(markdown: string): string {
     (match) => {
       const rows = match.trim().split("\n").filter((row) => !row.match(/^\|\s*---/));
       if (rows.length === 0) return match;
-      const headerCells = rows[0].split("|").filter(Boolean).map((c) => `<th>${c.trim()}</th>`).join("");
+      const headerCells = rows[0].split("|").filter(Boolean).map((c) => `<th>${escapeHtml(c.trim())}</th>`).join("");
       const bodyRows = rows.slice(1).map((row) => {
-        const cells = row.split("|").filter(Boolean).map((c) => `<td>${c.trim()}</td>`).join("");
+        const cells = row.split("|").filter(Boolean).map((c) => `<td>${escapeHtml(c.trim())}</td>`).join("");
         return `<tr>${cells}</tr>`;
       }).join("");
       return `<table><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
@@ -53,7 +57,7 @@ function markdownToConfluenceStorage(markdown: string): string {
   );
 
   // Blockquotes
-  html = html.replace(/^> (.+)$/gm, "<blockquote><p>$1</p></blockquote>");
+  html = html.replace(/^> (.+)$/gm, (_m, p1) => `<blockquote><p>${escapeHtml(p1)}</p></blockquote>`);
 
   // Paragraphs (lines that aren't already wrapped)
   const lines = html.split("\n");
@@ -61,7 +65,7 @@ function markdownToConfluenceStorage(markdown: string): string {
     const trimmed = line.trim();
     if (!trimmed) return "";
     if (trimmed.startsWith("<")) return trimmed;
-    return `<p>${trimmed}</p>`;
+    return `<p>${escapeHtml(trimmed)}</p>`;
   });
 
   return result.filter(Boolean).join("\n");
@@ -107,7 +111,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Document creation error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create document" },
+      { error: "Document creation failed. Check your Atlassian credentials and try again." },
       { status: 500 }
     );
   }

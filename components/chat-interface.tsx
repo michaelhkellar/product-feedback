@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, KeyboardEvent, useCallback } from "react";
+import { useState, useRef, useEffect, KeyboardEvent, useCallback, forwardRef, useImperativeHandle, memo, useMemo } from "react";
 import { useApiKeys } from "./api-key-provider";
 import { ChatMessage } from "@/lib/types";
 import { InteractionMode } from "@/lib/agent";
@@ -96,6 +96,23 @@ const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof Message
 interface ChatInterfaceProps {
   className?: string;
 }
+
+export interface ChatInterfaceHandle {
+  sendMessage: (msg: string) => void;
+}
+
+const remarkPlugins = [remarkGfm];
+
+const MemoizedMarkdown = memo(function MemoizedMarkdown({ content }: { content: string }) {
+  const processed = useMemo(() => fixMarkdown(content), [content]);
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <ReactMarkdown remarkPlugins={remarkPlugins}>
+        {processed}
+      </ReactMarkdown>
+    </div>
+  );
+});
 
 function fixMarkdown(text: string): string {
   if (!text.includes("|")) return text;
@@ -193,7 +210,7 @@ function TicketPreview({
 }: {
   content: string;
   sources: { type: string; id: string; title: string; url?: string }[];
-  onCreateTicket: (title: string, description: string, priority?: string) => void;
+  onCreateTicket: (title: string, description: string, priority?: string) => Promise<{ url: string; key: string } | { error: string }>;
   ticketProvider: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -205,14 +222,20 @@ function TicketPreview({
   const [description, setDescription] = useState(descMatch?.[1]?.trim() || content);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ url: string; key: string } | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const providerLabel = ticketProvider === "linear" ? "Linear" : "Jira";
 
   async function handleCreate() {
     setCreating(true);
+    setCreateError(null);
     try {
-      onCreateTicket(title, description, prioMatch?.[1]);
-      setCreated({ url: "#", key: "pending" });
+      const result = await onCreateTicket(title, description, prioMatch?.[1]);
+      if ("error" in result) {
+        setCreateError(result.error);
+      } else {
+        setCreated(result);
+      }
     } finally {
       setCreating(false);
     }
@@ -222,13 +245,21 @@ function TicketPreview({
     return (
       <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/10 text-green-600 text-xs font-medium">
         <Check className="w-3.5 h-3.5" />
-        Ticket created in {providerLabel}
+        Ticket created in {providerLabel}{created.key !== "Created" ? ` (${created.key})` : ""}
+        {created.url && created.url !== "#" && (
+          <a href={created.url} target="_blank" rel="noopener noreferrer" className="underline ml-1">View</a>
+        )}
       </div>
     );
   }
 
   return (
     <div className="mt-3 space-y-2">
+      {createError && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 text-red-600 text-xs font-medium">
+          {createError}
+        </div>
+      )}
       {editing ? (
         <div className="space-y-2 p-3 rounded-lg border border-border bg-card">
           <div>
@@ -365,7 +396,7 @@ function PrdPreview({
   );
 }
 
-export function ChatInterface({ className }: ChatInterfaceProps) {
+export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(function ChatInterface({ className }, ref) {
   const { keys, keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -415,16 +446,19 @@ export function ChatInterface({ className }: ChatInterfaceProps) {
         ? "\n\n*No API keys configured and demo data is off. Open Settings (gear icon) to add keys or enable demo data.*"
         : "";
 
-    setMessages([
-      {
-        id: "welcome",
-        role: "assistant",
-        content: `Welcome! I'm your **Customer Feedback Intelligence Agent**. I can analyze themes, identify churn risks, surface opportunities, write PRDs, and create tickets — all grounded in your feedback data.${sourceInfo}${demoInfo}
+    const welcomeContent = `Welcome! I'm your **Customer Feedback Intelligence Agent**. I can analyze themes, identify churn risks, surface opportunities, write PRDs, and create tickets — all grounded in your feedback data.${sourceInfo}${demoInfo}
 
-Try one of the suggested queries below to get started.`,
-        timestamp: new Date().toISOString(),
-      },
-    ]);
+Try one of the suggested queries below to get started.`;
+
+    setMessages((prev) => {
+      if (prev.length <= 1 && prev[0]?.id === "welcome") {
+        return [{ id: "welcome", role: "assistant" as const, content: welcomeContent, timestamp: new Date().toISOString() }];
+      }
+      if (prev.length === 0) {
+        return [{ id: "welcome", role: "assistant" as const, content: welcomeContent, timestamp: new Date().toISOString() }];
+      }
+      return prev.map((m) => m.id === "welcome" ? { ...m, content: welcomeContent } : m);
+    });
   }, [status, useDemoData, hasAnyKey, aiProviderLabel, isAIConfigured]);
 
   useEffect(() => {
@@ -439,9 +473,9 @@ Try one of the suggested queries below to get started.`,
     }
   }, [input]);
 
-  const handleCreateTicket = useCallback(async (title: string, description: string, priority?: string) => {
+  const handleCreateTicket = useCallback(async (title: string, description: string, priority?: string): Promise<{ url: string; key: string } | { error: string }> => {
     try {
-      await fetch("/api/tickets", {
+      const res = await fetch("/api/tickets", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...keyHeaders },
         body: JSON.stringify({
@@ -452,8 +486,12 @@ Try one of the suggested queries below to get started.`,
           teamId: "",
         }),
       });
+      const data = await res.json();
+      if (!res.ok) return { error: data?.error || `Failed (${res.status})` };
+      return { url: data.url || "#", key: data.key || data.id || "Created" };
     } catch (error) {
       console.error("Failed to create ticket:", error);
+      return { error: "Network error. Please check your connection and try again." };
     }
   }, [keyHeaders, keys.atlassianJiraFilter]);
 
@@ -468,6 +506,8 @@ Try one of the suggested queries below to get started.`,
       console.error("Failed to create Confluence page:", error);
     }
   }, [keyHeaders, keys.atlassianConfluenceFilter]);
+
+  useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessage(msg) }), []);
 
   async function sendMessage(text?: string) {
     const content = text || input.trim();
@@ -511,11 +551,24 @@ Try one of the suggested queries below to get started.`,
 
       const data = await res.json();
 
+      if (!res.ok) {
+        const errorText = data?.error || `Request failed (${res.status}). Please try again.`;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `error-${Date.now()}`,
+            role: "assistant",
+            content: `**Error:** ${errorText}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+        return;
+      }
+
       if (data.tokenEstimate?.total > 0) {
         setSessionTokens((prev) => prev + data.tokenEstimate.total);
       }
 
-      // Accumulate source IDs
       if (data.sources && Array.isArray(data.sources)) {
         setAccumulatedSourceIds((prev) => {
           const next = new Set(prev);
@@ -529,7 +582,7 @@ Try one of the suggested queries below to get started.`,
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: "assistant",
-        content: data.response,
+        content: data.response || "No response generated. Please try again.",
         timestamp: new Date().toISOString(),
         sources: data.sources,
       };
@@ -632,11 +685,7 @@ Try one of the suggested queries below to get started.`,
                     : "bg-card border border-border rounded-tl-sm max-w-full overflow-x-auto"
                 )}
               >
-                <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {fixMarkdown(msg.content)}
-                  </ReactMarkdown>
-                </div>
+                <MemoizedMarkdown content={msg.content} />
               </div>
 
               {/* Source badges */}
@@ -796,4 +845,4 @@ Try one of the suggested queries below to get started.`,
       </div>
     </div>
   );
-}
+});

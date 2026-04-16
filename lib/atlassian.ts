@@ -16,12 +16,26 @@ interface ResolvedAuth extends AtlassianAuth {
 
 const resolvedAuthCache = new Map<string, ResolvedAuth>();
 
+const VALID_DOMAIN_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/i;
+
+function normalizeDomain(raw: string): string | null {
+  const slug = raw
+    .replace(/^https?:\/\//, "")
+    .replace(/\.atlassian\.net\/?$/, "")
+    .trim()
+    .toLowerCase();
+  if (!VALID_DOMAIN_SLUG.test(slug)) return null;
+  return slug;
+}
+
 function getAuth(d?: string, e?: string, t?: string): AtlassianAuth | null {
   const domain = d || process.env.ATLASSIAN_DOMAIN;
   const email = e || process.env.ATLASSIAN_EMAIL;
   const token = t || process.env.ATLASSIAN_API_TOKEN;
   if (!domain || !email || !token) return null;
-  return { domain: domain.replace(/\.atlassian\.net\/?$/, "").replace(/^https?:\/\//, ""), email, token };
+  const slug = normalizeDomain(domain);
+  if (!slug) return null;
+  return { domain: slug, email, token };
 }
 
 function basicAuthHeader(auth: AtlassianAuth): string {

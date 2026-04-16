@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getData } from "@/lib/data-fetcher";
 import { generateInsights } from "@/lib/insights-generator";
-import { DEMO_INSIGHTS } from "@/lib/demo-data";
 import { AIProviderType } from "@/lib/ai-provider";
 
 export async function GET(req: NextRequest) {
@@ -29,19 +28,17 @@ export async function GET(req: NextRequest) {
     const hasAtl = !!(atlDomain && atlEmail && atlToken) || !!(process.env.ATLASSIAN_DOMAIN && process.env.ATLASSIAN_EMAIL && process.env.ATLASSIAN_API_TOKEN);
     const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasAtl;
 
-    if (!hasAnyLiveKey && useDemoData) {
-      return NextResponse.json({ insights: DEMO_INSIGHTS, isDemo: true });
-    }
     if (!hasAnyLiveKey && !useDemoData) {
       return NextResponse.json({ insights: [], isDemo: false });
     }
 
+    const isDemo = !hasAnyLiveKey && useDemoData;
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
     const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey);
     const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
 
-    return NextResponse.json({ insights, isDemo: false });
+    return NextResponse.json({ insights, isDemo });
   } catch (error) {
     console.error("Insights API error:", error);
     return NextResponse.json({ insights: [], isDemo: false, error: "Failed to generate insights" }, { status: 500 });

@@ -5,13 +5,36 @@ import { ContextMode } from "@/lib/api-keys";
 import { AIProviderType } from "@/lib/ai-provider";
 import { generateProgrammaticInsights } from "@/lib/insights-generator";
 
+const MAX_MESSAGE_LENGTH = 10_000;
+const MAX_HISTORY_ITEMS = 50;
+const MAX_SOURCE_IDS = 200;
+const CHAT_COOLDOWN_MS = 2_000;
+const chatLastRequest = new Map<string, number>();
+
 export async function POST(req: NextRequest) {
   try {
+    const clientKey = req.headers.get("x-forwarded-for") || req.ip || "unknown";
+    const now = Date.now();
+    const lastTime = chatLastRequest.get(clientKey) || 0;
+    if (now - lastTime < CHAT_COOLDOWN_MS) {
+      return NextResponse.json({ error: "Please wait a moment before sending another message" }, { status: 429 });
+    }
+    chatLastRequest.set(clientKey, now);
+
     const body = await req.json();
-    const { message, history, useDemoData, contextMode, mode: interactionMode, accumulatedSourceIds } = body;
+    const { message, useDemoData, contextMode, mode: interactionMode } = body;
+    let { history, accumulatedSourceIds } = body;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
+    }
+
+    const trimmedMessage = message.slice(0, MAX_MESSAGE_LENGTH);
+    if (Array.isArray(history)) {
+      history = history.slice(-MAX_HISTORY_ITEMS);
+    }
+    if (Array.isArray(accumulatedSourceIds)) {
+      accumulatedSourceIds = accumulatedSourceIds.slice(0, MAX_SOURCE_IDS);
     }
 
     const keys = {
@@ -54,7 +77,7 @@ export async function POST(req: NextRequest) {
     const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket") ? interactionMode : "summarize";
     const sourceIds = Array.isArray(accumulatedSourceIds) ? accumulatedSourceIds : undefined;
 
-    const result = await chat(message, Array.isArray(history) ? history : [], dataWithInsights, keys, ctxMode, chatMode, sourceIds);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, keys, ctxMode, chatMode, sourceIds);
 
     return NextResponse.json(result);
   } catch (error) {

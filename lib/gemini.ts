@@ -50,10 +50,20 @@ async function tryGenerate(
 export async function generateWithGemini(
   systemPrompt: string,
   userPrompt: string,
-  overrideKey?: string
+  overrideKey?: string,
+  overrideModel?: string
 ): Promise<string | null> {
   const client = getClient(overrideKey);
   if (!client) return null;
+
+  if (overrideModel) {
+    try {
+      return await tryGenerate(client, overrideModel, systemPrompt, userPrompt);
+    } catch (err) {
+      console.error(`Gemini API error (${overrideModel}):`, err);
+      return null;
+    }
+  }
 
   if (resolvedModel) {
     try {

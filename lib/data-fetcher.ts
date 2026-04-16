@@ -5,6 +5,7 @@ import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atla
 import { getPendoOverview, isPendoConfigured } from "./pendo";
 import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
 import { AnalyticsProviderType } from "./api-keys";
+import { createHash } from "crypto";
 import {
   DEMO_FEEDBACK,
   DEMO_PRODUCTBOARD_FEATURES,
@@ -23,6 +24,10 @@ interface CachedData {
 const dataCache = new Map<string, CachedData>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+function shortHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
 function cacheKey(
   pbKey: string | undefined,
   attKey: string | undefined,
@@ -31,9 +36,21 @@ function cacheKey(
   demo: boolean,
   atlJiraFilter?: string,
   atlConfluenceFilter?: string,
-  amplitudeKey?: string
+  amplitudeKey?: string,
+  analyticsProvider?: string
 ): string {
-  return `${pbKey ? "pb" : ""}:${attKey ? "att" : ""}:${pendoKey ? "pendo" : ""}:${amplitudeKey ? "amp" : ""}:${atlDomain ? "atl" : ""}:${demo}:${atlJiraFilter || ""}:${atlConfluenceFilter || ""}`;
+  const parts = [
+    pbKey ? `pb:${shortHash(pbKey)}` : "",
+    attKey ? `att:${shortHash(attKey)}` : "",
+    pendoKey ? `pendo:${shortHash(pendoKey)}` : "",
+    amplitudeKey ? `amp:${shortHash(amplitudeKey)}` : "",
+    atlDomain ? `atl:${shortHash(atlDomain)}` : "",
+    `demo:${demo}`,
+    `ap:${analyticsProvider || "pendo"}`,
+    atlJiraFilter || "",
+    atlConfluenceFilter || "",
+  ];
+  return parts.join("|");
 }
 
 async function fetchLiveData(
@@ -145,7 +162,7 @@ export async function getData(
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], pendoOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 

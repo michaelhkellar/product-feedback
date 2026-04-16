@@ -46,7 +46,16 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
 
+let cachedStore: { fingerprint: string; store: InMemoryVectorStore } | null = null;
+
+function dataFingerprint(data: AgentData): string {
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}`;
+}
+
 function buildStore(data: AgentData): InMemoryVectorStore {
+  const fp = dataFingerprint(data);
+  if (cachedStore && cachedStore.fingerprint === fp) return cachedStore.store;
+
   const store = new InMemoryVectorStore();
   if (data.feedback.length) store.addFeedback(data.feedback);
   if (data.features.length) store.addFeatures(data.features);
@@ -55,6 +64,7 @@ function buildStore(data: AgentData): InMemoryVectorStore {
   if (data.jiraIssues.length) store.addJiraIssues(data.jiraIssues);
   if (data.confluencePages.length) store.addConfluencePages(data.confluencePages);
   store.buildIndex();
+  cachedStore = { fingerprint: fp, store };
   return store;
 }
 
@@ -481,6 +491,43 @@ function buildFocusedContext(data: AgentData, searchResults: string): string {
   return parts.join("\n");
 }
 
+function buildComputedCounts(data: AgentData): string {
+  const lines: string[] = ["\n---\nCOMPUTED COUNTS (use these exact numbers — do not estimate from context):"];
+
+  lines.push(`Total feedback items: ${data.feedback.length}`);
+  lines.push(`Total features: ${data.features.length}`);
+  lines.push(`Total calls: ${data.calls.length}`);
+  lines.push(`Total Jira issues: ${data.jiraIssues.length}`);
+  lines.push(`Total Confluence pages: ${data.confluencePages.length}`);
+  lines.push(`Total insights: ${data.insights.length}`);
+
+  const bySource: Record<string, number> = {};
+  const byPriority: Record<string, number> = {};
+  const bySentiment: Record<string, number> = {};
+  const byTheme: Record<string, number> = {};
+  for (const fb of data.feedback) {
+    bySource[fb.source] = (bySource[fb.source] || 0) + 1;
+    byPriority[fb.priority] = (byPriority[fb.priority] || 0) + 1;
+    bySentiment[fb.sentiment] = (bySentiment[fb.sentiment] || 0) + 1;
+    for (const t of fb.themes) byTheme[t] = (byTheme[t] || 0) + 1;
+  }
+
+  lines.push(`Feedback by source: ${Object.entries(bySource).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  lines.push(`Feedback by priority: ${Object.entries(byPriority).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  lines.push(`Feedback by sentiment: ${Object.entries(bySentiment).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+  const topThemes = Object.entries(byTheme).sort(([, a], [, b]) => b - a).slice(0, 15);
+  lines.push(`Top feedback themes: ${topThemes.map(([k, v]) => `${k}=${v}`).join(", ")}`);
+
+  const byStatus: Record<string, number> = {};
+  for (const f of data.features) byStatus[f.status] = (byStatus[f.status] || 0) + 1;
+  lines.push(`Features by status: ${Object.entries(byStatus).map(([k, v]) => `${k}=${v}`).join(", ")}`);
+
+  const companies = new Set(data.feedback.map((fb) => fb.company).filter(Boolean));
+  lines.push(`Distinct companies in feedback: ${companies.size}`);
+
+  return lines.join("\n");
+}
+
 function shortDate(item: Record<string, unknown>): string {
   const d = parseDate(item);
   if (!d) return "";
@@ -680,18 +727,19 @@ export async function chat(
 
   const matchedInsightIds = results.filter((r) => r.document.type === "insight").map((r) => r.document.id);
   const drilldownContext = buildInsightDrilldownContext(userMessage, data, matchedInsightIds, keys);
-  const searchContext = [searchParts.join("\n"), drilldownContext, pendoLookup?.context || ""].filter(Boolean).join("\n");
 
   // For PRD/Ticket modes, always use deep context + full history
   const isPrdOrTicket = mode === "prd" || mode === "ticket";
 
-  // Include accumulated sources context for PRD/Ticket modes
+  // Include accumulated sources context for PRD/Ticket modes — must happen before searchContext is built
   if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
     const accDetails = lookupDetails(accumulatedSourceIds, data, true, keys);
     if (accDetails.length > 0) {
       searchParts.push("Previously referenced items from conversation:\n" + accDetails.join("\n"));
     }
   }
+
+  const searchContext = [searchParts.join("\n"), drilldownContext, pendoLookup?.context || ""].filter(Boolean).join("\n");
 
   const effectiveContextMode = isPrdOrTicket
     ? "deep"
@@ -708,6 +756,10 @@ export async function chat(
     default: context = buildFocusedContext(data, searchContext);
   }
 
+  if (countQuery) {
+    context += buildComputedCounts(data);
+  }
+
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + (data.pendoOverview ? data.pendoOverview.totalPages + data.pendoOverview.totalFeatures : 0);
 
   // For PRD/Ticket modes, use full conversation history; for summarize use last 3 turns
@@ -719,7 +771,12 @@ export async function chat(
   const systemPrompt = getSystemPrompt(mode);
   const formatInstructions = getFormatInstructions(mode);
 
-  const prompt = `${context}
+  const evidencePack = sources.length > 0
+    ? "\n---\nAvailable Evidence (cite by ID only — do not reference sources not in this list):\n" +
+      sources.map((s, i) => `[${i + 1}] ${s.id}: ${s.title} (${s.type})`).join("\n")
+    : "";
+
+  const prompt = `${context}${evidencePack}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
 

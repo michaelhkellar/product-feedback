@@ -12,8 +12,8 @@ export interface AIProvider {
 // --- Gemini adapter (wraps existing lib/gemini.ts) ---
 
 const geminiProvider: AIProvider = {
-  async generate(systemPrompt, userPrompt, key, _model) {
-    return generateWithGemini(systemPrompt, userPrompt, key);
+  async generate(systemPrompt, userPrompt, key, model) {
+    return generateWithGemini(systemPrompt, userPrompt, key, model || undefined);
   },
   async listModels(_key) {
     return [

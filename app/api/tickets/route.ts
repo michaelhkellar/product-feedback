@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("Ticket creation error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to create ticket" },
+      { error: "Ticket creation failed. Check your credentials and try again." },
       { status: 500 }
     );
   }

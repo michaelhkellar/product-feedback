@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from "react";
 import { ApiKeyState, ApiKeyStatus, loadKeys, saveKeys, clearKeys, buildKeyHeaders } from "@/lib/api-keys";
 
 interface ApiKeyContextValue {
@@ -101,8 +101,8 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
     void clearKeys();
   }, []);
 
-  const keyHeaders = buildKeyHeaders(keys);
-  const hasAnyKey = !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey);
+  const keyHeaders = useMemo(() => buildKeyHeaders(keys), [keys]);
+  const hasAnyKey = useMemo(() => !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey), [keys]);
 
   return (
     <ApiKeyContext.Provider

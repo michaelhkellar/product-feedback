@@ -1,5 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const ENV_KEY_VARS = [
+  "GEMINI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "PRODUCTBOARD_API_TOKEN",
+  "ATTENTION_API_KEY",
+  "PENDO_INTEGRATION_KEY",
+  "AMPLITUDE_API_KEY",
+  "ATLASSIAN_API_TOKEN",
+  "LINEAR_API_KEY",
+];
+
+function hasAnyEnvKey(): boolean {
+  return ENV_KEY_VARS.some((v) => !!process.env[v]);
+}
+
 function getExpectedCredentials(): { username: string; password: string } | null {
   const password = process.env.APP_BASIC_AUTH_PASSWORD || process.env.BASIC_AUTH_PASSWORD;
   if (!password) return null;
@@ -20,9 +36,21 @@ function unauthorized(): NextResponse {
   });
 }
 
+function authMisconfigured(): NextResponse {
+  return new NextResponse(
+    "Configuration error: API keys are set in environment variables but APP_BASIC_AUTH_PASSWORD is not configured. " +
+    "Set APP_BASIC_AUTH_PASSWORD to protect your credentials, or remove all API keys from the environment to run in demo-only mode.",
+    { status: 503, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export function middleware(req: NextRequest) {
   const expected = getExpectedCredentials();
-  if (!expected) return NextResponse.next();
+
+  if (!expected) {
+    if (hasAnyEnvKey()) return authMisconfigured();
+    return NextResponse.next();
+  }
 
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Basic ")) return unauthorized();

@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { ApiKeyProvider } from "@/components/api-key-provider";
-import { ChatInterface } from "@/components/chat-interface";
+import { ChatInterface, ChatInterfaceHandle } from "@/components/chat-interface";
 import { InsightsPanel } from "@/components/insights-panel";
 import { SourcePanel } from "@/components/source-panel";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -20,24 +20,10 @@ function AppContent() {
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const chatRef = useRef<{ sendMessage: (msg: string) => void }>(null);
+  const chatRef = useRef<ChatInterfaceHandle>(null);
 
   function handleQueryFromPanel(query: string) {
-    const textarea = document.querySelector("textarea");
-    if (textarea) {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        "value"
-      )?.set;
-      nativeInputValueSetter?.call(textarea, query);
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-      setTimeout(() => {
-        const sendBtn = textarea
-          .closest("div")
-          ?.querySelector("button:last-child");
-        if (sendBtn) (sendBtn as HTMLButtonElement).click();
-      }, 100);
-    }
+    chatRef.current?.sendMessage(query);
   }
 
   return (
@@ -108,7 +94,7 @@ function AppContent() {
         </div>
 
         <div className="flex-1 min-w-0">
-          <ChatInterface />
+          <ChatInterface ref={chatRef} />
         </div>
 
         <div

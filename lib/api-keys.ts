@@ -224,9 +224,7 @@ export async function loadKeys(): Promise<ApiKeyState> {
   if (typeof window === "undefined") return { ...EMPTY_KEYS };
 
   if (!supportsSecureStorage()) {
-    const legacy = loadLegacyKeys();
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
-    return legacy;
+    return loadLegacyKeys();
   }
 
   try {
@@ -246,12 +244,11 @@ export async function loadKeys(): Promise<ApiKeyState> {
     const legacy = loadLegacyKeys();
     if (hasStoredValues(legacy)) {
       await saveKeys(legacy);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
     }
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
     return legacy;
   } catch {
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
-    return { ...EMPTY_KEYS };
+    return loadLegacyKeys();
   }
 }
 
