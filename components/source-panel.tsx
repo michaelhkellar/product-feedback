@@ -7,6 +7,8 @@ import {
   DEMO_FEEDBACK,
   DEMO_PRODUCTBOARD_FEATURES,
   DEMO_ATTENTION_CALLS,
+  DEMO_JIRA_ISSUES,
+  DEMO_CONFLUENCE_PAGES,
 } from "@/lib/demo-data";
 import {
   FeedbackItem,
@@ -169,13 +171,15 @@ export function SourcePanel({
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
+        setJiraIssues(DEMO_JIRA_ISSUES);
+        setConfluencePages(DEMO_CONFLUENCE_PAGES);
       } else {
         setFeedback(newFeedback);
         setFeatures(newFeatures);
         setCalls(newCalls);
+        setJiraIssues(newJira);
+        setConfluencePages(newConfluence);
       }
-      setJiraIssues(newJira);
-      setConfluencePages(newConfluence);
       setPendoFindings(newPendoFindings);
       setPendoItemCount(newPendoCount);
       setDataIsDemo(isDemo && useDemoData && !atlConnected);
@@ -216,6 +220,8 @@ export function SourcePanel({
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
+        setJiraIssues(DEMO_JIRA_ISSUES);
+        setConfluencePages(DEMO_CONFLUENCE_PAGES);
         setPendoFindings([]);
         setDataSources(DEMO_DATA_SOURCES);
         setDataIsDemo(true);

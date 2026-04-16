@@ -10,6 +10,9 @@ import {
   DEMO_PRODUCTBOARD_FEATURES,
   DEMO_ATTENTION_CALLS,
   DEMO_INSIGHTS,
+  DEMO_JIRA_ISSUES,
+  DEMO_CONFLUENCE_PAGES,
+  DEMO_PENDO_OVERVIEW,
 } from "./demo-data";
 
 interface CachedData {
@@ -50,9 +53,9 @@ async function fetchLiveData(
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
   let calls = useDemoFallback ? [...DEMO_ATTENTION_CALLS] : [];
   const insights = useDemoFallback ? [...DEMO_INSIGHTS] : [];
-  let jiraIssues: AgentData["jiraIssues"] = [];
-  let confluencePages: AgentData["confluencePages"] = [];
-  let pendoOverview: AgentData["pendoOverview"] = null;
+  let jiraIssues: AgentData["jiraIssues"] = useDemoFallback ? [...DEMO_JIRA_ISSUES] : [];
+  let confluencePages: AgentData["confluencePages"] = useDemoFallback ? [...DEMO_CONFLUENCE_PAGES] : [];
+  let pendoOverview: AgentData["pendoOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
 
   const fetches: Promise<void>[] = [];
 

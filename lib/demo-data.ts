@@ -4,7 +4,10 @@ import {
   AttentionCall,
   Insight,
   DataSourceStatus,
+  JiraIssue,
+  ConfluencePage,
 } from "./types";
+import { PendoUsageOverview } from "./pendo";
 
 // Synthetic demo data only. These names, companies, timelines, and business details
 // are intentionally fictionalized for safe public sharing and product demos.
@@ -21,7 +24,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["performance", "dashboard", "enterprise"],
     date: "2026-02-28",
     priority: "critical",
-    metadata: { ticketId: "ZD-4521", plan: "Enterprise" },
+    metadata: { ticketId: "ZD-4521", plan: "Enterprise", userEmail: "avery@examplecorp.demo" },
   },
   {
     id: "fb-002",
@@ -35,7 +38,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["reporting", "ux", "feature-request"],
     date: "2026-02-27",
     priority: "low",
-    metadata: { plan: "Pro" },
+    metadata: { plan: "Pro", userEmail: "jordan@northwind.demo" },
   },
   {
     id: "fb-003",
@@ -49,7 +52,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["sso", "authentication", "reliability", "churn-risk"],
     date: "2026-02-26",
     priority: "critical",
-    metadata: { plan: "Enterprise", accountTier: "Strategic" },
+    metadata: { plan: "Enterprise", accountTier: "Strategic", userEmail: "casey@samplebank.demo" },
   },
   {
     id: "fb-004",
@@ -63,7 +66,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["api", "integration", "developer-experience"],
     date: "2026-02-25",
     priority: "high",
-    metadata: { plan: "Enterprise", integration: "REST API" },
+    metadata: { plan: "Enterprise", integration: "REST API", sourceUrl: "https://demo.productboard.com/notes/fb-004", userEmail: "morgan@demosync.demo" },
   },
   {
     id: "fb-005",
@@ -77,7 +80,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["onboarding", "ux", "training", "growth"],
     date: "2026-02-24",
     priority: "high",
-    metadata: { callType: "QBR", accountSize: "200 seats" },
+    metadata: { callType: "QBR", accountSize: "200 seats", userEmail: "taylor@demoscale.demo" },
   },
   {
     id: "fb-006",
@@ -91,7 +94,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["mobile", "bug", "android", "analytics"],
     date: "2026-02-23",
     priority: "critical",
-    metadata: { ticketId: "ZD-4498", devices: "Android 14" },
+    metadata: { ticketId: "ZD-4498", devices: "Android 14", userEmail: "jamie@fieldops.demo" },
   },
   {
     id: "fb-007",
@@ -105,7 +108,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["permissions", "rbac", "upsell", "enterprise"],
     date: "2026-02-22",
     priority: "medium",
-    metadata: { plan: "Pro", potentialUpgrade: "Enterprise" },
+    metadata: { plan: "Pro", potentialUpgrade: "Enterprise", userEmail: "riley@demomarket.demo" },
   },
   {
     id: "fb-008",
@@ -133,7 +136,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["compliance", "export", "data", "enterprise", "churn-risk"],
     date: "2026-02-20",
     priority: "high",
-    metadata: { plan: "Enterprise", renewalWindow: "Upcoming" },
+    metadata: { plan: "Enterprise", renewalWindow: "Upcoming", sourceUrl: "https://demo.productboard.com/notes/fb-009", userEmail: "sam@samplebank.demo" },
   },
   {
     id: "fb-010",
@@ -147,7 +150,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["expansion", "sso", "admin", "upsell"],
     date: "2026-02-19",
     priority: "high",
-    metadata: { currentSeats: "Pilot", potentialSeats: "Multi-team", accountTier: "Strategic" },
+    metadata: { currentSeats: "Pilot", potentialSeats: "Multi-team", accountTier: "Strategic", userEmail: "parker@samplebank.demo" },
   },
   {
     id: "fb-011",
@@ -161,7 +164,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     themes: ["webhooks", "reliability", "api", "integration"],
     date: "2026-02-18",
     priority: "high",
-    metadata: { ticketId: "ZD-4467", failureRate: "noticeable" },
+    metadata: { ticketId: "ZD-4467", failureRate: "noticeable", userEmail: "cameron@demoauto.demo" },
   },
   {
     id: "fb-012",
@@ -176,6 +179,90 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     date: "2026-02-17",
     priority: "critical",
     metadata: { source: "synthetic-board-meeting" },
+  },
+  {
+    id: "fb-013",
+    source: "zendesk",
+    title: "Search returns irrelevant results and is painfully slow",
+    content:
+      "Our team relies on search to find past feedback and feature requests across thousands of records. In this demo scenario, queries take 8-10 seconds and the results are often unrelated to what was typed. We need full-text search with filters for source, date range, and sentiment.",
+    customer: "Drew Example",
+    company: "Northwind Demo",
+    sentiment: "negative",
+    themes: ["search", "performance", "ux"],
+    date: "2026-03-02",
+    priority: "high",
+    metadata: { ticketId: "ZD-4534", plan: "Pro", userEmail: "drew@northwind.demo" },
+  },
+  {
+    id: "fb-014",
+    source: "intercom",
+    title: "Notification overload — need better controls",
+    content:
+      "We get hundreds of notifications a day and there is no way to filter or customize them. In this demo scenario the team has started ignoring all notifications, which means critical alerts get missed. We need per-channel controls, digest mode, and severity-based routing.",
+    customer: "Alex Placeholder",
+    company: "DemoScale Co",
+    sentiment: "negative",
+    themes: ["notifications", "ux", "productivity"],
+    date: "2026-03-03",
+    priority: "medium",
+    metadata: { plan: "Growth", userEmail: "alex@demoscale.demo" },
+  },
+  {
+    id: "fb-015",
+    source: "slack",
+    title: "Lost another deal — prospect wanted native Salesforce integration",
+    content:
+      "Synthetic internal note: prospect evaluated us against Competitor Beta. We scored higher on analytics and UI but lost because Competitor Beta has a native Salesforce integration and a marketplace with 40+ connectors. Our integration story is too thin for enterprise buyers.",
+    customer: "Internal — Demo Sales",
+    company: "Internal (Synthetic)",
+    sentiment: "negative",
+    themes: ["integrations", "competitive", "salesforce", "churn-risk"],
+    date: "2026-03-01",
+    priority: "high",
+    metadata: { source: "internal-demo", competitor: "Competitor Beta" },
+  },
+  {
+    id: "fb-016",
+    source: "intercom",
+    title: "Need team collaboration — comments, @mentions, shared views",
+    content:
+      "Right now there is no way for our product and CS teams to collaborate inside the tool. In this demo scenario we are copying and pasting feedback into Slack threads, which loses context. We need inline comments, @mentions on feedback items, shared saved views, and activity logs.",
+    customer: "Sage Sample",
+    company: "ExampleCorp",
+    sentiment: "mixed",
+    themes: ["collaboration", "ux", "feature-request", "enterprise"],
+    date: "2026-03-04",
+    priority: "medium",
+    metadata: { plan: "Enterprise", userEmail: "sage@examplecorp.demo" },
+  },
+  {
+    id: "fb-017",
+    source: "productboard",
+    title: "Custom fields and workflows for different departments",
+    content:
+      "Our product, CS, and engineering teams all use this tool differently in the demo scenario. Product wants priority scoring and roadmap views. CS wants customer health and sentiment dashboards. Engineering wants severity and component tagging. We need configurable fields and workflow states per team.",
+    customer: "Quinn Example",
+    company: "DemoMarket Solutions",
+    sentiment: "mixed",
+    themes: ["customization", "workflows", "enterprise", "feature-request"],
+    date: "2026-03-05",
+    priority: "medium",
+    metadata: { plan: "Pro", sourceUrl: "https://demo.productboard.com/notes/fb-017", userEmail: "quinn@demomarket.demo" },
+  },
+  {
+    id: "fb-018",
+    source: "zendesk",
+    title: "Charts are too basic — need scatter plots, funnels, cohort analysis",
+    content:
+      "The current chart types are limited to bar, line, and pie. In this demo scenario our data team needs scatter plots for correlation analysis, funnel charts for conversion tracking, and cohort analysis for retention. Without these, we export to Looker which defeats the purpose.",
+    customer: "Rowan Placeholder",
+    company: "DemoSync Labs",
+    sentiment: "negative",
+    themes: ["analytics", "reporting", "data-visualization", "feature-request"],
+    date: "2026-03-06",
+    priority: "medium",
+    metadata: { ticketId: "ZD-4547", plan: "Enterprise", userEmail: "rowan@demosync.demo" },
   },
 ];
 
@@ -259,6 +346,26 @@ export const DEMO_PRODUCTBOARD_FEATURES: ProductboardFeature[] = [
     votes: 389,
     customerRequests: 64,
     themes: ["sso", "authentication", "reliability", "enterprise"],
+  },
+  {
+    id: "pb-009",
+    name: "Notification Center & Digest Controls",
+    description:
+      "Centralized notification management with per-channel controls, severity routing, daily/weekly digest mode, and quiet hours. Replace the current all-or-nothing notification system.",
+    status: "new",
+    votes: 291,
+    customerRequests: 83,
+    themes: ["notifications", "ux", "productivity"],
+  },
+  {
+    id: "pb-010",
+    name: "Custom Report Builder v1",
+    description:
+      "First version of the drag-and-drop custom report builder shipped. Supports bar, line, and pie charts with basic filtering. Scheduled email delivery and additional chart types planned for v2.",
+    status: "done",
+    votes: 756,
+    customerRequests: 312,
+    themes: ["reporting", "analytics", "ux"],
   },
 ];
 
@@ -355,7 +462,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
     ],
     actionItems: [
       "Document all competitive losses citing AI gap",
-      "Create competitive battle card for CompetitorX",
+      "Create competitive battle card for Competitor Alpha",
       "Escalate AI feature priority to product leadership",
     ],
     themes: ["competitive", "ai", "product-gap", "churn-risk"],
@@ -392,7 +499,284 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
     ],
     themes: ["performance", "dashboard", "enterprise", "escalation"],
   },
+  {
+    id: "ac-005",
+    title: "Upsell Discovery — DemoMarket Solutions",
+    date: "2026-03-04",
+    duration: "30 min",
+    participants: ["Riley Sample (DemoMarket)", "Quinn Example (DemoMarket)", "Our AE: Sage Closer"],
+    summary:
+      "Synthetic upsell call with DemoMarket Solutions. They are on the Pro plan but need Enterprise features — specifically RBAC and custom workflows. Two department heads joined to describe conflicting needs: Product wants priority scoring while CS wants sentiment dashboards. They confirmed willingness to upgrade if custom roles and configurable fields ship this quarter.",
+    keyMoments: [
+      {
+        timestamp: "04:00",
+        text: "We have 3 departments using this tool and everyone sees everything — it's chaos",
+        sentiment: "negative",
+      },
+      {
+        timestamp: "14:30",
+        text: "Product team needs different fields and views than CS — one size doesn't fit all",
+        sentiment: "mixed",
+      },
+      {
+        timestamp: "25:00",
+        text: "If you can give us custom roles and per-team views, we'll upgrade to Enterprise this quarter",
+        sentiment: "positive",
+      },
+    ],
+    actionItems: [
+      "Send RBAC beta access timeline to DemoMarket",
+      "Share custom fields roadmap with both department leads",
+      "Schedule Enterprise upgrade scoping call for next week",
+    ],
+    themes: ["permissions", "rbac", "customization", "upsell", "enterprise"],
+  },
+  {
+    id: "ac-006",
+    title: "Post-Churn Interview — BrightPath Analytics",
+    date: "2026-03-07",
+    duration: "20 min",
+    participants: ["Hayden Former (BrightPath)", "Our CSM: Alex Retention"],
+    summary:
+      "Synthetic post-churn interview with BrightPath Analytics, a former mid-market customer. They churned after 14 months and switched to Competitor Alpha. Primary reasons: onboarding was too difficult for their growing team, the lack of AI features made manual categorization unsustainable at scale, and they wanted a Salesforce integration that didn't exist. They left on good terms and would reconsider if those gaps are addressed.",
+    keyMoments: [
+      {
+        timestamp: "03:00",
+        text: "We loved the core product but couldn't get new team members up to speed fast enough",
+        sentiment: "mixed",
+      },
+      {
+        timestamp: "09:00",
+        text: "Manually categorizing 200+ feedback items a week just wasn't sustainable — Competitor Alpha auto-tags everything",
+        sentiment: "negative",
+      },
+      {
+        timestamp: "16:00",
+        text: "If you ship AI categorization and a Salesforce connector, honestly we'd come back",
+        sentiment: "positive",
+      },
+    ],
+    actionItems: [
+      "Add BrightPath to win-back list when AI features ship",
+      "Document churn reasons for product leadership review",
+      "Include Salesforce integration in competitive gap analysis",
+    ],
+    themes: ["churn", "onboarding", "ai", "integrations", "competitive"],
+  },
 ];
+
+export const DEMO_JIRA_ISSUES: JiraIssue[] = [
+  {
+    id: "jira-001",
+    key: "CX-1234",
+    summary: "SSO disconnection affecting SampleBank — 3rd occurrence this month",
+    description:
+      "SampleBank's SSO (Okta) drops authentication intermittently. Users are locked out for 2-4 hours each time. IT team has to manually re-authenticate. This is a strategic account with expansion budget contingent on reliability. See ZD tickets and renewal call notes for full context.",
+    status: "In Progress",
+    issueType: "Bug",
+    priority: "Critical",
+    assignee: "Demo Engineer A",
+    reporter: "Morgan Support",
+    labels: ["sso", "enterprise", "strategic-account", "p0"],
+    created: "2026-02-26",
+    updated: "2026-03-05",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-002",
+    key: "CX-1245",
+    summary: "Dashboard performance regression after v3.2 release",
+    description:
+      "Dashboard load times increased from ~2s to 15-20s after the v3.2 release for accounts with large datasets. Primarily affecting ExampleCorp and other Enterprise accounts with 50k+ records. Engineering identified a missing query index as likely cause.",
+    status: "In Progress",
+    issueType: "Bug",
+    priority: "Critical",
+    assignee: "Demo Engineer B",
+    reporter: "Avery Support",
+    labels: ["performance", "dashboard", "regression", "p0"],
+    created: "2026-02-28",
+    updated: "2026-03-04",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-003",
+    key: "CX-1256",
+    summary: "Mobile app crash on Android 14 — chart rendering",
+    description:
+      "The Android app crashes immediately when opening any chart view on Android 14+ devices. Reproducible 100% of the time. The chart rendering library has a known incompatibility with Android 14's new graphics API. Workaround: use the web app on mobile browser.",
+    status: "In Progress",
+    issueType: "Bug",
+    priority: "High",
+    assignee: "Demo Engineer C",
+    reporter: "Jamie Support",
+    labels: ["mobile", "android", "crash", "charts"],
+    created: "2026-02-23",
+    updated: "2026-03-01",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-004",
+    key: "CX-1267",
+    summary: "API rate limit increase request — DemoSync Labs integration blocked",
+    description:
+      "DemoSync Labs needs 1000+ req/min for their real-time sync integration. Current limit is 100 req/min on Enterprise. They are considering building a competing internal tool if we can't accommodate this. Related to webhook reliability issues as well.",
+    status: "Open",
+    issueType: "Story",
+    priority: "High",
+    assignee: "Unassigned",
+    reporter: "Morgan Support",
+    labels: ["api", "rate-limits", "enterprise", "integration"],
+    created: "2026-02-25",
+    updated: "2026-02-25",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-005",
+    key: "CX-1278",
+    summary: "Onboarding documentation outdated — new users confused",
+    description:
+      "Multiple customers report that the onboarding docs reference features that have been renamed or moved. Screenshots are from 2 major versions ago. DemoScale Co specifically called this out in their QBR as contributing to slow user ramp time.",
+    status: "Open",
+    issueType: "Task",
+    priority: "Medium",
+    assignee: "Demo Tech Writer",
+    reporter: "Taylor Support",
+    labels: ["onboarding", "documentation", "ux"],
+    created: "2026-02-24",
+    updated: "2026-02-27",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-006",
+    key: "CX-1289",
+    summary: "Bulk export times out for datasets over 100k rows",
+    description:
+      "SampleBank's compliance team needs to export all interaction data but the export job times out at approximately 100k rows. They need this for SOC 2 audit happening next quarter. No workaround available — they are currently exporting in chunks manually.",
+    status: "Open",
+    issueType: "Bug",
+    priority: "High",
+    assignee: "Unassigned",
+    reporter: "Sam Support",
+    labels: ["export", "compliance", "enterprise", "performance"],
+    created: "2026-02-20",
+    updated: "2026-02-22",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-007",
+    key: "CX-1301",
+    summary: "Webhook events silently dropped — no retry or dead letter queue",
+    description:
+      "Demo Automations reports that a significant percentage of webhook events are never delivered. There is no retry mechanism and no way to see what was dropped. This breaks their downstream automation pipeline and requires manual reconciliation.",
+    status: "Open",
+    issueType: "Bug",
+    priority: "High",
+    assignee: "Unassigned",
+    reporter: "Cameron Support",
+    labels: ["webhooks", "reliability", "api", "integration"],
+    created: "2026-02-18",
+    updated: "2026-02-20",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+  {
+    id: "jira-008",
+    key: "CX-1315",
+    summary: "Search relevance poor — customers can't find their own feedback",
+    description:
+      "Multiple customers on Pro and Enterprise plans report that search returns irrelevant results and takes 8-10 seconds for large accounts. Northwind Demo provided specific examples of searches that return zero results for known items. Need full-text search with filtering.",
+    status: "Open",
+    issueType: "Story",
+    priority: "Medium",
+    assignee: "Unassigned",
+    reporter: "Drew Support",
+    labels: ["search", "ux", "performance"],
+    created: "2026-03-02",
+    updated: "2026-03-03",
+    project: "CX",
+    resolution: "Unresolved",
+  },
+];
+
+export const DEMO_CONFLUENCE_PAGES: ConfluencePage[] = [
+  {
+    id: "conf-001",
+    title: "Product Roadmap — Q2 2026",
+    excerpt:
+      "Quarterly roadmap with three tracks: Platform Reliability (SSO, performance, webhooks), Enterprise Features (RBAC, compliance export, custom fields), and AI & Intelligence (feedback summarization, auto-categorization, smart search). Priority order based on customer impact and revenue opportunity.",
+    space: "PRODUCT",
+    lastModified: "2026-03-01",
+    author: "Demo PM Lead",
+    url: "https://demo.atlassian.net/wiki/spaces/PRODUCT/pages/conf-001",
+  },
+  {
+    id: "conf-002",
+    title: "SSO Architecture & Troubleshooting Guide",
+    excerpt:
+      "Technical documentation for the SSO integration layer. Covers supported IdPs (Okta, Azure AD, OneLogin), the token refresh flow, known failure modes, and the monitoring/alerting setup. Includes a troubleshooting runbook for the recurring disconnection issue affecting enterprise accounts.",
+    space: "ENG",
+    lastModified: "2026-02-27",
+    author: "Demo Engineer A",
+    url: "https://demo.atlassian.net/wiki/spaces/ENG/pages/conf-002",
+  },
+  {
+    id: "conf-003",
+    title: "API Rate Limiting Policy & Tier Definitions",
+    excerpt:
+      "Defines rate limits by plan tier: Free (10 req/min), Pro (50 req/min), Enterprise (100 req/min). Includes the proposal to increase Enterprise to 1000 req/min, cost analysis of the infrastructure changes needed, and the webhook v2 reliability improvements roadmap.",
+    space: "ENG",
+    lastModified: "2026-02-25",
+    author: "Demo Engineer D",
+    url: "https://demo.atlassian.net/wiki/spaces/ENG/pages/conf-003",
+  },
+  {
+    id: "conf-004",
+    title: "Onboarding Redesign RFC — Interactive Guided Flows",
+    excerpt:
+      "RFC proposing a complete overhaul of the user onboarding experience. Includes role-based paths (Admin, Analyst, Viewer), interactive step-by-step tutorials, a sandbox environment for safe exploration, and progress tracking. Based on feedback from DemoScale Co QBR and 189 customer requests in Productboard.",
+    space: "PRODUCT",
+    lastModified: "2026-03-03",
+    author: "Demo PM Lead",
+    url: "https://demo.atlassian.net/wiki/spaces/PRODUCT/pages/conf-004",
+  },
+];
+
+export const DEMO_PENDO_OVERVIEW: PendoUsageOverview = {
+  totalPages: 12,
+  totalFeatures: 8,
+  activePages: [
+    { id: "page-001", name: "Dashboard — Main", totalEvents: 48720, totalMinutes: 12450 },
+    { id: "page-002", name: "Feedback List", totalEvents: 31200, totalMinutes: 8930 },
+    { id: "page-003", name: "Reports — Custom Builder", totalEvents: 22150, totalMinutes: 6780 },
+    { id: "page-004", name: "Settings — Integrations", totalEvents: 15400, totalMinutes: 3200 },
+    { id: "page-005", name: "Search Results", totalEvents: 12800, totalMinutes: 2140 },
+    { id: "page-006", name: "Admin — Team Management", totalEvents: 8900, totalMinutes: 1560 },
+  ],
+  activeFeatures: [
+    { id: "feat-001", name: "Custom Report Builder", totalEvents: 18500, totalMinutes: 5620 },
+    { id: "feat-002", name: "Feedback Search", totalEvents: 14200, totalMinutes: 2890 },
+    { id: "feat-003", name: "Data Export", totalEvents: 9800, totalMinutes: 1240 },
+    { id: "feat-004", name: "Notification Preferences", totalEvents: 7600, totalMinutes: 890 },
+    { id: "feat-005", name: "API Key Management", totalEvents: 5400, totalMinutes: 620 },
+  ],
+  activeAccounts: [
+    { accountId: "ExampleCorp", totalEvents: 24500, totalMinutes: 6800 },
+    { accountId: "SampleBank", totalEvents: 19200, totalMinutes: 5400 },
+    { accountId: "DemoScale Co", totalEvents: 16800, totalMinutes: 4200 },
+    { accountId: "DemoSync Labs", totalEvents: 12400, totalMinutes: 3100 },
+    { accountId: "DemoMarket Solutions", totalEvents: 9600, totalMinutes: 2400 },
+    { accountId: "Northwind Demo", totalEvents: 8100, totalMinutes: 2000 },
+    { accountId: "Placeholder Field Ops", totalEvents: 4300, totalMinutes: 1100 },
+    { accountId: "Demo Automations", totalEvents: 3800, totalMinutes: 950 },
+  ],
+  generatedAt: "2026-03-07T12:00:00Z",
+};
 
 export const DEMO_INSIGHTS: Insight[] = [
   {
@@ -400,7 +784,7 @@ export const DEMO_INSIGHTS: Insight[] = [
     type: "risk",
     title: "SSO Reliability Threatens Strategic Expansion",
     description:
-      "SSO reliability issues are mentioned by several enterprise accounts in the synthetic demo dataset. One strategic account has a broader rollout contingent on SSO fixes, and another renewal scenario is framed as at risk. Immediate engineering attention is still the takeaway.",
+      "SSO reliability issues are mentioned by several enterprise accounts in the synthetic demo dataset. SampleBank has a broader rollout contingent on SSO fixes, and their IT team flags the recurring disconnections as a dealbreaker. Jira CX-1234 tracks the engineering work. Immediate resolution unlocks significant expansion revenue.",
     confidence: 0.95,
     relatedFeedbackIds: ["fb-003", "fb-010"],
     themes: ["sso", "reliability", "enterprise", "churn-risk"],
@@ -410,9 +794,9 @@ export const DEMO_INSIGHTS: Insight[] = [
   {
     id: "ins-002",
     type: "trend",
-    title: "AI Feature Gap Driving Competitive Pressure",
+    title: "AI Feature Gap Driving Competitive Losses",
     description:
-      "Multiple synthetic deals are marked as lost due to competitor AI capabilities. The demo internal notes and leadership feedback both flag this as critical. AI summarization remains the top-voted feature in the sample roadmap data.",
+      "Multiple synthetic deals lost to Competitor Alpha, with AI-powered feedback analysis cited as the deciding factor. BrightPath Analytics churned specifically due to the lack of auto-categorization. Internal GTM notes and board-level feedback both flag this as critical. AI summarization remains the top-voted feature in the roadmap with 847 votes.",
     confidence: 0.92,
     relatedFeedbackIds: ["fb-008", "fb-012"],
     themes: ["ai", "competitive", "product-gap"],
@@ -424,9 +808,9 @@ export const DEMO_INSIGHTS: Insight[] = [
     type: "theme",
     title: "Enterprise Readiness Is the Common Thread",
     description:
-      "6 out of 12 recent feedback items relate to enterprise-grade requirements: RBAC, SSO, compliance exports, and admin tools. The pattern suggests the product is hitting a growth ceiling with mid-market and enterprise customers who need more sophisticated controls.",
+      "8 out of 18 feedback items relate to enterprise-grade requirements: RBAC, SSO, compliance exports, custom workflows, and admin tools. The pattern suggests the product is hitting a growth ceiling with mid-market and enterprise customers who need more sophisticated controls. DemoMarket Solutions is ready to upgrade if RBAC ships this quarter.",
     confidence: 0.88,
-    relatedFeedbackIds: ["fb-003", "fb-007", "fb-009", "fb-010", "fb-012"],
+    relatedFeedbackIds: ["fb-003", "fb-007", "fb-009", "fb-010", "fb-012", "fb-017"],
     themes: ["enterprise", "permissions", "compliance", "sso"],
     impact: "high",
     createdAt: "2026-03-01",
@@ -436,7 +820,7 @@ export const DEMO_INSIGHTS: Insight[] = [
     type: "recommendation",
     title: "Prioritize: Performance → SSO → AI Features",
     description:
-      "Based on urgency and impact analysis in the synthetic demo data: (1) dashboard performance needs immediate attention, (2) SSO reliability unlocks a strategic expansion scenario, and (3) AI features address competitive positioning and longer-term churn reduction.",
+      "Based on urgency and impact analysis in the synthetic demo data: (1) dashboard performance needs an immediate hotfix — ExampleCorp has stopped using dashboards entirely, (2) SSO reliability unlocks SampleBank's expansion, and (3) AI features address competitive positioning and churn. This sequence maximizes revenue protection before investing in growth features.",
     confidence: 0.85,
     relatedFeedbackIds: ["fb-001", "fb-003", "fb-008", "fb-010"],
     themes: ["performance", "sso", "ai", "strategy"],
@@ -448,9 +832,9 @@ export const DEMO_INSIGHTS: Insight[] = [
     type: "anomaly",
     title: "Onboarding Friction Correlates with Account Growth",
     description:
-      "Accounts that have grown 50%+ in seats show a 3x higher rate of onboarding-related complaints. ScaleUp Industries (60% growth) and 4 other expanding accounts report the same pattern. Current onboarding scales linearly — need a self-serve approach.",
+      "Accounts that have grown significantly in seats show disproportionate onboarding complaints. DemoScale Co (200 seats, rapid growth) reports each new user takes a week to ramp, and BrightPath Analytics listed onboarding difficulty as a primary churn reason. Pendo usage data shows the Admin — Team Management page has high traffic but low engagement time, suggesting admins struggle with the setup flow.",
     confidence: 0.79,
-    relatedFeedbackIds: ["fb-005", "fb-012"],
+    relatedFeedbackIds: ["fb-005", "fb-012", "fb-014"],
     themes: ["onboarding", "growth", "ux"],
     impact: "medium",
     createdAt: "2026-03-01",
@@ -460,12 +844,36 @@ export const DEMO_INSIGHTS: Insight[] = [
     type: "trend",
     title: "Developer Experience Requests Rising",
     description:
-      "API-related feedback has increased 40% month-over-month. Rate limits, webhook reliability, and integration depth are the top themes. This signals a shift toward platform-play customers who want to build on top of the product.",
+      "API-related feedback spans 4 customers across rate limits, webhook reliability, and integration depth. DemoSync Labs and Demo Automations both have critical workflows blocked by current limitations. Jira tracks 3 open API-related issues (CX-1267, CX-1301, CX-1315). This signals a shift toward platform-play customers who want to build on top of the product.",
     confidence: 0.82,
     relatedFeedbackIds: ["fb-004", "fb-011"],
     themes: ["api", "developer-experience", "integration", "webhooks"],
     impact: "medium",
     createdAt: "2026-03-01",
+  },
+  {
+    id: "ins-007",
+    type: "risk",
+    title: "Integration Gap Losing Deals to Competitor Beta",
+    description:
+      "A separate competitive threat from Competitor Beta, which has a native Salesforce integration and a marketplace with 40+ connectors. BrightPath Analytics also cited missing Salesforce integration as a churn factor. The integration story is too thin for enterprise buyers evaluating against established platforms.",
+    confidence: 0.78,
+    relatedFeedbackIds: ["fb-015"],
+    themes: ["integrations", "competitive", "salesforce", "churn-risk"],
+    impact: "high",
+    createdAt: "2026-03-07",
+  },
+  {
+    id: "ins-008",
+    type: "theme",
+    title: "Collaboration Features Missing for Multi-Team Adoption",
+    description:
+      "ExampleCorp and DemoMarket Solutions both describe scenarios where product and CS teams cannot collaborate effectively inside the tool. Teams resort to copying feedback into Slack, losing context and attribution. Inline comments, @mentions, and shared views would reduce friction for accounts expanding across departments.",
+    confidence: 0.75,
+    relatedFeedbackIds: ["fb-016", "fb-017"],
+    themes: ["collaboration", "enterprise", "ux", "feature-request"],
+    impact: "medium",
+    createdAt: "2026-03-07",
   },
 ];
 
@@ -509,5 +917,13 @@ export const DEMO_DATA_SOURCES: DataSourceStatus[] = [
     lastSync: "30 sec ago",
     itemCount: DEMO_FEEDBACK.filter((f) => f.source === "slack").length,
     icon: "hash",
+  },
+  {
+    name: "Jira",
+    source: "jira",
+    connected: true,
+    lastSync: "1 min ago",
+    itemCount: DEMO_JIRA_ISSUES.length,
+    icon: "ticket",
   },
 ];

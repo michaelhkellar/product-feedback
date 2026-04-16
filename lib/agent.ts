@@ -3,6 +3,7 @@ import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "
 import { getRelevantPendoContext, PendoUsageOverview } from "./pendo";
 import {
   DEMO_FEEDBACK, DEMO_PRODUCTBOARD_FEATURES, DEMO_ATTENTION_CALLS, DEMO_INSIGHTS,
+  DEMO_JIRA_ISSUES, DEMO_CONFLUENCE_PAGES, DEMO_PENDO_OVERVIEW,
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
@@ -61,7 +62,8 @@ export function getDemoData(): AgentData {
   return {
     feedback: DEMO_FEEDBACK, features: DEMO_PRODUCTBOARD_FEATURES,
     calls: DEMO_ATTENTION_CALLS, insights: DEMO_INSIGHTS,
-    jiraIssues: [], confluencePages: [], pendoOverview: null,
+    jiraIssues: DEMO_JIRA_ISSUES, confluencePages: DEMO_CONFLUENCE_PAGES,
+    pendoOverview: DEMO_PENDO_OVERVIEW,
   };
 }
 
