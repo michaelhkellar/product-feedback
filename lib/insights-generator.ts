@@ -1,6 +1,6 @@
 import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue } from "./types";
 import { AgentData } from "./agent";
-import { generateWithGemini, isGeminiConfigured } from "./gemini";
+import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 
 const NOISE_THEMES = new Set([
   "5 stars", "4.5 stars", "4 stars", "3.5 stars", "3 stars", "2.5 stars",
@@ -67,13 +67,19 @@ function topFeedbackThemes(
 
 export async function generateInsights(
   data: AgentData,
-  geminiKey?: string
+  geminiKey?: string,
+  aiProvider?: AIProviderType,
+  anthropicKey?: string,
+  openaiKey?: string,
+  aiModel?: string
 ): Promise<Insight[]> {
   const programmatic = generateProgrammaticInsights(data);
+  const provider = aiProvider || "gemini";
 
-  if (isGeminiConfigured(geminiKey) && data.feedback.length + data.features.length > 0) {
+  if (isAnyAIConfigured(provider, geminiKey, anthropicKey, openaiKey) && data.feedback.length + data.features.length > 0) {
     try {
-      const aiInsights = await generateAIInsights(data, geminiKey);
+      const key = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
+      const aiInsights = await generateAIInsights(data, provider, key, aiModel);
       if (aiInsights.length > 0) {
         const seen = new Set(programmatic.map((i) => i.id));
         for (const ai of aiInsights) {
@@ -537,7 +543,7 @@ function pendoInsights(data: NonNullable<AgentData["pendoOverview"]>, now: strin
   return insights;
 }
 
-async function generateAIInsights(data: AgentData, geminiKey?: string): Promise<Insight[]> {
+async function generateAIInsights(data: AgentData, providerType: AIProviderType = "gemini", key?: string, model?: string): Promise<Insight[]> {
   const summaryParts: string[] = [];
   summaryParts.push(`Data: ${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} Jira issues.`);
 
@@ -574,10 +580,12 @@ Return ONLY a JSON array, no markdown or explanation.
 
 ${summaryParts.join("\n")}`;
 
-  const response = await generateWithGemini(
+  const provider = getAIProvider(providerType);
+  const response = await provider.generate(
     "You are a product analytics expert. Respond with valid JSON only. Focus on actionable product insights, not review metrics.",
     prompt,
-    geminiKey
+    key,
+    model
   );
 
   if (!response) return [];
