@@ -4,6 +4,11 @@ import { FeedbackItem, AttentionCall, JiraIssue, LinearIssue } from "@/lib/types
 import { getRelevantPendoContext } from "@/lib/pendo";
 import { getRelevantAmplitudeContext } from "@/lib/amplitude";
 import { getRelevantPostHogContext } from "@/lib/posthog";
+import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
+
+const ENTITY_COOLDOWN_MS = 2_000;
+const ENTITY_RATE_TTL_MS = 60_000;
+const entityLastRequest = new Map<string, number>();
 
 function lc(s: string) {
   return s.toLowerCase();
@@ -23,6 +28,11 @@ function matchesFeature(themes: string[], name: string): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const clientKey = getClientKey(req);
+  if (checkRateLimit(entityLastRequest, clientKey, ENTITY_COOLDOWN_MS, ENTITY_RATE_TTL_MS)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
+
   try {
     const body = await req.json();
     const { kind, name } = body;

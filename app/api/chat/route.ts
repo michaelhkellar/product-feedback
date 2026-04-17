@@ -4,31 +4,21 @@ import { getData } from "@/lib/data-fetcher";
 import { ContextMode } from "@/lib/api-keys";
 import { AIProviderType } from "@/lib/ai-provider";
 import { generateProgrammaticInsights } from "@/lib/insights-generator";
+import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
 
 const MAX_MESSAGE_LENGTH = 10_000;
 const MAX_HISTORY_ITEMS = 50;
 const MAX_SOURCE_IDS = 200;
 const CHAT_COOLDOWN_MS = 2_000;
-const RATE_LIMIT_TTL_MS = 60_000;
+const CHAT_RATE_TTL_MS = 60_000;
 const chatLastRequest = new Map<string, number>();
-
-function evictExpired(map: Map<string, number>, ttlMs: number): void {
-  const cutoff = Date.now() - ttlMs;
-  Array.from(map.entries()).forEach(([key, ts]) => {
-    if (ts < cutoff) map.delete(key);
-  });
-}
 
 export async function POST(req: NextRequest) {
   try {
-    const clientKey = req.ip || "unknown";
-    const now = Date.now();
-    evictExpired(chatLastRequest, RATE_LIMIT_TTL_MS);
-    const lastTime = chatLastRequest.get(clientKey) || 0;
-    if (now - lastTime < CHAT_COOLDOWN_MS) {
+    const clientKey = getClientKey(req);
+    if (checkRateLimit(chatLastRequest, clientKey, CHAT_COOLDOWN_MS, CHAT_RATE_TTL_MS)) {
       return NextResponse.json({ error: "Please wait a moment before sending another message" }, { status: 429 });
     }
-    chatLastRequest.set(clientKey, now);
 
     const body = await req.json();
     const { message, useDemoData, contextMode, mode: interactionMode } = body;

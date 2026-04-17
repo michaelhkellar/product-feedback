@@ -27,13 +27,12 @@ async function linearFetch<T>(
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Linear API ${res.status}: ${text || res.statusText}`);
+    throw new Error(`Linear API ${res.status}`);
   }
 
   const json = await res.json();
   if (json.errors) {
-    throw new Error(`Linear API: ${json.errors.map((e: { message: string }) => e.message).join(", ")}`);
+    throw new Error(`Linear API error (${json.errors.length} error${json.errors.length === 1 ? "" : "s"})`);
   }
 
   return json.data as T;
@@ -70,65 +69,46 @@ export async function getLinearIssues(
   const allIssues: LinearIssue[] = [];
   let cursor: string | null = null;
 
+  type IssuesPage = {
+    issues: {
+      nodes: {
+        id: string;
+        identifier: string;
+        title: string;
+        description: string | null;
+        state: { name: string } | null;
+        priority: number;
+        assignee: { name: string } | null;
+        labels: { nodes: { name: string }[] };
+        createdAt: string;
+        updatedAt: string;
+        team: { name: string } | null;
+        url: string;
+      }[];
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+    };
+  };
+
   try {
     for (let page = 0; allIssues.length < MAX_ISSUES && page < 5; page++) {
-      const filterClause = teamId ? `, filter: { team: { id: { eq: "${teamId}" } } }` : "";
-      const afterClause: string = cursor ? `, after: "${cursor}"` : "";
+      const variables: Record<string, unknown> = { after: cursor };
+      if (teamId) variables.teamId = teamId;
 
-      const data: {
-        issues: {
-          nodes: {
-            id: string;
-            identifier: string;
-            title: string;
-            description: string | null;
-            state: { name: string } | null;
-            priority: number;
-            assignee: { name: string } | null;
-            labels: { nodes: { name: string }[] };
-            createdAt: string;
-            updatedAt: string;
-            team: { name: string } | null;
-            url: string;
-          }[];
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-        };
-      } = await linearFetch<{
-        issues: {
-          nodes: {
-            id: string;
-            identifier: string;
-            title: string;
-            description: string | null;
-            state: { name: string } | null;
-            priority: number;
-            assignee: { name: string } | null;
-            labels: { nodes: { name: string }[] };
-            createdAt: string;
-            updatedAt: string;
-            team: { name: string } | null;
-            url: string;
-          }[];
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-        };
-      }>(
-        apiKey,
-        `query {
-          issues(first: 250, orderBy: updatedAt${filterClause}${afterClause}) {
-            nodes {
-              id identifier title description
-              state { name }
-              priority
-              assignee { name }
-              labels { nodes { name } }
-              createdAt updatedAt
-              team { name }
-              url
+      const query = teamId
+        ? `query IssuesFiltered($after: String, $teamId: ID!) {
+            issues(first: 250, orderBy: updatedAt, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+              nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
+              pageInfo { hasNextPage endCursor }
             }
-            pageInfo { hasNextPage endCursor }
-          }
-        }`
-      );
+          }`
+        : `query Issues($after: String) {
+            issues(first: 250, orderBy: updatedAt, after: $after) {
+              nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
+              pageInfo { hasNextPage endCursor }
+            }
+          }`;
+
+      const data: IssuesPage = await linearFetch<IssuesPage>(apiKey, query, variables);
 
       for (const node of data.issues.nodes) {
         allIssues.push({

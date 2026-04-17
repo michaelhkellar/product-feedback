@@ -2,6 +2,14 @@ import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsR
 
 const DEFAULT_HOST = "https://app.posthog.com";
 
+// Only these hosts are accepted as user-supplied overrides to prevent SSRF.
+// The server-configured POSTHOG_HOST env var is always trusted regardless.
+const KNOWN_POSTHOG_HOSTS = new Set([
+  "https://app.posthog.com",
+  "https://eu.posthog.com",
+  "https://us.posthog.com",
+]);
+
 function parsePostHogKey(compositeKey: string): { apiKey: string; projectId: string } | null {
   const parts = compositeKey.split(":");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
@@ -9,7 +17,15 @@ function parsePostHogKey(compositeKey: string): { apiKey: string; projectId: str
 }
 
 function resolveHost(overrideHost?: string): string {
-  const h = overrideHost || process.env.POSTHOG_HOST || DEFAULT_HOST;
+  if (overrideHost) {
+    const normalized = overrideHost.replace(/\/+$/, "");
+    const serverConfigured = (process.env.POSTHOG_HOST || "").replace(/\/+$/, "");
+    if (KNOWN_POSTHOG_HOSTS.has(normalized) || (serverConfigured && normalized === serverConfigured)) {
+      return normalized;
+    }
+    return DEFAULT_HOST;
+  }
+  const h = process.env.POSTHOG_HOST || DEFAULT_HOST;
   return h.replace(/\/+$/, "");
 }
 

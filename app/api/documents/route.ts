@@ -1,21 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createConfluencePage } from "@/lib/atlassian";
 import { sanitizeForProvider } from "@/lib/ticket-provider";
+import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
 
 const COOLDOWN_MS = 10_000;
 const RATE_LIMIT_TTL_MS = 120_000;
 const lastCreation = new Map<string, number>();
-
-function evictExpired(map: Map<string, number>, ttlMs: number): void {
-  const cutoff = Date.now() - ttlMs;
-  Array.from(map.entries()).forEach(([key, ts]) => {
-    if (ts < cutoff) map.delete(key);
-  });
-}
-
-function getRateLimitKey(req: NextRequest): string {
-  return req.ip || "unknown";
-}
 
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -67,12 +57,15 @@ function markdownToConfluenceStorage(markdown: string): string {
   // Blockquotes
   html = html.replace(/^> (.+)$/gm, (_m, p1) => `<blockquote><p>${escapeHtml(p1)}</p></blockquote>`);
 
-  // Paragraphs (lines that aren't already wrapped)
+  // Paragraphs (lines that aren't already wrapped).
+  // Only lines starting with a known safe tag from the conversion steps above are
+  // passed through verbatim — all other lines are escaped and wrapped in <p>.
+  const SAFE_TAG = /^<(h[1-6]|ul|ol|li|p|blockquote|table|thead|tbody|tr|th|td|strong|em|ac:)/i;
   const lines = html.split("\n");
   const result = lines.map((line) => {
     const trimmed = line.trim();
     if (!trimmed) return "";
-    if (trimmed.startsWith("<")) return trimmed;
+    if (SAFE_TAG.test(trimmed)) return trimmed;
     return `<p>${escapeHtml(trimmed)}</p>`;
   });
 
@@ -81,11 +74,8 @@ function markdownToConfluenceStorage(markdown: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const clientKey = getRateLimitKey(req);
-    const now = Date.now();
-    evictExpired(lastCreation, RATE_LIMIT_TTL_MS);
-    const lastTime = lastCreation.get(clientKey) || 0;
-    if (now - lastTime < COOLDOWN_MS) {
+    const clientKey = getClientKey(req);
+    if (checkRateLimit(lastCreation, clientKey, COOLDOWN_MS, RATE_LIMIT_TTL_MS)) {
       return NextResponse.json(
         { error: "Rate limit: please wait before creating another document" },
         { status: 429 }
@@ -114,8 +104,6 @@ export async function POST(req: NextRequest) {
     const storageHtml = markdownToConfluenceStorage(sanitized);
 
     const result = await createConfluencePage(title, spaceId, storageHtml, domain, email, token);
-
-    lastCreation.set(clientKey, now);
     return NextResponse.json(result);
   } catch (error) {
     console.error("Document creation error:", error);

@@ -45,7 +45,30 @@ function authMisconfigured(): NextResponse {
   );
 }
 
-export function middleware(req: NextRequest) {
+// Timing-safe string comparison using HMAC-SHA-256 to produce fixed-length outputs.
+// Both strings are hashed with the same key; the 32-byte digests are compared with
+// a constant-time XOR loop, preventing timing attacks.
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode("timing-compare-key"),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const [aHash, bHash] = await Promise.all([
+    crypto.subtle.sign("HMAC", keyMaterial, enc.encode(a)),
+    crypto.subtle.sign("HMAC", keyMaterial, enc.encode(b)),
+  ]);
+  const aView = new Uint8Array(aHash);
+  const bView = new Uint8Array(bHash);
+  let diff = 0;
+  for (let i = 0; i < aView.length; i++) diff |= aView[i] ^ bView[i];
+  return diff === 0;
+}
+
+export async function middleware(req: NextRequest) {
   const expected = getExpectedCredentials();
 
   if (!expected) {
@@ -65,9 +88,12 @@ export function middleware(req: NextRequest) {
     const username = decoded.slice(0, separatorIndex);
     const password = decoded.slice(separatorIndex + 1);
 
-    if (username !== expected.username || password !== expected.password) {
-      return unauthorized();
-    }
+    const [usernameOk, passwordOk] = await Promise.all([
+      timingSafeEqual(username, expected.username),
+      timingSafeEqual(password, expected.password),
+    ]);
+
+    if (!usernameOk || !passwordOk) return unauthorized();
 
     return NextResponse.next();
   } catch {

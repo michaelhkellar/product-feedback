@@ -1,8 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findWorkingModel } from "@/lib/gemini";
 import { validateLinearKey } from "@/lib/linear";
+import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
+
+const VALIDATE_COOLDOWN_MS = 5_000;
+const VALIDATE_RATE_TTL_MS = 60_000;
+const validateLastRequest = new Map<string, number>();
+
+// Allowed PostHog hosts for user-supplied overrides (prevents SSRF)
+const KNOWN_POSTHOG_HOSTS = new Set([
+  "https://app.posthog.com",
+  "https://eu.posthog.com",
+  "https://us.posthog.com",
+]);
+
+// Domain slug validation — must be alphanumeric with hyphens only (no URLs, paths, or other tricks)
+const VALID_DOMAIN_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/i;
+
+function validateAtlassianDomain(raw: string): string | null {
+  const slug = raw
+    .replace(/^https?:\/\//, "")
+    .replace(/\.atlassian\.net\/?$/, "")
+    .trim()
+    .toLowerCase();
+  if (!VALID_DOMAIN_SLUG.test(slug)) return null;
+  return slug;
+}
+
+function sanitizeError(err: unknown): string {
+  if (err instanceof Error) {
+    // Strip anything that looks like a credential or long base64 blob
+    return err.message
+      .replace(/[A-Za-z0-9+/=]{20,}/g, "[REDACTED]")
+      .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+      .replace(/Basic\s+\S+/gi, "Basic [REDACTED]")
+      .slice(0, 200);
+  }
+  return "Connection failed";
+}
 
 export async function POST(req: NextRequest) {
+  const clientKey = getClientKey(req);
+  if (checkRateLimit(validateLastRequest, clientKey, VALIDATE_COOLDOWN_MS, VALIDATE_RATE_TTL_MS)) {
+    return NextResponse.json({ valid: false, error: "Too many requests — please wait" }, { status: 429 });
+  }
+
   try {
     const { keyName } = await req.json();
 
@@ -14,9 +56,9 @@ export async function POST(req: NextRequest) {
           headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
         });
         if (res.ok) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -28,9 +70,9 @@ export async function POST(req: NextRequest) {
           headers: { Authorization: `Bearer ${key}` },
         });
         if (res.ok) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -46,9 +88,9 @@ export async function POST(req: NextRequest) {
         });
         if (res.ok || res.status === 200 || res.status === 204) return NextResponse.json({ valid: true });
         if (res.status === 404) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -59,8 +101,8 @@ export async function POST(req: NextRequest) {
         const valid = await validateLinearKey(key);
         if (valid) return NextResponse.json({ valid: true });
         return NextResponse.json({ valid: false, error: "Linear rejected the API key" });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -71,8 +113,8 @@ export async function POST(req: NextRequest) {
         const model = await findWorkingModel(key);
         if (model) return NextResponse.json({ valid: true, model });
         return NextResponse.json({ valid: false, error: "No compatible Gemini model found" });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Invalid key" });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -84,9 +126,9 @@ export async function POST(req: NextRequest) {
           headers: { Authorization: `Bearer ${key}`, "X-Version": "1", "Content-Type": "application/json" },
         });
         if (res.ok) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -98,9 +140,9 @@ export async function POST(req: NextRequest) {
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         });
         if (res.ok) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -124,9 +166,9 @@ export async function POST(req: NextRequest) {
         if (res.status === 403) {
           return NextResponse.json({ valid: false, error: "Pendo rejected the integration key" });
         }
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
@@ -135,27 +177,40 @@ export async function POST(req: NextRequest) {
       if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
       const parts = key.split(":");
       if (parts.length !== 2) return NextResponse.json({ valid: false, error: "Format should be apiKey:projectId" });
-      const host = (req.headers.get("x-posthog-host") || process.env.POSTHOG_HOST || "https://app.posthog.com").replace(/\/+$/, "");
+
+      // Validate the host against the allowlist to prevent SSRF
+      const rawHost = (req.headers.get("x-posthog-host") || process.env.POSTHOG_HOST || "https://app.posthog.com").replace(/\/+$/, "");
+      const serverConfigured = (process.env.POSTHOG_HOST || "").replace(/\/+$/, "");
+      const host = (KNOWN_POSTHOG_HOSTS.has(rawHost) || (serverConfigured && rawHost === serverConfigured))
+        ? rawHost
+        : "https://app.posthog.com";
+
       try {
         const res = await fetch(`${host}/api/projects/${parts[1]}/`, {
           headers: { Authorization: `Bearer ${parts[0]}` },
         });
         if (res.ok) return NextResponse.json({ valid: true });
-        return NextResponse.json({ valid: false, error: `API returned ${res.status}: ${res.statusText}` });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 
     if (keyName === "atlassianToken") {
-      const domain = req.headers.get("x-atlassian-domain") || process.env.ATLASSIAN_DOMAIN;
+      const rawDomain = req.headers.get("x-atlassian-domain") || process.env.ATLASSIAN_DOMAIN;
       const email = req.headers.get("x-atlassian-email") || process.env.ATLASSIAN_EMAIL;
       const token = req.headers.get("x-atlassian-token") || process.env.ATLASSIAN_API_TOKEN;
-      if (!domain || !email || !token) {
+      if (!rawDomain || !email || !token) {
         return NextResponse.json({ valid: false, error: "Domain, email, and token are all required" });
       }
+
+      // Validate domain is a plain alphanumeric slug — prevents host injection / SSRF
+      const cleanDomain = validateAtlassianDomain(rawDomain);
+      if (!cleanDomain) {
+        return NextResponse.json({ valid: false, error: "Invalid domain format" });
+      }
+
       try {
-        const cleanDomain = domain.replace(/\.atlassian\.net\/?$/, "").replace(/^https?:\/\//, "");
         const encoded = Buffer.from(`${email}:${token}`).toString("base64");
         const authHeader = `Basic ${encoded}`;
 
@@ -200,8 +255,8 @@ export async function POST(req: NextRequest) {
           valid: false,
           error: `Auth failed (${status}). For classic tokens: check email + token. For scoped tokens: ensure read:jira-work scope is enabled.`,
         });
-      } catch (err: unknown) {
-        return NextResponse.json({ valid: false, error: err instanceof Error ? err.message : "Connection failed" });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }
     }
 

@@ -3,35 +3,21 @@ import { createJiraIssue } from "@/lib/atlassian";
 import { createLinearIssue } from "@/lib/linear";
 import { sanitizeForProvider, markdownToADF } from "@/lib/ticket-provider";
 import { TicketProviderType } from "@/lib/api-keys";
+import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
 
 const COOLDOWN_MS = 10_000;
 const RATE_LIMIT_TTL_MS = 120_000;
 const lastCreation = new Map<string, number>();
 
-function evictExpired(map: Map<string, number>, ttlMs: number): void {
-  const cutoff = Date.now() - ttlMs;
-  Array.from(map.entries()).forEach(([key, ts]) => {
-    if (ts < cutoff) map.delete(key);
-  });
-}
-
-function getRateLimitKey(req: NextRequest): string {
-  return req.ip || "unknown";
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const clientKey = getRateLimitKey(req);
-    const now = Date.now();
-    const lastTime = lastCreation.get(clientKey) || 0;
-    if (now - lastTime < COOLDOWN_MS) {
+    const clientKey = getClientKey(req);
+    if (checkRateLimit(lastCreation, clientKey, COOLDOWN_MS, RATE_LIMIT_TTL_MS)) {
       return NextResponse.json(
         { error: "Rate limit: please wait before creating another ticket" },
         { status: 429 }
       );
     }
-
-    evictExpired(lastCreation, RATE_LIMIT_TTL_MS);
 
     const body = await req.json();
     const { title, description, projectKey, teamId, priority } = body;
@@ -67,7 +53,6 @@ export async function POST(req: NextRequest) {
         linearPriority
       );
 
-      lastCreation.set(clientKey, now);
       return NextResponse.json(result);
     }
 
@@ -94,7 +79,6 @@ export async function POST(req: NextRequest) {
       token
     );
 
-    lastCreation.set(clientKey, now);
     return NextResponse.json(result);
   } catch (error) {
     console.error("Ticket creation error:", error);
