@@ -240,14 +240,16 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
           li: ({ children }) => <li>{enrich(children)}</li>,
           td: ({ children }) => <td>{enrich(children)}</td>,
           details: ({ children }) => (
-            <details className="group my-2 rounded-lg border border-border overflow-hidden">
+            <details className="group my-2 rounded-lg border border-border overflow-hidden [&>*:not(summary)]:px-4 [&>*:not(summary)]:py-3 [&>*:not(summary)]:bg-card [&>*:not(summary)]:text-sm [&>*:not(summary)]:leading-relaxed">
               {children}
             </details>
           ),
           summary: ({ children }) => (
-            <summary className="flex items-center justify-between px-3 py-2 cursor-pointer text-xs font-medium bg-muted hover:bg-accent transition-colors list-none [&::-webkit-details-marker]:hidden">
-              <span>{children}</span>
-              <ChevronDown className="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-180 flex-shrink-0" />
+            <summary className="flex items-center justify-between px-3 py-2 cursor-pointer text-xs font-semibold bg-muted hover:bg-accent transition-colors list-none [&::-webkit-details-marker]:hidden select-none">
+              <span className="flex items-center gap-2">
+                <ChevronDown className="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-180 flex-shrink-0" />
+                {children}
+              </span>
             </summary>
           ),
         }}

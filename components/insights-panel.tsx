@@ -233,22 +233,23 @@ export function InsightsPanel({
                       <span className="text-[8px] text-red-500">↓</span>
                     )}
                   </div>
-                  <h3 className="text-xs font-medium leading-snug line-clamp-2">
+                  <h3 className="text-xs font-semibold leading-snug line-clamp-2">
                     {insight.title}
                   </h3>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                  <p className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2 mt-1">
+                    {insight.description}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="flex-1 h-0.5 bg-muted rounded-full overflow-hidden">
                       <div
                         className={cn(
                           "h-full rounded-full",
-                          config.bg.replace("/10", "/40")
+                          config.bg.replace("/10", "/50")
                         )}
-                        style={{
-                          width: `${insight.confidence * 100}%`,
-                        }}
+                        style={{ width: `${insight.confidence * 100}%` }}
                       />
                     </div>
-                    <span className="text-[9px] text-muted-foreground">
+                    <span className="text-[9px] text-muted-foreground tabular-nums">
                       {(insight.confidence * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -318,43 +319,61 @@ export function InsightsPanel({
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
             <h3 className="text-sm font-semibold leading-snug">
               {selectedInsight.title}
             </h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {selectedInsight.description}
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {selectedInsight.themes.map((theme) => (
-                <button
-                  key={theme}
-                  onClick={() => openEntity({ kind: "theme", name: theme })}
-                  className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors"
-                  title={`Explore "${theme}"`}
-                >
-                  {theme}
-                </button>
-              ))}
+
+            <div className="rounded-lg bg-muted/50 border border-border p-3">
+              <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-line">
+                {selectedInsight.description}
+              </p>
             </div>
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <div className="px-3 py-2 rounded-lg bg-muted">
-                <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-0.5">
-                  Confidence
-                </div>
-                <div className="text-sm font-semibold">
-                  {(selectedInsight.confidence * 100).toFixed(0)}%
+
+            {selectedInsight.themes.length > 0 && (
+              <div>
+                <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1.5 font-semibold">Themes</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedInsight.themes.map((theme) => (
+                    <button
+                      key={theme}
+                      onClick={() => openEntity({ kind: "theme", name: theme })}
+                      className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors"
+                      title={`Explore "${theme}"`}
+                    >
+                      {theme}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <div className="px-3 py-2 rounded-lg bg-muted">
-                <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-0.5">
-                  Impact
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="px-3 py-2.5 rounded-lg bg-muted border border-border/50">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-1 font-semibold">Confidence</div>
+                <div className="flex items-end gap-1.5">
+                  <span className="text-base font-bold tabular-nums leading-none">
+                    {(selectedInsight.confidence * 100).toFixed(0)}%
+                  </span>
                 </div>
-                <div className="text-sm font-semibold capitalize">
+                <div className="mt-1.5 h-1 bg-border rounded-full overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full", INSIGHT_CONFIG[selectedInsight.type]?.bg.replace("/10", "/60") || "bg-primary/60")}
+                    style={{ width: `${selectedInsight.confidence * 100}%` }}
+                  />
+                </div>
+              </div>
+              <div className="px-3 py-2.5 rounded-lg bg-muted border border-border/50">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-1 font-semibold">Impact</div>
+                <div className={cn(
+                  "text-base font-bold capitalize leading-none",
+                  selectedInsight.impact === "high" ? "text-red-500" : selectedInsight.impact === "medium" ? "text-amber-500" : "text-muted-foreground"
+                )}>
                   {selectedInsight.impact}
                 </div>
               </div>
             </div>
+
             {onQueryInsight && (
               <button
                 onClick={() => {
@@ -363,7 +382,7 @@ export function InsightsPanel({
                   );
                   setSelectedInsight(null);
                 }}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors mt-1"
               >
                 <ArrowUpRight className="w-3.5 h-3.5" />
                 Ask Agent About This
