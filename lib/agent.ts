@@ -48,12 +48,13 @@ export interface AgentData {
 
 export interface ChatTrace {
   detectedIntent: "summarize" | "prd" | "ticket";
-  queryType: "detailed" | "conversational" | "comparison" | "count";
+  queryType: "detailed" | "conversational" | "comparison" | "count" | "list";
   timeRange?: { label: string; start?: string; end?: string };
   themesDetected: string[];
   retrieval: { query: string; topResults: { id: string; type: string; score: number }[] };
   contextMode: "focused" | "standard" | "deep";
   tokensUsed: { input: number; output: number; total: number };
+  pivotExcluded?: string[];
 }
 
 export interface ChatResult {
@@ -222,7 +223,8 @@ const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "com
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
 const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprint", "what's being built", "implementation", "technical"];
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
-const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same"];
+const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same", "else", "besides", "otherwise", "anything else", "something else", "what other", "other accounts", "other themes"];
+const LIST_KEYWORDS = ["show me", "list", "show the", "give me", "recent feedback", "top accounts", "top themes", "top issues", "top requests", "what are the", "which accounts", "which customers", "which companies", "which features", "what feedback", "what requests", "feedback from", "feedback about", "any feedback", "any requests"];
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
 const USAGE_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product", "how is", "how often", "who uses", "how many users", "usage of", "clicked", "feature usage", "page usage"];
 
@@ -425,7 +427,12 @@ function sentimentBreakdown(feedback: FeedbackItem[]): string {
 
 // --- Query classification ---
 
-type QueryType = "detailed" | "conversational" | "comparison" | "count";
+type QueryType = "detailed" | "conversational" | "comparison" | "count" | "list";
+
+function isListQuery(query: string): boolean {
+  const q = query.toLowerCase();
+  return LIST_KEYWORDS.some((kw) => q.includes(kw));
+}
 
 function classifyQueryType(
   message: string,
@@ -434,6 +441,7 @@ function classifyQueryType(
 ): QueryType {
   if (hasComparison) return "comparison";
   if (wantsCount(message)) return "count";
+  if (isListQuery(message)) return "list";
   if (isLikelyFollowUp(message) || conversationHistory.filter((m) => m.role === "user").length >= 2) return "conversational";
   if (isBroadQuery(message) || message.length > 60) return "detailed";
   return "conversational";
@@ -445,15 +453,15 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 **[1-2 sentence answer to the question. Be specific.]**
 
+| Source | What | When |
+| --- | --- | --- |
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard note title. What = actual request/issue (with inline [n] citation if applicable). When = relative date. Skip if 0-1 sources.]
+
 ## [Heading]
 
 [1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
 
 > "[direct customer quote if available]" — Customer Name or Email. Source: [Jira CX-123](link) or [Productboard note title](link if available)
-
-| Source | What | When |
-| --- | --- | --- |
-[max 5 rows. Include the table only if citing 3+ distinct sources. Source = Jira key/link or Productboard note title. What = actual request/issue. When = relative date.]
 
 ## Next Steps
 
@@ -463,7 +471,19 @@ Include Next Steps only if the answer implies actionable follow-up. Skip if the 
 
 CONSTRAINTS: 300 words max. No :--- in tables. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
 
-const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No table unless comparing items. No Next Steps unless the user asks "what should we do." 150 words max.`;
+const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
+
+**[1 sentence naming what you found and how many items.]**
+
+| Source | What | When |
+| --- | --- | --- |
+[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard link. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (e.g. "3d ago", "1w ago"). Add inline [n] citation markers in the What column where evidence is numbered.]
+
+[Optional: 1-2 sentence pattern or theme across the items above. Skip if self-evident from the table.]
+
+CONSTRAINTS: Table is mandatory — do not omit it. No :--- in tables. No Next Steps unless explicitly asked. 200 words max total. Use actual customer/source names, not placeholders.`;
+
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. Include a compact "| Source | What | When |" table (up to 5 rows) only when the user asked to see, list, or show specific feedback items or accounts — skip otherwise. No Next Steps unless the user asks "what should we do." 150 words max.`;
 
 const COMPARISON_FORMAT = `Structure the response as a comparison:
 
@@ -616,17 +636,75 @@ function buildExpandedDataContext(data: AgentData, limit = 100): string {
 function isLikelyFollowUp(query: string): boolean {
   const q = query.toLowerCase();
   const hasFollowUpWord = FOLLOW_UP_KEYWORDS.some((kw) => q.includes(kw));
+  // Catch mid-sentence "what else", "anything else", "what other"
+  const hasElsePattern = /\b(what else|anything else|something else|what other|any other)\b/.test(q);
   const startsWithContinuation = /^(and|also|what about|how about|those|them|it)\b/.test(q.trim());
-  return hasFollowUpWord || startsWithContinuation;
+  return hasFollowUpWord || hasElsePattern || startsWithContinuation;
+}
+
+/**
+ * Detects when the user wants to pivot away from a known entity.
+ * e.g. "connectwise is in progress, what else?" → { isPivot: true, excluded: ["connectwise"] }
+ *       "besides SSO, what are people asking?" → { isPivot: true, excluded: ["sso"] }
+ */
+function detectPivot(message: string): { isPivot: boolean; excluded: string[] } {
+  const q = message.toLowerCase().trim();
+  const excluded: string[] = [];
+
+  // Pattern 1: "<entity> is (in progress|done|handled|covered|known|addressed|sorted|resolved), what else..."
+  const statusPattern = /^(.+?)\s+(?:is|are|was|were)\s+(?:in progress|done|handled|covered|known|addressed|sorted|resolved|being handled|taken care of)[,.]?\s+(?:what|anything|anything else|so what|now what)/i;
+  const statusMatch = message.match(statusPattern);
+  if (statusMatch) {
+    excluded.push(statusMatch[1].trim().toLowerCase());
+  }
+
+  // Pattern 2: "besides/other than/aside from/except <entity>" anywhere in message
+  const besidesPattern = /(?:besides|other than|aside from|except for?|not counting|ignoring|excluding)\s+([a-zA-Z0-9 _/-]{2,40})(?:\s*[,?!.]|$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = besidesPattern.exec(message)) !== null) {
+    const entity = m[1].trim().toLowerCase();
+    if (entity && !["that", "this", "it", "them", "me", "us"].includes(entity)) {
+      excluded.push(entity);
+    }
+  }
+
+  // Pattern 3: "what else do you have" or "what else is there" after mentioning an entity in the same message
+  const whatElsePattern = /\bwhat else\b/i;
+  if (whatElsePattern.test(q) && !statusMatch) {
+    // Try to find a proper noun / capitalized entity in the original (non-lowercased) message
+    const entityHint = message.match(/\b([A-Z][a-zA-Z0-9](?:[a-zA-Z0-9 ]*[a-zA-Z0-9])?)\b/);
+    if (entityHint && !["I", "A", "The", "Is", "Are", "What", "How", "Who", "Why", "When", "Where"].includes(entityHint[1])) {
+      excluded.push(entityHint[1].toLowerCase());
+    }
+  }
+
+  const unique = Array.from(new Set(excluded)).filter(Boolean);
+  return { isPivot: unique.length > 0, excluded: unique };
 }
 
 function buildSearchQueries(
   userMessage: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
-  includeHistory: boolean
+  includeHistory: boolean,
+  pivot?: { isPivot: boolean; excluded: string[] }
 ): string[] {
-  const queries = [userMessage.trim()];
-  if (!includeHistory) return queries;
+  const queries: string[] = [];
+
+  if (pivot?.isPivot && pivot.excluded.length > 0) {
+    // Strip excluded entities from the message so the vector search doesn't latch onto them
+    let stripped = userMessage;
+    for (const ex of pivot.excluded) {
+      stripped = stripped.replace(new RegExp(`\\b${ex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), "").trim();
+    }
+    // Add a broadener to pull diverse results
+    const broadener = "top themes feedback requests accounts issues features risks";
+    queries.push(stripped || broadener);
+    queries.push(broadener);
+  } else {
+    queries.push(userMessage.trim());
+  }
+
+  if (!includeHistory) return Array.from(new Set(queries.map((q) => q.toLowerCase())));
 
   const priorUserTurns = conversationHistory
     .filter((m) => m.role === "user")
@@ -634,7 +712,7 @@ function buildSearchQueries(
     .filter(Boolean);
 
   const lastUserTurn = priorUserTurns[priorUserTurns.length - 1];
-  if (!lastUserTurn) return queries;
+  if (!lastUserTurn) return Array.from(new Set(queries.map((q) => q.toLowerCase())));
 
   if (isLikelyFollowUp(userMessage)) {
     queries.push(`${lastUserTurn}\n${userMessage}`);
@@ -1080,9 +1158,11 @@ export async function chat(
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
   const wideQuery = countQuery || drilldownQuery || deepDiveEarly.analytics || deepDiveEarly.data;
+  const pivot = detectPivot(userMessage);
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
-  const searchLimit = wideQuery ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
-  const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage));
+  // Use a wider search limit for pivot queries so we get enough non-excluded results
+  const searchLimit = wideQuery || pivot.isPivot ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
+  const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage), pivot);
 
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
@@ -1092,9 +1172,26 @@ export async function chat(
       if (!existing || r.score > existing.score) merged.set(key, r);
     }
   }
-  const rawResults = Array.from(merged.values())
+  let rawResults = Array.from(merged.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, searchLimit);
+
+  // For pivot queries, deprioritize docs that mention excluded entities
+  if (pivot.isPivot && pivot.excluded.length > 0) {
+    const excludeRegex = new RegExp(`\\b(${pivot.excluded.map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "i");
+    const mentionsExcluded = (r: (typeof rawResults)[number]) =>
+      excludeRegex.test(r.document.text.slice(0, 200));
+    const preferred = rawResults.filter((r) => !mentionsExcluded(r));
+    // Only filter if we have enough remaining results; otherwise sort excluded docs last
+    if (preferred.length >= Math.min(8, rawResults.length / 2)) {
+      rawResults = preferred;
+    } else {
+      rawResults = [
+        ...rawResults.filter((r) => !mentionsExcluded(r)),
+        ...rawResults.filter((r) => mentionsExcluded(r)),
+      ];
+    }
+  }
 
   const includeConfluence = wantsConfluence(userMessage);
   const includeEng = wantsEngineering(userMessage);
@@ -1284,10 +1381,14 @@ export async function chat(
       sources.map((s, i) => `[${i + 1}] ${s.id}: ${s.title} (${s.type})`).join("\n")
     : "";
 
+  const pivotAddendum = pivot.isPivot && pivot.excluded.length > 0
+    ? `\nPIVOT INSTRUCTION: The user already knows about "${pivot.excluded.join('", "')}". Do NOT summarize, repeat, or elaborate on ${pivot.excluded.map((e) => `"${e}"`).join(" or ")}. Focus ENTIRELY on OTHER topics, accounts, themes, or items found in the evidence above. If the evidence mentions ${pivot.excluded[0]} only incidentally, skip those items and highlight everything else.\n`
+    : "";
+
   const prompt = `${context}${evidencePack}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
-
+${pivotAddendum}
 ${formatInstructions}`;
 
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(prompt);
@@ -1313,9 +1414,11 @@ ${formatInstructions}`;
     ? "comparison"
     : countQuery
       ? "count"
-      : detailed
-        ? "detailed"
-        : "conversational";
+      : isListQuery(userMessage)
+        ? "list"
+        : detailed
+          ? "detailed"
+          : "conversational";
 
   const trace: ChatTrace = {
     detectedIntent: mode as "summarize" | "prd" | "ticket",
@@ -1328,6 +1431,7 @@ ${formatInstructions}`;
     },
     contextMode: effectiveContextMode,
     tokensUsed: { input: inputTokens, output: 0, total: inputTokens },
+    ...(pivot.isPivot && pivot.excluded.length > 0 ? { pivotExcluded: pivot.excluded } : {}),
   };
 
   if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
@@ -1375,6 +1479,7 @@ function getFormatInstructions(
     const qType = classifyQueryType(message, history, !!hasComparison);
     switch (qType) {
       case "comparison": return COMPARISON_FORMAT;
+      case "list": return LIST_FORMAT;
       case "conversational": return CONVERSATIONAL_FORMAT;
       case "count": return SUMMARIZE_FORMAT;
       default: return DETAILED_FORMAT;

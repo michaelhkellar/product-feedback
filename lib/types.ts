@@ -141,6 +141,7 @@ export interface ChatMessageTrace {
   retrieval: { query: string; topResults: { id: string; type: string; score: number }[] };
   contextMode: string;
   tokensUsed: { input: number; output: number; total: number };
+  pivotExcluded?: string[];
 }
 
 export interface ChatMessage {

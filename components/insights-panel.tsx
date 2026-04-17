@@ -3,10 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useApiKeys } from "./api-key-provider";
 import { useEntityDrawer } from "./entity-drawer-provider";
-import { Insight, FeedbackItem } from "@/lib/types";
-import { DEMO_INSIGHTS, DEMO_FEEDBACK } from "@/lib/demo-data";
-import { feedbackVolumeByWeek, sentimentBreakdown } from "@/lib/temporal";
-import { Sparkline, SentimentBar } from "./sparkline";
+import { Insight } from "@/lib/types";
+import { DEMO_INSIGHTS } from "@/lib/demo-data";
 import { saveSnapshot, loadYesterdaySnapshot, diffInsights, TaggedInsight } from "@/lib/insight-snapshots";
 import { useFilters, filterTimeHeaders } from "./filter-provider";
 import { pinInsight, unpinInsight, listPinnedIds } from "@/lib/pins";
@@ -60,7 +58,6 @@ export function InsightsPanel({
   const [loading, setLoading] = useState(false);
   const [selectedInsight, setSelectedInsight] = useState<TaggedInsight | null>(null);
   const [filter, setFilter] = useState<string>("all");
-  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
   const [newCount, setNewCount] = useState(0);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
 
@@ -101,35 +98,15 @@ export function InsightsPanel({
     }
   }, [keyHeaders, useDemoData, filters.timeRange]);
 
-  const loadFeedback = useCallback(async () => {
-    try {
-      const res = await fetch("/api/sources/feedback", {
-        headers: { ...keyHeaders, "x-use-demo": useDemoData ? "true" : "false" },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setFeedbackItems(data.feedback || []);
-      } else if (useDemoData) {
-        setFeedbackItems(DEMO_FEEDBACK);
-      }
-    } catch {
-      if (useDemoData) setFeedbackItems(DEMO_FEEDBACK);
-    }
-  }, [keyHeaders, useDemoData]);
-
   useEffect(() => {
     loadInsights();
-    loadFeedback();
     listPinnedIds().then((ids) => setPinnedIds(new Set(ids))).catch(() => {});
-  }, [loadInsights, loadFeedback]);
+  }, [loadInsights]);
 
-  // Reload insights when time filter changes (already in loadInsights deps, this ensures panel re-fetches)
+  // Reload insights when time filter changes
   useEffect(() => {
     loadInsights();
   }, [filters.timeRange, loadInsights]);
-
-  const sparklineData = feedbackVolumeByWeek(feedbackItems, 12);
-  const sentiment = sentimentBreakdown(feedbackItems);
 
   const filtered = insights
     .filter((i) => {
@@ -145,12 +122,6 @@ export function InsightsPanel({
       const bPin = pinnedIds.has(b.id) ? 1 : 0;
       return bPin - aPin;
     });
-
-  const impactCounts = {
-    high: filtered.filter((i) => i.impact === "high").length,
-    medium: filtered.filter((i) => i.impact === "medium").length,
-    low: filtered.filter((i) => i.impact === "low").length,
-  };
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
@@ -179,23 +150,6 @@ export function InsightsPanel({
           </div>
         </div>
 
-        {/* Sparkline + sentiment */}
-        {feedbackItems.length > 0 && (
-          <div className="flex items-center justify-between gap-3 mb-2 py-1.5 px-2 rounded-lg bg-muted/50">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="text-[9px] text-muted-foreground flex-shrink-0">12w</span>
-              <Sparkline data={sparklineData} width={80} height={22} label="Feedback volume, last 12 weeks" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <SentimentBar positive={sentiment.positive} negative={sentiment.negative} neutral={sentiment.neutral} mixed={sentiment.mixed} showLabels={false} />
-              <div className="flex items-center justify-between text-[8px] text-muted-foreground mt-0.5">
-                <span className="text-green-500">{sentiment.positive}↑</span>
-                <span className="text-red-500">{sentiment.negative}↓</span>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="flex flex-wrap gap-1">
           {[
             { key: "all", label: "All" },
@@ -221,37 +175,6 @@ export function InsightsPanel({
           ))}
         </div>
       </div>
-
-      {insights.length > 0 && (
-        <div className="px-4 py-3 border-b border-border">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="text-center px-2 py-1.5 rounded-lg bg-red-500/5">
-              <div className="text-lg font-bold text-red-500">
-                {impactCounts.high}
-              </div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
-                High Impact
-              </div>
-            </div>
-            <div className="text-center px-2 py-1.5 rounded-lg bg-amber-500/5">
-              <div className="text-lg font-bold text-amber-500">
-                {impactCounts.medium}
-              </div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
-                Medium
-              </div>
-            </div>
-            <div className="text-center px-2 py-1.5 rounded-lg bg-green-500/5">
-              <div className="text-lg font-bold text-green-500">
-                {impactCounts.low}
-              </div>
-              <div className="text-[9px] text-muted-foreground uppercase tracking-wide">
-                Low
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {loading && (

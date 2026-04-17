@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, FlaskConical, Clock, Tag, Search, Layers, Coins } from "lucide-react";
+import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatMessageTrace } from "@/lib/types";
 
@@ -110,6 +110,22 @@ export function TraceModal({ trace }: TraceModalProps) {
                       <span key={t} className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[9px] font-medium">{t}</span>
                     ))}
                   </div>
+                </section>
+              )}
+
+              {/* Pivot exclusions */}
+              {trace.pivotExcluded && trace.pivotExcluded.length > 0 && (
+                <section className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <ArrowRightLeft className="w-3 h-3" />
+                    Pivot — Excluded
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {trace.pivotExcluded.map((e) => (
+                      <span key={e} className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 text-[9px] font-medium line-through">{e}</span>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Agent focused on other topics instead.</p>
                 </section>
               )}
 

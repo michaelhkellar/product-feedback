@@ -552,10 +552,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [sessionTokens, setSessionTokens] = useState(0);
   const [mode, setMode] = useState<InteractionMode>("summarize");
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
-  const [anomalyDismissed, setAnomalyDismissed] = useState(false);
-  const [anomalyBubble, setAnomalyBubble] = useState<string | null>(null);
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
-  const anomalySeenRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -623,30 +620,6 @@ Try one of the suggested queries below to get started.`;
     }
   }, [input]);
 
-  // Proactive anomaly bubble: check insights once per session for high-confidence risks/anomalies
-  useEffect(() => {
-    if (anomalySeenRef.current || anomalyDismissed || !hasAnyKey) return;
-    anomalySeenRef.current = true;
-    const controller = new AbortController();
-    fetch("/api/insights", {
-      headers: { ...keyHeaders, "x-use-demo": useDemoData ? "true" : "false" },
-      signal: controller.signal,
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const urgent = (data.insights || []).filter(
-          (i: { type: string; confidence: number; impact: string }) =>
-            (i.type === "anomaly" || i.type === "risk") && i.confidence >= 0.7 && i.impact === "high"
-        );
-        if (urgent.length > 0) {
-          const names = urgent.slice(0, 3).map((i: { title: string }) => i.title).join("; ");
-          setAnomalyBubble(`**Heads up:** ${urgent.length} high-impact ${urgent.length === 1 ? "signal" : "signals"} detected — ${names}. Click any insight in the panel to explore.`);
-        }
-      })
-      .catch(() => {});
-    return () => controller.abort();
-  }, [hasAnyKey, keyHeaders, useDemoData]);
-
   const handleCreateTicket = useCallback(async (title: string, description: string, priority?: string): Promise<{ url: string; key: string } | { error: string }> => {
     try {
       const res = await fetch("/api/tickets", {
@@ -711,9 +684,6 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
     setShowSuggestions(true);
-    setAnomalyDismissed(false);
-    setAnomalyBubble(null);
-    anomalySeenRef.current = false;
   }, [mode]);
 
   useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessage(msg, { skipFilterSuffix: true }) }), []);
@@ -880,24 +850,6 @@ Try one of the suggested queries below to get started.`;
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
-        {anomalyBubble && !anomalyDismissed && (
-          <div className="flex gap-3 max-w-4xl">
-            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-violet-500 to-purple-600 text-white">
-              <Bot className="w-4 h-4" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed">
-                <MemoizedMarkdown content={anomalyBubble} />
-              </div>
-              <button
-                onClick={() => setAnomalyDismissed(true)}
-                className="mt-1.5 text-[10px] text-muted-foreground hover:text-foreground underline"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
         {messages.map((msg) => (
           <div
             key={msg.id}
