@@ -224,7 +224,15 @@ const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wi
 const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprint", "what's being built", "implementation", "technical"];
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
 const FOLLOW_UP_KEYWORDS = ["both", "either", "them", "those", "that", "these", "it", "same", "else", "besides", "otherwise", "anything else", "something else", "what other", "other accounts", "other themes"];
-const LIST_KEYWORDS = ["show me", "list", "show the", "give me", "recent feedback", "top accounts", "top themes", "top issues", "top requests", "what are the", "which accounts", "which customers", "which companies", "which features", "what feedback", "what requests", "feedback from", "feedback about", "any feedback", "any requests"];
+const LIST_KEYWORDS = [
+  "show me", "list", "show the", "give me",
+  "recent feedback", "top accounts", "top themes", "top issues", "top requests",
+  "what are the", "which accounts", "which customers", "which companies", "which features",
+  "what feedback", "what requests", "feedback from", "feedback about", "any feedback", "any requests",
+  "who's", "who is", "what's happening with", "tell me about", "anything about", "what about",
+  "details on", "breakdown", "any churn", "any risks", "customers asking", "accounts asking", "tickets related",
+];
+const PLURAL_ITEM_NOUNS = ["accounts", "customers", "tickets", "issues", "items", "feedback", "requests", "themes", "companies", "notes", "complaints", "feature requests"];
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
 const USAGE_KEYWORDS = ["pendo", "usage", "activity", "history", "adoption", "behavior", "journey", "what are they doing", "what is this user doing", "what's this user doing", "engagement", "visited", "using the product", "how is", "how often", "who uses", "how many users", "usage of", "clicked", "feature usage", "page usage"];
 
@@ -434,6 +442,11 @@ function isListQuery(query: string): boolean {
   return LIST_KEYWORDS.some((kw) => q.includes(kw));
 }
 
+function hasPluralItemNoun(query: string): boolean {
+  const q = query.toLowerCase();
+  return PLURAL_ITEM_NOUNS.some((noun) => q.includes(noun));
+}
+
 function classifyQueryType(
   message: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
@@ -441,7 +454,10 @@ function classifyQueryType(
 ): QueryType {
   if (hasComparison) return "comparison";
   if (wantsCount(message)) return "count";
+  // List detection runs before the mid-conversation fallback so enumeration
+  // questions still get a table even deep into a thread.
   if (isListQuery(message)) return "list";
+  if (hasPluralItemNoun(message) && !wantsCount(message)) return "list";
   if (isLikelyFollowUp(message) || conversationHistory.filter((m) => m.role === "user").length >= 2) return "conversational";
   if (isBroadQuery(message) || message.length > 60) return "detailed";
   return "conversational";
@@ -483,7 +499,7 @@ const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
 
 CONSTRAINTS: Table is mandatory — do not omit it. No :--- in tables. No Next Steps unless explicitly asked. 200 words max total. Use actual customer/source names, not placeholders.`;
 
-const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. Include a compact "| Source | What | When |" table (up to 5 rows) only when the user asked to see, list, or show specific feedback items or accounts — skip otherwise. No Next Steps unless the user asks "what should we do." 150 words max.`;
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. ALWAYS include a compact "| Source | What | When |" table (up to 5 rows) whenever your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes — even if the user did not explicitly ask for a list. Skip the table only when the answer is a pure opinion/recommendation with fewer than 3 concrete sources. No Next Steps unless the user asks "what should we do." 150 words max.`;
 
 const COMPARISON_FORMAT = `Structure the response as a comparison:
 
@@ -497,6 +513,8 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 [2-3 bullet points highlighting what shifted and why it matters]
 
 CONSTRAINTS: Focus on what changed, not what stayed the same. 250 words max. No :--- in tables.`;
+
+const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** for the 1-3 most important facts in the body — critical numbers (e.g. "**7 accounts**"), named risks ("**churn risk at Acme**"), pivotal dates ("**Q4 renewal**"), or decisive outcomes. Do NOT bold entire sentences or more than 3 phrases. This is for scanability, not emphasis on everything.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -1478,11 +1496,11 @@ function getFormatInstructions(
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
     switch (qType) {
-      case "comparison": return COMPARISON_FORMAT;
-      case "list": return LIST_FORMAT;
-      case "conversational": return CONVERSATIONAL_FORMAT;
+      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}`;
       case "count": return SUMMARIZE_FORMAT;
-      default: return DETAILED_FORMAT;
+      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
     }
   }
   return SUMMARIZE_FORMAT;

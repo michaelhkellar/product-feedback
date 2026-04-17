@@ -63,7 +63,7 @@ export function CitationMarker({ index, sources }: CitationMarkerProps) {
         {index}
       </button>
       {open && (
-        <span className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-popover shadow-lg p-2.5 text-left block">
+        <span className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-background shadow-lg p-2.5 text-left block">
           <span className={cn("text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded", colorClass)}>
             {source.type}
           </span>

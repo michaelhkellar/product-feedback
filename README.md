@@ -4,6 +4,19 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 
 > Demo data in this repository is synthetic and intentionally fictionalized for safe demos and public code sharing.
 
+## What's New
+
+- **Conversation threads** — save, name, and resume previous chat sessions via the thread history menu
+- **Inline citations** — every AI claim links back to its source with `[n]` markers; hover to preview
+- **Entity drawer** — click any customer or feature name in the chat to open a side panel with their full history, analytics context, and sentiment breakdown
+- **Global filter bar** — scope the entire app by time range, sentiment, or theme; persists across sessions
+- **Pivot detection** — say "ConnectWise is in progress, what else?" and the agent correctly shifts focus to other topics
+- **Smarter tables** — the Source / What / When table appears whenever the answer enumerates 3+ concrete items, mid-conversation or not
+- **Bold highlights** — the AI bolds 1–3 key facts per response (counts, risks, dates) for at-a-glance scanning
+- **Pinned insights** — pin any insight card in the Insights panel to surface it first
+- **Change detection** — insight cards show trend arrows and "New" badges when something shifts day-over-day
+- **Answer provenance** — open the trace modal on any message to see which query type was chosen, which sources were retrieved, and why
+
 ## Architecture
 
 ```
@@ -79,8 +92,21 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 - **Content Sanitization**: All content is sanitized before writing to external systems to prevent injection attacks
 - **Rate Limiting**: Write endpoints enforce rate limits to prevent abuse
 
+### Conversation & Navigation
+- **Conversation Threads**: Save, name, rename, and reload past chat sessions — stored locally in IndexedDB via a thread history dropdown
+- **Entity Drawer**: Click any customer or feature name in a chat response to open a detail panel with feedback history, analytics context, and a sentiment breakdown
+- **Inline Citations**: Every factual claim includes a numbered `[n]` marker; hover to preview the source without leaving the chat
+- **Answer Provenance**: Every message has a trace button that shows which query type the agent chose, which documents were retrieved, and any pivot/exclusion decisions
+- **Pivot Detection**: Phrases like "ConnectWise is in progress, what else?" are detected and the agent excludes the mentioned entity from retrieval, giving diverse results
+- **Progressive Disclosure**: Long responses wrap distinct sub-topics in collapsible `<details>` blocks to reduce visual noise
+
 ### Layout & UX
 - **Three-Panel Layout**: Data sources (left), chat agent (center), live insights (right)
+- **Global Filter Bar**: Scope all panels simultaneously by time range, sentiment, and/or theme — persisted to localStorage
+- **Pinned Insights**: Pin important insight cards to keep them pinned to the top of the Insights panel
+- **Change Detection**: Insight cards show trend arrows and "New" / "Changed" badges when data shifts day-over-day
+- **Bold Highlights**: The AI bolds 1–3 key facts per response (counts, risks, pivotal dates) for fast scanning
+- **Smarter Tables**: A Source / What / When table is automatically included whenever an answer enumerates 3+ concrete items — even mid-conversation
 - **Preview & Edit**: All generated PRDs and tickets include a preview step with inline editing before creation
 - **Data Transparency**: Active AI provider and model displayed in the chat interface
 - **v0-Ready**: Built with Next.js 14 + Tailwind + shadcn-style components, designed to run in Vercel's v0
@@ -169,9 +195,12 @@ Once the app is running, try asking the agent:
 
 ### Summarize Mode
 - "What accounts are at risk of churning?"
-- "Give me an executive summary of all feedback"
+- "Show me all feedback from enterprise accounts in the last 30 days"
 - "What's happening with SSO — who's affected and what's the revenue impact?"
 - "Tell me about the AI competitive gap"
+- "Which customers are asking about reporting?"
+- "ConnectWise is in progress — what else do you have?" *(pivot detection)*
+- "Any churn risks I should know about this week?"
 
 ### Write PRD Mode
 - "Write a PRD for the SSO issues our enterprise customers are facing"
@@ -190,7 +219,8 @@ Once the app is running, try asking the agent:
 │   ├── api/
 │   │   ├── chat/route.ts                   # Chat endpoint (agent + RAG, mode-aware)
 │   │   ├── documents/route.ts              # Confluence page creation (rate-limited)
-│   │   ├── insights/route.ts               # Pre-computed + AI insights
+│   │   ├── entity/route.ts                 # Entity detail lookups (feedback + analytics)
+│   │   ├── insights/route.ts               # Pre-computed + AI insights (time-filtered)
 │   │   ├── tickets/route.ts                # Jira/Linear ticket creation (rate-limited)
 │   │   ├── settings/
 │   │   │   ├── atlassian-resources/route.ts # Fetch Jira projects & Confluence spaces
@@ -209,12 +239,20 @@ Once the app is running, try asking the agent:
 │   └── globals.css                         # Tailwind + dark theme
 ├── components/
 │   ├── api-key-provider.tsx                # Encrypted client-side key storage
-│   ├── chat-interface.tsx                  # Chat UX, mode tabs, preview/edit flows
-│   ├── insights-panel.tsx                  # Live insights with filtering
+│   ├── chat-interface.tsx                  # Chat UX, mode tabs, citations, entity spans, threads
+│   ├── citation-marker.tsx                 # Inline [n] citation markers with hover preview
+│   ├── entity-drawer.tsx                   # Detail panel for customer/feature entities
+│   ├── entity-drawer-provider.tsx          # Context for cross-panel entity navigation
+│   ├── filter-bar.tsx                      # Global filter bar (time, sentiment, theme)
+│   ├── filter-provider.tsx                 # Filter state context + localStorage persistence
+│   ├── insights-panel.tsx                  # Live insights with filtering and pinned cards
 │   ├── settings-dialog.tsx                 # Provider & model configuration
-│   └── source-panel.tsx                    # Data sources browser
+│   ├── source-panel.tsx                    # Data sources browser (filter-aware)
+│   ├── sparkline.tsx                       # Reusable SVG sparkline + SentimentBar components
+│   ├── thread-menu.tsx                     # Conversation thread history dropdown
+│   └── trace-modal.tsx                     # Answer provenance / agent trace viewer
 ├── lib/
-│   ├── agent.ts                            # Core agent logic, prompts, RAG orchestration
+│   ├── agent.ts                            # Core agent logic, prompts, RAG, pivot detection
 │   ├── ai-provider.ts                      # AI provider abstraction (Gemini/Anthropic/OpenAI)
 │   ├── amplitude.ts                        # Amplitude analytics client (overview + targeted lookups)
 │   ├── api-keys.ts                         # Client-side key management & header building
@@ -223,11 +261,15 @@ Once the app is running, try asking the agent:
 │   ├── data-fetcher.ts                     # Data aggregation + caching layer
 │   ├── demo-data.ts                        # Rich synthetic demo dataset
 │   ├── gemini.ts                           # Gemini API client
-│   ├── insights-generator.ts              # Programmatic + AI insight generation
+│   ├── insight-snapshots.ts                # Daily insight snapshots + change detection
+│   ├── insights-generator.ts               # Programmatic + AI insight generation
 │   ├── linear.ts                           # Linear API client (issue reading + ticket creation)
 │   ├── pendo.ts                            # Pendo API client (overview + targeted lookups)
+│   ├── pins.ts                             # IndexedDB storage for pinned insight IDs
 │   ├── posthog.ts                          # PostHog analytics client (HogQL queries)
 │   ├── productboard.ts                     # Productboard API client
+│   ├── temporal.ts                         # Time-series aggregation for sparklines
+│   ├── threads.ts                          # IndexedDB conversation thread storage
 │   ├── ticket-provider.ts                  # Ticket provider abstraction + sanitization
 │   ├── types.ts                            # TypeScript types
 │   ├── utils.ts                            # Tailwind utilities

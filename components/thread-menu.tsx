@@ -76,14 +76,14 @@ export function ThreadMenu({
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 w-72 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+        <div className="absolute top-full left-0 mt-1 w-80 bg-background border border-border rounded-xl shadow-xl z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Thread History</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Thread History</span>
             <div className="flex items-center gap-1">
               {hasMessages && (
                 <button
                   onClick={() => { onSaveThread(); setOpen(false); }}
-                  className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                  className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
                 >
                   <Check className="w-3 h-3" />
                   Save current
@@ -91,7 +91,7 @@ export function ThreadMenu({
               )}
               <button
                 onClick={() => { onNewThread(); setOpen(false); }}
-                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-muted-foreground hover:bg-muted transition-colors"
+                className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium text-muted-foreground hover:bg-muted transition-colors"
               >
                 <Plus className="w-3 h-3" />
                 New
@@ -101,18 +101,17 @@ export function ThreadMenu({
 
           <div className="max-h-72 overflow-y-auto">
             {threads.length === 0 ? (
-              <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                No saved threads yet.
-                <br />
-                <span className="text-[10px]">Save this conversation to start.</span>
+              <div className="px-3 py-6 text-center text-muted-foreground">
+                <p className="text-sm">No saved threads yet.</p>
+                <p className="text-xs mt-1">Save this conversation to start.</p>
               </div>
             ) : (
               threads.map((t) => (
                 <div
                   key={t.id}
                   className={cn(
-                    "flex items-center gap-2 px-3 py-2 border-b border-border/50 hover:bg-accent/30 transition-colors group",
-                    t.id === currentThreadId && "bg-primary/5"
+                    "flex items-center gap-2 px-3 py-2.5 border-b border-border/40 hover:bg-accent/30 transition-colors group",
+                    t.id === currentThreadId && "bg-primary/10"
                   )}
                 >
                   {editingId === t.id ? (
@@ -140,23 +139,23 @@ export function ThreadMenu({
                         onClick={() => { onLoadThread(t); setOpen(false); }}
                         className="flex-1 text-left"
                       >
-                        <div className="text-xs font-medium line-clamp-1">{t.title || generateThreadTitle(t.messages)}</div>
-                        <div className="text-[9px] text-muted-foreground mt-0.5">
+                        <div className="text-sm font-semibold line-clamp-2 leading-snug">{t.title || generateThreadTitle(t.messages)}</div>
+                        <div className="text-[11px] text-muted-foreground mt-1">
                           {new Date(t.updatedAt).toLocaleDateString()} · {t.messages.length} msgs · {t.mode}
                         </div>
                       </button>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                         <button
                           onClick={() => { setEditingId(t.id); setEditTitle(t.title || generateThreadTitle(t.messages)); }}
-                          className="w-5 h-5 rounded hover:bg-muted flex items-center justify-center text-muted-foreground"
+                          className="w-6 h-6 rounded hover:bg-muted flex items-center justify-center text-muted-foreground"
                         >
-                          <Pencil className="w-2.5 h-2.5" />
+                          <Pencil className="w-3 h-3" />
                         </button>
                         <button
                           onClick={() => handleDelete(t.id)}
-                          className="w-5 h-5 rounded hover:bg-red-500/10 flex items-center justify-center text-muted-foreground hover:text-red-500"
+                          className="w-6 h-6 rounded hover:bg-red-500/10 flex items-center justify-center text-muted-foreground hover:text-red-500"
                         >
-                          <Trash2 className="w-2.5 h-2.5" />
+                          <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
                     </>
