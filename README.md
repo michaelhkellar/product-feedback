@@ -1,6 +1,6 @@
 # Customer Feedback Intelligence Agent
 
-An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard, Attention, Zendesk, Intercom, and Slack — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Summarize** feedback, **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
+An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard and Attention — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Summarize** feedback, **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
 
 > Demo data in this repository is synthetic and intentionally fictionalized for safe demos and public code sharing.
 
@@ -285,7 +285,7 @@ Once the app is running, try asking the agent:
 All user-generated and AI-generated content is sanitized before being written to external systems (Jira, Linear, Confluence). The sanitization layer in `lib/ticket-provider.ts` strips potentially dangerous content while preserving markdown formatting.
 
 ### Rate Limiting
-Write endpoints (`/api/tickets` and `/api/documents`) enforce in-memory rate limiting to prevent abuse. Requests exceeding the limit receive a `429 Too Many Requests` response.
+Write endpoints (`/api/tickets`, `/api/documents`) and the chat endpoint enforce in-memory per-client rate limiting to prevent abuse. Rate limit maps include TTL-based eviction to prevent unbounded memory growth. Requests exceeding the limit receive a `429 Too Many Requests` response. Client identity is derived from the connection IP, not from the `x-forwarded-for` header, to prevent spoofing.
 
 ### Data Transparency
 The chat interface displays the active AI provider and model name so users always know where their data is being sent. The Settings dialog includes notices when selecting AI providers about data being transmitted to third-party services.

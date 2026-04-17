@@ -1363,7 +1363,9 @@ export async function chat(
 
   const budget = MAX_CONTEXT_TOKENS[effectiveContextMode] || 6000;
   if (estimateTokens(context) > budget) {
-    context = context.slice(0, Math.floor(budget * 3.5));
+    const cutoff = Math.floor(budget * 3.5);
+    const lastNewline = context.lastIndexOf("\n", cutoff);
+    context = context.slice(0, lastNewline > 0 ? lastNewline : cutoff);
   }
 
   const total = scopedData.feedback.length + scopedData.features.length + scopedData.calls.length + scopedData.insights.length + scopedData.jiraIssues.length + scopedData.confluencePages.length + scopedData.linearIssues.length;

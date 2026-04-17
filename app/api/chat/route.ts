@@ -9,12 +9,21 @@ const MAX_MESSAGE_LENGTH = 10_000;
 const MAX_HISTORY_ITEMS = 50;
 const MAX_SOURCE_IDS = 200;
 const CHAT_COOLDOWN_MS = 2_000;
+const RATE_LIMIT_TTL_MS = 60_000;
 const chatLastRequest = new Map<string, number>();
+
+function evictExpired(map: Map<string, number>, ttlMs: number): void {
+  const cutoff = Date.now() - ttlMs;
+  Array.from(map.entries()).forEach(([key, ts]) => {
+    if (ts < cutoff) map.delete(key);
+  });
+}
 
 export async function POST(req: NextRequest) {
   try {
-    const clientKey = req.headers.get("x-forwarded-for") || req.ip || "unknown";
+    const clientKey = req.ip || "unknown";
     const now = Date.now();
+    evictExpired(chatLastRequest, RATE_LIMIT_TTL_MS);
     const lastTime = chatLastRequest.get(clientKey) || 0;
     if (now - lastTime < CHAT_COOLDOWN_MS) {
       return NextResponse.json({ error: "Please wait a moment before sending another message" }, { status: 429 });
@@ -34,7 +43,7 @@ export async function POST(req: NextRequest) {
       history = history.slice(-MAX_HISTORY_ITEMS);
     }
     if (Array.isArray(accumulatedSourceIds)) {
-      accumulatedSourceIds = accumulatedSourceIds.slice(0, MAX_SOURCE_IDS);
+      accumulatedSourceIds = Array.from(new Set(accumulatedSourceIds)).slice(0, MAX_SOURCE_IDS);
     }
 
     const keys = {

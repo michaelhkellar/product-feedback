@@ -261,7 +261,15 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
 function fixMarkdown(text: string): string {
   if (!text.includes("|")) return text;
 
-  let result = text;
+  // Preserve code blocks so pipes inside them don't trigger table detection
+  const codeBlocks: string[] = [];
+  const withPlaceholders = text.replace(/```[\s\S]*?```/g, (m) => {
+    codeBlocks.push(m);
+    return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+  });
+  if (!withPlaceholders.includes("|")) return text;
+
+  let result = withPlaceholders;
 
   const tablePattern = /(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*(\|\s*-{2,}\s*(?:\|\s*-{2,}\s*)+\|)\s*((?:\|[^|\n]+(?:\|[^|\n]+)+\|\s*)+)/g;
 
@@ -313,6 +321,11 @@ function fixMarkdown(text: string): string {
   }
 
   result = lines.join("\n");
+
+  // Restore code blocks
+  if (codeBlocks.length > 0) {
+    result = result.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)]);
+  }
 
   return result;
 }

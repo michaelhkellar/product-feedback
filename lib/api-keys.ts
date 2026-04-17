@@ -229,7 +229,11 @@ async function decryptKeys(payload: EncryptedPayload, key: CryptoKey): Promise<A
     toArrayBuffer(cipherText)
   );
   const json = new TextDecoder().decode(plainBuffer);
-  return normalizeKeys(JSON.parse(json) as Partial<ApiKeyState>);
+  try {
+    return normalizeKeys(JSON.parse(json) as Partial<ApiKeyState>);
+  } catch {
+    return { ...EMPTY_KEYS };
+  }
 }
 
 export async function loadKeys(): Promise<ApiKeyState> {

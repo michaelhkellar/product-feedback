@@ -30,6 +30,7 @@ export class InMemoryVectorStore {
   private documents: VectorDocument[] = [];
   private idf: Map<string, number> = new Map();
   private tfidf: Map<string, Map<string, number>> = new Map();
+  private docById: Map<string, VectorDocument> = new Map();
 
   addFeedback(items: FeedbackItem[]) {
     for (const item of items) {
@@ -163,6 +164,7 @@ export class InMemoryVectorStore {
         vec.set(token, tfVal * (this.idf.get(token) || 0));
       });
       this.tfidf.set(doc.id, vec);
+      this.docById.set(doc.id, doc);
     }
   }
 
@@ -218,7 +220,7 @@ export class InMemoryVectorStore {
   }
 
   getDocumentById(id: string): VectorDocument | undefined {
-    return this.documents.find((d) => d.id === id);
+    return this.docById.get(id);
   }
 
   getStats() {

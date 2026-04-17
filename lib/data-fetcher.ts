@@ -41,7 +41,8 @@ function cacheKey(
   amplitudeKey?: string,
   analyticsProvider?: string,
   posthogKey?: string,
-  analyticsDays?: number
+  analyticsDays?: number,
+  posthogHost?: string
 ): string {
   const parts = [
     pbKey ? `pb:${shortHash(pbKey)}` : "",
@@ -49,6 +50,7 @@ function cacheKey(
     pendoKey ? `pendo:${shortHash(pendoKey)}` : "",
     amplitudeKey ? `amp:${shortHash(amplitudeKey)}` : "",
     posthogKey ? `ph:${shortHash(posthogKey)}` : "",
+    posthogHost ? `phhost:${shortHash(posthogHost)}` : "",
     atlDomain ? `atl:${shortHash(atlDomain)}` : "",
     `demo:${demo}`,
     `ap:${analyticsProvider || "pendo"}`,
@@ -160,7 +162,14 @@ async function fetchLiveData(
     );
   }
 
-  if (fetches.length > 0) await Promise.allSettled(fetches);
+  if (fetches.length > 0) {
+    const results = await Promise.allSettled(fetches);
+    results.forEach((result, i) => {
+      if (result.status === "rejected") {
+        console.warn(`Data fetch ${i} failed:`, result.reason);
+      }
+    });
+  }
 
   return { feedback, features, calls, insights, jiraIssues, confluencePages, linearIssues, analyticsOverview };
 }
@@ -197,7 +206,7 @@ export async function getData(
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 

@@ -3,10 +3,18 @@ import { createConfluencePage } from "@/lib/atlassian";
 import { sanitizeForProvider } from "@/lib/ticket-provider";
 
 const COOLDOWN_MS = 10_000;
+const RATE_LIMIT_TTL_MS = 120_000;
 const lastCreation = new Map<string, number>();
 
+function evictExpired(map: Map<string, number>, ttlMs: number): void {
+  const cutoff = Date.now() - ttlMs;
+  Array.from(map.entries()).forEach(([key, ts]) => {
+    if (ts < cutoff) map.delete(key);
+  });
+}
+
 function getRateLimitKey(req: NextRequest): string {
-  return req.headers.get("x-forwarded-for") || req.ip || "unknown";
+  return req.ip || "unknown";
 }
 
 function escapeHtml(text: string): string {
@@ -75,6 +83,7 @@ export async function POST(req: NextRequest) {
   try {
     const clientKey = getRateLimitKey(req);
     const now = Date.now();
+    evictExpired(lastCreation, RATE_LIMIT_TTL_MS);
     const lastTime = lastCreation.get(clientKey) || 0;
     if (now - lastTime < COOLDOWN_MS) {
       return NextResponse.json(
