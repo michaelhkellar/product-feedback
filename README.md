@@ -12,6 +12,7 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 - **Stale commitment detection** — new insight rule flags Jira/Linear issues stuck in "planned" or "in-progress" for 90+ days with customer feedback overlap
 - **Account signal annotation** — when multiple feedback items from the same company appear in evidence, they're annotated `(1 of N from Company)` so the AI correctly treats them as one customer voice
 - **Live Gemini model list** — the Gemini model dropdown now fetches available models directly from the Google AI API (with fallback), so new models appear without a code change
+- **Complete connection status** — the "What's connected" indicator in the Sources panel now shows all 10 integrations (Gemini, Anthropic, OpenAI, Productboard, Attention, Pendo, Amplitude, PostHog, Atlassian, Linear)
 - **Linear in AI insights** — Linear issues now included in the AI-generated insights prompt alongside Jira
 - **Conversation threads** — save, name, and resume previous chat sessions via the thread history menu
 - **Inline citations** — every AI claim links back to its source with `[n]` markers; hover to preview

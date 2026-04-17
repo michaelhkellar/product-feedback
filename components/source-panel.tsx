@@ -604,9 +604,15 @@ export function SourcePanel({
                 <Settings className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] text-muted-foreground font-medium">
                   {status.geminiKey.configured ||
+                  status.anthropicKey?.configured ||
+                  status.openaiKey?.configured ||
                   status.productboardKey.configured ||
                   status.attentionKey.configured ||
-                  status.pendoKey?.configured
+                  status.pendoKey?.configured ||
+                  status.amplitudeKey?.configured ||
+                  status.posthogKey?.configured ||
+                  status.atlassianKey?.configured ||
+                  status.linearKey?.configured
                     ? "Manage API keys"
                     : "Add API keys to connect live data"}
                 </p>
@@ -614,10 +620,15 @@ export function SourcePanel({
               <div className="flex items-center justify-center gap-2 text-[9px] flex-wrap">
                 {[
                   { label: "Gemini", configured: status.geminiKey.configured },
+                  { label: "Anthropic", configured: status.anthropicKey?.configured },
+                  { label: "OpenAI", configured: status.openaiKey?.configured },
                   { label: "Productboard", configured: status.productboardKey.configured },
                   { label: "Attention", configured: status.attentionKey.configured },
                   { label: "Pendo", configured: status.pendoKey?.configured },
+                  { label: "Amplitude", configured: status.amplitudeKey?.configured },
+                  { label: "PostHog", configured: status.posthogKey?.configured },
                   { label: "Atlassian", configured: status.atlassianKey?.configured },
+                  { label: "Linear", configured: status.linearKey?.configured },
                 ].map((s) => (
                   <span
                     key={s.label}
