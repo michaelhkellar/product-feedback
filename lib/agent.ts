@@ -46,10 +46,21 @@ export interface AgentData {
   analyticsOverview: AnalyticsOverview | null;
 }
 
+export interface ChatTrace {
+  detectedIntent: "summarize" | "prd" | "ticket";
+  queryType: "detailed" | "conversational" | "comparison" | "count";
+  timeRange?: { label: string; start?: string; end?: string };
+  themesDetected: string[];
+  retrieval: { query: string; topResults: { id: string; type: string; score: number }[] };
+  contextMode: "focused" | "standard" | "deep";
+  tokensUsed: { input: number; output: number; total: number };
+}
+
 export interface ChatResult {
   response: string;
   sources: { type: string; id: string; title: string; url?: string }[];
   tokenEstimate: { input: number; output: number; total: number };
+  trace?: ChatTrace;
 }
 
 function estimateTokens(text: string): number {
@@ -450,9 +461,9 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 Include Next Steps only if the answer implies actionable follow-up. Skip if the question is purely informational.
 
-CONSTRAINTS: 300 words max. No :--- in tables. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count.`;
+CONSTRAINTS: 300 words max. No :--- in tables. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
 
-const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No table unless comparing items. No Next Steps unless the user asks "what should we do." 150 words max.`;
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No table unless comparing items. No Next Steps unless the user asks "what should we do." 150 words max.`;
 
 const COMPARISON_FORMAT = `Structure the response as a comparison:
 
@@ -1245,10 +1256,24 @@ export async function chat(
   const followUp = isLikelyFollowUp(userMessage);
   const priorUserTurns = conversationHistory.filter((m) => m.role === "user").length;
   const skipHistory = !isPrdOrTicketHistory && !followUp && priorUserTurns < 2;
-  const historySlice = isPrdOrTicketHistory ? conversationHistory : skipHistory ? [] : conversationHistory.slice(-3);
-  const historyText = historySlice
+
+  // Smarter history: if > 6 turns, summarize older turns into a single assistant note
+  let historySlice = isPrdOrTicketHistory ? conversationHistory : skipHistory ? [] : conversationHistory.slice(-3);
+  let summaryPreamble = "";
+  if (!skipHistory && conversationHistory.length > 6) {
+    const older = conversationHistory.slice(0, -4);
+    const recent = conversationHistory.slice(-4);
+    const topicsInOlder = older
+      .filter((m) => m.role === "user")
+      .map((m) => m.content.slice(0, 80))
+      .join("; ");
+    summaryPreamble = `Earlier in this conversation the user asked about: ${topicsInOlder}\n`;
+    historySlice = recent;
+  }
+
+  const historyText = (summaryPreamble + historySlice
     .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content.slice(0, isPrdOrTicketHistory ? 500 : 200)}`)
-    .join("\n");
+    .join("\n")).trim();
 
   const systemPrompt = getSystemPrompt(mode);
   const hasComparison = !!timeRange?.compare;
@@ -1270,15 +1295,52 @@ ${formatInstructions}`;
   const aiProvider = keys.aiProvider || "gemini";
   const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
 
+  // Build trace metadata
+  const detectedThemes = Array.from(
+    new Set(
+      results
+        .filter((r) => r.document.type === "feedback")
+        .flatMap((r) => scopedData.feedback.find((f) => f.id === r.document.id)?.themes || [])
+        .concat(
+          results
+            .filter((r) => r.document.type === "insight")
+            .flatMap((r) => scopedData.insights.find((i) => i.id === r.document.id)?.themes || [])
+        )
+    )
+  ).slice(0, 10);
+
+  const queryTypeLabel: ChatTrace["queryType"] = timeRange?.compare
+    ? "comparison"
+    : countQuery
+      ? "count"
+      : detailed
+        ? "detailed"
+        : "conversational";
+
+  const trace: ChatTrace = {
+    detectedIntent: mode as "summarize" | "prd" | "ticket",
+    queryType: queryTypeLabel,
+    timeRange: timeRange ? { label: timeRange.label, start: timeRange.start.toISOString(), end: timeRange.end.toISOString() } : undefined,
+    themesDetected: detectedThemes,
+    retrieval: {
+      query: searchQueries[0] || userMessage,
+      topResults: rawResults.slice(0, 8).map((r) => ({ id: r.document.id, type: r.document.type, score: Math.round(r.score * 100) / 100 })),
+    },
+    contextMode: effectiveContextMode,
+    tokensUsed: { input: inputTokens, output: 0, total: inputTokens },
+  };
+
   if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
     const provider = getAIProvider(aiProvider);
     const aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
     if (aiResponse) {
       const outputTokens = estimateTokens(aiResponse);
+      const finalTrace = { ...trace, tokensUsed: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens } };
       return {
         response: aiResponse,
         sources,
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
+        trace: finalTrace,
       };
     }
   }
@@ -1292,7 +1354,7 @@ ${formatInstructions}`;
   }
 
   const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, scopedData);
-  return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 } };
+  return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace };
 }
 
 function getSystemPrompt(mode: InteractionMode): string {

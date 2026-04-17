@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getData } from "@/lib/data-fetcher";
 import { generateInsights } from "@/lib/insights-generator";
 import { AIProviderType } from "@/lib/ai-provider";
+import { Insight } from "@/lib/types";
+
+function filterInsightsByTime(insights: Insight[], start: string, end: string): Insight[] {
+  const s = new Date(start).getTime();
+  const e = new Date(end).getTime();
+  if (isNaN(s) || isNaN(e)) return insights;
+  return insights.filter((i) => {
+    const d = new Date(i.createdAt || "").getTime();
+    if (isNaN(d)) return true; // keep if undated
+    return d >= s && d <= e;
+  });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,8 +53,16 @@ export async function GET(req: NextRequest) {
     const isDemo = !hasAnyLiveKey && useDemoData;
     const atlJiraFilter = req.headers.get("x-atlassian-jira-filter") || undefined;
     const atlConfluenceFilter = req.headers.get("x-atlassian-confluence-filter") || undefined;
+    const timeStart = req.headers.get("x-time-start") || undefined;
+    const timeEnd = req.headers.get("x-time-end") || undefined;
+
     const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost, linearKey, linearTeamId);
-    const insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
+    let insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
+
+    // Apply time filter if provided (filters insights whose lastSeen/firstSeen falls in range)
+    if (timeStart && timeEnd) {
+      insights = filterInsightsByTime(insights, timeStart, timeEnd);
+    }
 
     return NextResponse.json({ insights, isDemo });
   } catch (error) {

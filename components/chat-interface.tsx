@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, KeyboardEvent, useCallback, forwardRef, useImperativeHandle, memo, useMemo } from "react";
+import React, { useState, useRef, useEffect, KeyboardEvent, useCallback, forwardRef, useImperativeHandle, memo, useMemo } from "react";
 import { useApiKeys } from "./api-key-provider";
 import { ChatMessage } from "@/lib/types";
 import { InteractionMode } from "@/lib/agent";
@@ -29,6 +29,14 @@ import {
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { CitationMarker } from "./citation-marker";
+import { TraceModal } from "./trace-modal";
+import { useFilters, timeRangeToNL } from "./filter-provider";
+import { ThreadMenu } from "./thread-menu";
+import { saveThread, generateThreadTitle, Thread } from "@/lib/threads";
+import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
 
 const SUMMARIZE_QUERIES = [
   {
@@ -103,11 +111,147 @@ export interface ChatInterfaceHandle {
 
 const remarkPlugins = [remarkGfm];
 
-const MemoizedMarkdown = memo(function MemoizedMarkdown({ content }: { content: string }) {
+// Allow details/summary and standard HTML while blocking scripts, iframes, on* handlers
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    "details",
+    "summary",
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    "*": [
+      ...(defaultSchema.attributes?.["*"] || []),
+      "className",
+      "class",
+    ],
+  },
+};
+
+const rehypePlugins = [rehypeRaw, [rehypeSanitize, sanitizeSchema]] as Parameters<typeof ReactMarkdown>[0]["rehypePlugins"];
+
+type MsgSource = { type: string; id: string; title: string; url?: string };
+
+type KnownEntity = { name: string; kind: EntityKind };
+
+/**
+ * Recursively walks React children and wraps known entity name occurrences
+ * with clickable spans that open the entity drawer.
+ */
+function injectEntitySpans(
+  children: React.ReactNode,
+  entities: KnownEntity[],
+  openEntity: (e: { name: string; kind: EntityKind }) => void
+): React.ReactNode {
+  if (!entities.length) return children;
+  return React.Children.map(children, (child) => {
+    if (typeof child === "string" && child.trim()) {
+      // Build a regex matching any known entity name (longest first, word-boundary anchored)
+      const sorted = [...entities].sort((a, b) => b.name.length - a.name.length);
+      const pattern = new RegExp(
+        `\\b(${sorted.map((e) => e.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`,
+        "gi"
+      );
+      const parts = child.split(pattern);
+      if (parts.length === 1) return child;
+      return parts.map((part, i) => {
+        const match = entities.find((e) => e.name.toLowerCase() === part.toLowerCase());
+        if (match) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => openEntity({ name: match.name, kind: match.kind })}
+              className="underline decoration-dotted underline-offset-2 cursor-pointer hover:text-primary transition-colors"
+              title={`View ${match.kind}: ${match.name}`}
+            >
+              {part}
+            </button>
+          );
+        }
+        return part;
+      });
+    }
+    if (React.isValidElement(child) && child.props) {
+      const el = child as React.ReactElement<{ children?: React.ReactNode }>;
+      const newChildren = injectEntitySpans(el.props.children, entities, openEntity);
+      if (newChildren !== el.props.children) {
+        return React.cloneElement(el, {}, newChildren);
+      }
+    }
+    return child;
+  });
+}
+
+/** Recursively walks React children and replaces "[n]" text tokens with CitationMarker components. */
+function injectCitations(children: React.ReactNode, sources: MsgSource[]): React.ReactNode {
+  if (!sources.length) return children;
+  return React.Children.map(children, (child) => {
+    if (typeof child === "string") {
+      const parts = child.split(/(\[\d+\])/g);
+      if (parts.length === 1) return child;
+      return parts.map((part, i) => {
+        const m = part.match(/^\[(\d+)\]$/);
+        if (m) return <CitationMarker key={i} index={parseInt(m[1], 10)} sources={sources} />;
+        return part;
+      });
+    }
+    // Recurse into React elements so [n] inside <strong>, <em>, <code>, etc. is processed
+    if (React.isValidElement(child) && child.props) {
+      const el = child as React.ReactElement<{ children?: React.ReactNode }>;
+      const newChildren = injectCitations(el.props.children, sources);
+      if (newChildren !== el.props.children) {
+        return React.cloneElement(el, {}, newChildren);
+      }
+    }
+    return child;
+  });
+}
+
+const MemoizedMarkdown = memo(function MemoizedMarkdown({
+  content,
+  sources,
+  entities,
+  openEntity,
+}: {
+  content: string;
+  sources?: MsgSource[];
+  entities?: KnownEntity[];
+  openEntity?: (e: { name: string; kind: EntityKind }) => void;
+}) {
   const processed = useMemo(() => fixMarkdown(content), [content]);
+  const srcs = sources || [];
+  const ents = entities || [];
+
+  function enrich(children: React.ReactNode): React.ReactNode {
+    let result = injectCitations(children, srcs);
+    if (ents.length && openEntity) result = injectEntitySpans(result, ents, openEntity);
+    return result;
+  }
+
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <ReactMarkdown remarkPlugins={remarkPlugins}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={{
+          p: ({ children }) => <p>{enrich(children)}</p>,
+          li: ({ children }) => <li>{enrich(children)}</li>,
+          td: ({ children }) => <td>{enrich(children)}</td>,
+          details: ({ children }) => (
+            <details className="group my-2 rounded-lg border border-border overflow-hidden">
+              {children}
+            </details>
+          ),
+          summary: ({ children }) => (
+            <summary className="flex items-center justify-between px-3 py-2 cursor-pointer text-xs font-medium bg-muted hover:bg-accent transition-colors list-none [&::-webkit-details-marker]:hidden">
+              <span>{children}</span>
+              <ChevronDown className="w-3 h-3 text-muted-foreground transition-transform group-open:rotate-180 flex-shrink-0" />
+            </summary>
+          ),
+        }}
+      >
         {processed}
       </ReactMarkdown>
     </div>
@@ -398,6 +542,8 @@ function PrdPreview({
 
 export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(function ChatInterface({ className }, ref) {
   const { keys, keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
+  const { filters } = useFilters();
+  const { openEntity } = useEntityDrawer();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -406,6 +552,10 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [sessionTokens, setSessionTokens] = useState(0);
   const [mode, setMode] = useState<InteractionMode>("summarize");
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
+  const [anomalyDismissed, setAnomalyDismissed] = useState(false);
+  const [anomalyBubble, setAnomalyBubble] = useState<string | null>(null);
+  const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
+  const anomalySeenRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -473,6 +623,30 @@ Try one of the suggested queries below to get started.`;
     }
   }, [input]);
 
+  // Proactive anomaly bubble: check insights once per session for high-confidence risks/anomalies
+  useEffect(() => {
+    if (anomalySeenRef.current || anomalyDismissed || !hasAnyKey) return;
+    anomalySeenRef.current = true;
+    const controller = new AbortController();
+    fetch("/api/insights", {
+      headers: { ...keyHeaders, "x-use-demo": useDemoData ? "true" : "false" },
+      signal: controller.signal,
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const urgent = (data.insights || []).filter(
+          (i: { type: string; confidence: number; impact: string }) =>
+            (i.type === "anomaly" || i.type === "risk") && i.confidence >= 0.7 && i.impact === "high"
+        );
+        if (urgent.length > 0) {
+          const names = urgent.slice(0, 3).map((i: { title: string }) => i.title).join("; ");
+          setAnomalyBubble(`**Heads up:** ${urgent.length} high-impact ${urgent.length === 1 ? "signal" : "signals"} detected — ${names}. Click any insight in the panel to explore.`);
+        }
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [hasAnyKey, keyHeaders, useDemoData]);
+
   const handleCreateTicket = useCallback(async (title: string, description: string, priority?: string): Promise<{ url: string; key: string } | { error: string }> => {
     try {
       const res = await fetch("/api/tickets", {
@@ -507,11 +681,55 @@ Try one of the suggested queries below to get started.`;
     }
   }, [keyHeaders, keys.atlassianConfluenceFilter]);
 
-  useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessage(msg) }), []);
+  const handleSaveThread = useCallback(async () => {
+    const relevantMessages = messages.filter((m) => m.id !== "welcome" && m.role !== "system");
+    if (relevantMessages.length === 0) return;
+    const id = currentThreadId || `thread-${Date.now()}`;
+    const thread: Thread = {
+      id,
+      title: generateThreadTitle(relevantMessages),
+      messages: relevantMessages,
+      accumulatedSourceIds: Array.from(accumulatedSourceIds),
+      mode,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await saveThread(thread);
+    setCurrentThreadId(id);
+  }, [messages, accumulatedSourceIds, mode, currentThreadId]);
 
-  async function sendMessage(text?: string) {
-    const content = text || input.trim();
+  const handleLoadThread = useCallback((thread: Thread) => {
+    setMessages([...thread.messages]);
+    setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
+    setMode(thread.mode);
+    setCurrentThreadId(thread.id);
+    setShowSuggestions(false);
+  }, []);
+
+  const handleNewThread = useCallback(() => {
+    setMessages([]);
+    setAccumulatedSourceIds(new Set());
+    setCurrentThreadId(null);
+    setShowSuggestions(true);
+    setAnomalyDismissed(false);
+    setAnomalyBubble(null);
+    anomalySeenRef.current = false;
+  }, [mode]);
+
+  useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessage(msg, { skipFilterSuffix: true }) }), []);
+
+  async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean }) {
+    let content = text || input.trim();
     if (!content || isLoading) return;
+
+    // Prepend global time range filter if set and not already mentioned in message
+    if (!opts?.skipFilterSuffix) {
+      const tlNL = timeRangeToNL(filters.timeRange);
+      const hasTimeKeyword = /\b(day|week|month|last|past|ago|since|today|yesterday|recent|previous|period|compare|versus|\bvs\b)\b/i.test(content);
+      if (tlNL && !hasTimeKeyword) {
+        content = `${content} (for ${tlNL})`;
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -527,7 +745,7 @@ Try one of the suggested queries below to get started.`;
 
     try {
       const history = messages
-        .filter((m) => m.role !== "system")
+        .filter((m) => m.role !== "system" && m.id !== "welcome")
         .map((m) => ({
           role: m.role as "user" | "assistant",
           content: m.content,
@@ -585,6 +803,7 @@ Try one of the suggested queries below to get started.`;
         content: data.response || "No response generated. Please try again.",
         timestamp: new Date().toISOString(),
         sources: data.sources,
+        trace: data.trace,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -623,8 +842,20 @@ Try one of the suggested queries below to get started.`;
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
+      {/* Thread menu bar */}
+      <div className="px-4 pt-1.5 pb-0 flex items-center max-w-2xl mx-auto w-full">
+        <ThreadMenu
+          currentMessages={messages}
+          currentMode={mode}
+          currentThreadId={currentThreadId}
+          onLoadThread={handleLoadThread}
+          onNewThread={handleNewThread}
+          onSaveThread={handleSaveThread}
+        />
+      </div>
+
       {/* Mode tabs */}
-      <div className="px-4 pt-2 pb-0">
+      <div className="px-4 pt-1 pb-0">
         <div className="flex gap-1 max-w-2xl mx-auto">
           {(Object.keys(MODE_CONFIG) as InteractionMode[]).map((m) => {
             const cfg = MODE_CONFIG[m];
@@ -649,6 +880,24 @@ Try one of the suggested queries below to get started.`;
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
+        {anomalyBubble && !anomalyDismissed && (
+          <div className="flex gap-3 max-w-4xl">
+            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-violet-500 to-purple-600 text-white">
+              <Bot className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed">
+                <MemoizedMarkdown content={anomalyBubble} />
+              </div>
+              <button
+                onClick={() => setAnomalyDismissed(true)}
+                className="mt-1.5 text-[10px] text-muted-foreground hover:text-foreground underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -685,8 +934,33 @@ Try one of the suggested queries below to get started.`;
                     : "bg-card border border-border rounded-tl-sm max-w-full overflow-x-auto"
                 )}
               >
-                <MemoizedMarkdown content={msg.content} />
+                <MemoizedMarkdown
+                  content={msg.content}
+                  sources={msg.sources}
+                  entities={[
+                    ...(msg.trace?.themesDetected || []).map((t) => ({ name: t, kind: "theme" as EntityKind })),
+                    ...(msg.sources || []).filter((s) => s.type === "feature").map((s) => ({ name: s.title, kind: "feature" as EntityKind })),
+                  ]}
+                  openEntity={openEntity}
+                />
               </div>
+
+              {/* Trace (why this answer) + compare chip */}
+              {msg.role === "assistant" && msg.id !== "welcome" && (msg.trace || msg.sources?.length) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  {msg.trace && <TraceModal trace={msg.trace} />}
+                  {msg.trace?.timeRange && (
+                    <button
+                      onClick={() => sendMessage(`Compare "${msg.trace!.timeRange!.label}" vs the previous period for the same topics`, { skipFilterSuffix: true })}
+                      className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                      title="Compare vs previous period"
+                    >
+                      <BarChart3 className="w-3 h-3" />
+                      Compare vs previous
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Source badges */}
               {msg.sources && msg.sources.length > 0 && (
@@ -725,29 +999,27 @@ Try one of the suggested queries below to get started.`;
                 </div>
               )}
 
-              {/* PRD/Ticket preview actions — only on the latest assistant message that matches the mode */}
-              {msg.role === "assistant" &&
-                msg.id !== "welcome" &&
-                msg.id === messages[messages.length - 1]?.id && (
-                  <>
-                    {mode === "ticket" && (
-                      <TicketPreview
-                        content={msg.content}
-                        sources={msg.sources || []}
-                        onCreateTicket={handleCreateTicket}
-                        ticketProvider={ticketProvider}
-                      />
-                    )}
-                    {mode === "prd" && (
-                      <PrdPreview
-                        content={msg.content}
-                        sources={msg.sources || []}
-                        hasAtlassian={hasAtlassian}
-                        onCreateConfluence={handleCreateConfluence}
-                      />
-                    )}
-                  </>
-                )}
+              {/* PRD/Ticket preview actions — available on all non-welcome assistant messages */}
+              {msg.role === "assistant" && msg.id !== "welcome" && (
+                <>
+                  {mode === "ticket" && (
+                    <TicketPreview
+                      content={msg.content}
+                      sources={msg.sources || []}
+                      onCreateTicket={handleCreateTicket}
+                      ticketProvider={ticketProvider}
+                    />
+                  )}
+                  {mode === "prd" && (
+                    <PrdPreview
+                      content={msg.content}
+                      sources={msg.sources || []}
+                      hasAtlassian={hasAtlassian}
+                      onCreateConfluence={handleCreateConfluence}
+                    />
+                  )}
+                </>
+              )}
             </div>
           </div>
         ))}

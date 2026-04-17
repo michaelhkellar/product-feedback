@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useApiKeys } from "./api-key-provider";
+import { useEntityDrawer } from "./entity-drawer-provider";
+import { useFilters, timeRangeToDays } from "./filter-provider";
 import {
   DEMO_DATA_SOURCES,
   DEMO_FEEDBACK,
@@ -134,6 +136,8 @@ export function SourcePanel({
   onOpenSettings,
 }: SourcePanelProps) {
   const { keys, status, useDemoData, keyHeaders } = useApiKeys();
+  const { openEntity } = useEntityDrawer();
+  const { filters } = useFilters();
 
   const [activeTab, setActiveTab] = useState<
     "sources" | "feedback" | "features" | "calls" | "pendo" | "jira" | "confluence"
@@ -247,9 +251,28 @@ export function SourcePanel({
 
   const sq = searchQuery.toLowerCase().trim();
 
+  // Compute cutoff timestamp from global time filter
+  const filterCutoffMs = useMemo(() => {
+    const days = timeRangeToDays(filters.timeRange);
+    if (!days) return null;
+    return Date.now() - days * 24 * 60 * 60 * 1000;
+  }, [filters.timeRange]);
+
+  function itemIsInTimeRange(dateStr: string | undefined): boolean {
+    if (!filterCutoffMs || !dateStr) return true;
+    const t = new Date(dateStr).getTime();
+    return !isNaN(t) && t >= filterCutoffMs;
+  }
+
   const filteredFeedback = useMemo(() => {
-    if (!sq) return feedback;
-    return feedback.filter(
+    let items = feedback;
+    // Global filters
+    if (filterCutoffMs) items = items.filter((fb) => itemIsInTimeRange(fb.date));
+    if (filters.sentiments.length > 0) items = items.filter((fb) => filters.sentiments.includes(fb.sentiment));
+    if (filters.themes.length > 0) items = items.filter((fb) => fb.themes.some((t) => filters.themes.includes(t)));
+    // Search
+    if (!sq) return items;
+    return items.filter(
       (fb) =>
         fb.title.toLowerCase().includes(sq) ||
         fb.content.toLowerCase().includes(sq) ||
@@ -257,7 +280,7 @@ export function SourcePanel({
         (fb.company || "").toLowerCase().includes(sq) ||
         fb.themes.some((t) => t.toLowerCase().includes(sq))
     );
-  }, [feedback, sq]);
+  }, [feedback, sq, filterCutoffMs, filters.sentiments, filters.themes]);
 
   const filteredFeatures = useMemo(() => {
     if (!sq) return features;
@@ -271,15 +294,17 @@ export function SourcePanel({
   }, [features, sq]);
 
   const filteredCalls = useMemo(() => {
-    if (!sq) return calls;
-    return calls.filter(
+    let items = calls;
+    if (filterCutoffMs) items = items.filter((c) => itemIsInTimeRange(c.date));
+    if (!sq) return items;
+    return items.filter(
       (c) =>
         c.title.toLowerCase().includes(sq) ||
         c.summary.toLowerCase().includes(sq) ||
         c.participants.some((p) => p.toLowerCase().includes(sq)) ||
         c.themes.some((t) => t.toLowerCase().includes(sq))
     );
-  }, [calls, sq]);
+  }, [calls, sq, filterCutoffMs]);
 
   const filteredJira = useMemo(() => {
     if (!sq) return jiraIssues;
@@ -766,9 +791,10 @@ export function SourcePanel({
                 {detail.data.themes.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {detail.data.themes.map((t) => (
-                      <span key={t} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">
+                      <button key={t} onClick={() => openEntity({ kind: "theme", name: t })}
+                        className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors" title={`Explore "${t}"`}>
                         {t}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -788,9 +814,10 @@ export function SourcePanel({
                 {detail.data.themes.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {detail.data.themes.map((t) => (
-                      <span key={t} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">
+                      <button key={t} onClick={() => openEntity({ kind: "theme", name: t })}
+                        className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors" title={`Explore "${t}"`}>
                         {t}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -854,7 +881,12 @@ export function SourcePanel({
                 {detail.data.description && <p className="text-xs text-muted-foreground leading-relaxed">{detail.data.description.slice(0, 500)}</p>}
                 {detail.data.labels.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {detail.data.labels.map((l) => <span key={l} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium">{l}</span>)}
+                    {detail.data.labels.map((l) => (
+                      <button key={l} onClick={() => openEntity({ kind: "theme", name: l })}
+                        className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors" title={`Explore "${l}"`}>
+                        {l}
+                      </button>
+                    ))}
                   </div>
                 )}
               </>

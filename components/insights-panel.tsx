@@ -2,8 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useApiKeys } from "./api-key-provider";
-import { Insight } from "@/lib/types";
-import { DEMO_INSIGHTS } from "@/lib/demo-data";
+import { useEntityDrawer } from "./entity-drawer-provider";
+import { Insight, FeedbackItem } from "@/lib/types";
+import { DEMO_INSIGHTS, DEMO_FEEDBACK } from "@/lib/demo-data";
+import { feedbackVolumeByWeek, sentimentBreakdown } from "@/lib/temporal";
+import { Sparkline, SentimentBar } from "./sparkline";
+import { saveSnapshot, loadYesterdaySnapshot, diffInsights, TaggedInsight } from "@/lib/insight-snapshots";
+import { useFilters, filterTimeHeaders } from "./filter-provider";
+import { pinInsight, unpinInsight, listPinnedIds } from "@/lib/pins";
 import {
   TrendingUp,
   AlertTriangle,
@@ -16,6 +22,8 @@ import {
   ArrowUpRight,
   X,
   Loader2,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -44,12 +52,17 @@ export function InsightsPanel({
   onQueryInsight,
 }: InsightsPanelProps) {
   const { useDemoData, keyHeaders } = useApiKeys();
+  const { openEntity } = useEntityDrawer();
+  const { filters } = useFilters();
 
-  const [insights, setInsights] = useState<Insight[]>([]);
+  const [insights, setInsights] = useState<TaggedInsight[]>([]);
   const [isDemo, setIsDemo] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [selectedInsight, setSelectedInsight] = useState<Insight | null>(null);
+  const [selectedInsight, setSelectedInsight] = useState<TaggedInsight | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
+  const [newCount, setNewCount] = useState(0);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
 
   const loadInsights = useCallback(async () => {
     setLoading(true);
@@ -58,10 +71,25 @@ export function InsightsPanel({
         headers: {
           ...keyHeaders,
           "x-use-demo": useDemoData ? "true" : "false",
+          ...filterTimeHeaders(filters.timeRange),
         },
       });
       const data = await res.json();
-      setInsights(data.insights || []);
+      const rawInsights: Insight[] = data.insights || [];
+      // Save snapshot and diff with yesterday
+      if (!useDemoData && rawInsights.length > 0) {
+        await saveSnapshot(rawInsights);
+        const yesterday = await loadYesterdaySnapshot();
+        if (yesterday) {
+          const tagged = diffInsights(rawInsights, yesterday.insights);
+          setInsights(tagged);
+          setNewCount(tagged.filter((i) => i.isNew).length);
+        } else {
+          setInsights(rawInsights as TaggedInsight[]);
+        }
+      } else {
+        setInsights(rawInsights as TaggedInsight[]);
+      }
       setIsDemo(data.isDemo);
     } catch {
       if (useDemoData) {
@@ -71,25 +99,63 @@ export function InsightsPanel({
     } finally {
       setLoading(false);
     }
+  }, [keyHeaders, useDemoData, filters.timeRange]);
+
+  const loadFeedback = useCallback(async () => {
+    try {
+      const res = await fetch("/api/sources/feedback", {
+        headers: { ...keyHeaders, "x-use-demo": useDemoData ? "true" : "false" },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setFeedbackItems(data.feedback || []);
+      } else if (useDemoData) {
+        setFeedbackItems(DEMO_FEEDBACK);
+      }
+    } catch {
+      if (useDemoData) setFeedbackItems(DEMO_FEEDBACK);
+    }
   }, [keyHeaders, useDemoData]);
 
   useEffect(() => {
     loadInsights();
-  }, [loadInsights]);
+    loadFeedback();
+    listPinnedIds().then((ids) => setPinnedIds(new Set(ids))).catch(() => {});
+  }, [loadInsights, loadFeedback]);
 
-  const filtered =
-    filter === "all" ? insights : insights.filter((i) => i.type === filter);
+  // Reload insights when time filter changes (already in loadInsights deps, this ensures panel re-fetches)
+  useEffect(() => {
+    loadInsights();
+  }, [filters.timeRange, loadInsights]);
+
+  const sparklineData = feedbackVolumeByWeek(feedbackItems, 12);
+  const sentiment = sentimentBreakdown(feedbackItems);
+
+  const filtered = insights
+    .filter((i) => {
+      if (filter === "pinned") return pinnedIds.has(i.id);
+      if (filter !== "all" && i.type !== filter) return false;
+      // Local theme filter: show insight only if at least one theme overlaps
+      if (filters.themes.length > 0 && !i.themes.some((t) => filters.themes.includes(t))) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      // Pinned insights float to the top
+      const aPin = pinnedIds.has(a.id) ? 1 : 0;
+      const bPin = pinnedIds.has(b.id) ? 1 : 0;
+      return bPin - aPin;
+    });
 
   const impactCounts = {
-    high: insights.filter((i) => i.impact === "high").length,
-    medium: insights.filter((i) => i.impact === "medium").length,
-    low: insights.filter((i) => i.impact === "low").length,
+    high: filtered.filter((i) => i.impact === "high").length,
+    medium: filtered.filter((i) => i.impact === "medium").length,
+    low: filtered.filter((i) => i.impact === "low").length,
   };
 
   return (
     <div className={cn("flex flex-col h-full", className)}>
       <div className="px-4 py-3 border-b border-border">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold flex items-center gap-2">
             <Flame className="w-4 h-4 text-orange-500" />
             Live Insights
@@ -100,18 +166,45 @@ export function InsightsPanel({
                 Demo
               </span>
             )}
-            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-              {insights.length} active
-            </span>
+            <div className="flex items-center gap-1.5">
+              {newCount > 0 && (
+                <span className="text-[9px] bg-green-500/10 text-green-600 px-2 py-0.5 rounded-full font-semibold">
+                  {newCount} new
+                </span>
+              )}
+              <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                {insights.length} active
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-1">
+        {/* Sparkline + sentiment */}
+        {feedbackItems.length > 0 && (
+          <div className="flex items-center justify-between gap-3 mb-2 py-1.5 px-2 rounded-lg bg-muted/50">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[9px] text-muted-foreground flex-shrink-0">12w</span>
+              <Sparkline data={sparklineData} width={80} height={22} label="Feedback volume, last 12 weeks" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <SentimentBar positive={sentiment.positive} negative={sentiment.negative} neutral={sentiment.neutral} mixed={sentiment.mixed} showLabels={false} />
+              <div className="flex items-center justify-between text-[8px] text-muted-foreground mt-0.5">
+                <span className="text-green-500">{sentiment.positive}↑</span>
+                <span className="text-red-500">{sentiment.negative}↓</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-1">
           {[
             { key: "all", label: "All" },
             { key: "risk", label: "Risks" },
             { key: "trend", label: "Trends" },
             { key: "recommendation", label: "Recs" },
+            { key: "theme", label: "Themes" },
+            { key: "anomaly", label: "Anomalies" },
+            { key: "pinned", label: `Pinned${pinnedIds.size > 0 ? ` (${pinnedIds.size})` : ""}` },
           ].map((f) => (
             <button
               key={f.key}
@@ -184,57 +277,94 @@ export function InsightsPanel({
               INSIGHT_CONFIG[insight.type] || INSIGHT_CONFIG.theme;
             const Icon = config.icon;
             return (
-              <button
+              <div
                 key={insight.id}
-                onClick={() => setSelectedInsight(insight)}
-                className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group"
+                className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group flex items-start gap-2.5"
               >
-                <div className="flex items-start gap-2.5">
-                  <div
-                    className={cn(
-                      "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center",
-                      config.bg
-                    )}
-                  >
-                    <Icon className={cn("w-3.5 h-3.5", config.color)} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span
-                        className={cn(
-                          "text-[9px] font-semibold uppercase tracking-wider",
-                          config.color
-                        )}
-                      >
-                        {insight.type}
-                      </span>
-                      {insight.impact === "high" && (
-                        <Shield className="w-3 h-3 text-red-400" />
-                      )}
-                    </div>
-                    <h3 className="text-xs font-medium leading-snug line-clamp-2">
-                      {insight.title}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className={cn(
-                            "h-full rounded-full",
-                            config.bg.replace("/10", "/40")
-                          )}
-                          style={{
-                            width: `${insight.confidence * 100}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="text-[9px] text-muted-foreground">
-                        {(insight.confidence * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
+                <div
+                  className={cn(
+                    "flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center",
+                    config.bg
+                  )}
+                >
+                  <Icon className={cn("w-3.5 h-3.5", config.color)} />
                 </div>
-              </button>
+                <button
+                  className="flex-1 min-w-0 text-left"
+                  onClick={() => setSelectedInsight(insight)}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span
+                      className={cn(
+                        "text-[9px] font-semibold uppercase tracking-wider",
+                        config.color
+                      )}
+                    >
+                      {insight.type}
+                    </span>
+                    {insight.impact === "high" && (
+                      <Shield className="w-3 h-3 text-red-400" />
+                    )}
+                    {insight.isNew && (
+                      <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-green-500/15 text-green-600">NEW</span>
+                    )}
+                    {insight.trend === "growing" && (
+                      <span className="text-[8px] text-green-500">↑</span>
+                    )}
+                    {insight.trend === "shrinking" && (
+                      <span className="text-[8px] text-red-500">↓</span>
+                    )}
+                  </div>
+                  <h3 className="text-xs font-medium leading-snug line-clamp-2">
+                    {insight.title}
+                  </h3>
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          config.bg.replace("/10", "/40")
+                        )}
+                        style={{
+                          width: `${insight.confidence * 100}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[9px] text-muted-foreground">
+                      {(insight.confidence * 100).toFixed(0)}%
+                    </span>
+                  </div>
+                </button>
+                <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const isPinned = pinnedIds.has(insight.id);
+                      if (isPinned) {
+                        unpinInsight(insight.id).then(() => setPinnedIds((p) => { const n = new Set(p); n.delete(insight.id); return n; }));
+                      } else {
+                        pinInsight(insight.id).then(() => setPinnedIds((p) => { const n = new Set(p); n.add(insight.id); return n; }));
+                      }
+                    }}
+                    className={cn(
+                      "w-6 h-6 rounded flex items-center justify-center transition-colors",
+                      pinnedIds.has(insight.id)
+                        ? "text-primary"
+                        : "text-muted-foreground opacity-0 group-hover:opacity-100"
+                    )}
+                    title={pinnedIds.has(insight.id) ? "Unpin insight" : "Pin insight"}
+                  >
+                    {pinnedIds.has(insight.id)
+                      ? <PinOff className="w-3 h-3" />
+                      : <Pin className="w-3 h-3" />
+                    }
+                  </button>
+                  <ChevronRight
+                    onClick={() => setSelectedInsight(insight)}
+                    className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                  />
+                </div>
+              </div>
             );
           })}
       </div>
@@ -279,12 +409,14 @@ export function InsightsPanel({
             </p>
             <div className="flex flex-wrap gap-1.5">
               {selectedInsight.themes.map((theme) => (
-                <span
+                <button
                   key={theme}
-                  className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium"
+                  onClick={() => openEntity({ kind: "theme", name: theme })}
+                  className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium hover:bg-primary/20 transition-colors"
+                  title={`Explore "${theme}"`}
                 >
                   {theme}
-                </span>
+                </button>
               ))}
             </div>
             <div className="grid grid-cols-2 gap-2 pt-2">

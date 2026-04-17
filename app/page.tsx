@@ -6,6 +6,10 @@ import { ChatInterface, ChatInterfaceHandle } from "@/components/chat-interface"
 import { InsightsPanel } from "@/components/insights-panel";
 import { SourcePanel } from "@/components/source-panel";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { EntityDrawerProvider } from "@/components/entity-drawer-provider";
+import { EntityDrawer } from "@/components/entity-drawer";
+import { FilterProvider } from "@/components/filter-provider";
+import { FilterBar } from "@/components/filter-bar";
 import {
   Bot,
   PanelLeftClose,
@@ -79,6 +83,8 @@ function AppContent() {
         </div>
       </header>
 
+      <FilterBar />
+
       <div className="flex-1 flex overflow-hidden">
         <div
           className={cn(
@@ -114,6 +120,7 @@ function AppContent() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+      <EntityDrawer onQueryEntity={handleQueryFromPanel} />
     </div>
   );
 }
@@ -121,7 +128,11 @@ function AppContent() {
 export default function Home() {
   return (
     <ApiKeyProvider>
-      <AppContent />
+      <FilterProvider>
+        <EntityDrawerProvider>
+          <AppContent />
+        </EntityDrawerProvider>
+      </FilterProvider>
     </ApiKeyProvider>
   );
 }

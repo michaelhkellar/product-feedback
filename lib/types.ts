@@ -133,12 +133,23 @@ export interface FullAnalyticsResult {
   accounts: AnalyticsAccountItem[];
 }
 
+export interface ChatMessageTrace {
+  detectedIntent: string;
+  queryType: string;
+  timeRange?: { label: string; start?: string; end?: string };
+  themesDetected: string[];
+  retrieval: { query: string; topResults: { id: string; type: string; score: number }[] };
+  contextMode: string;
+  tokensUsed: { input: number; output: number; total: number };
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
   sources?: { type: string; id: string; title: string; url?: string }[];
+  trace?: ChatMessageTrace;
   isStreaming?: boolean;
 }
 
