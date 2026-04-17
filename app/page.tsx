@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { ApiKeyProvider } from "@/components/api-key-provider";
+import { ApiKeyProvider, useApiKeys } from "@/components/api-key-provider";
 import { ChatInterface, ChatInterfaceHandle } from "@/components/chat-interface";
 import { InsightsPanel } from "@/components/insights-panel";
 import { SourcePanel } from "@/components/source-panel";
@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 
 function AppContent() {
+  const { status, keys } = useApiKeys();
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -45,7 +46,21 @@ function AppContent() {
               Feedback Intelligence Agent
             </h1>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              Powered by RAG · Productboard · Attention · Gemini
+              {(() => {
+                const sources = [
+                  status.productboardKey.configured && "Productboard",
+                  status.attentionKey.configured && "Attention",
+                  status.pendoKey?.configured && "Pendo",
+                  status.amplitudeKey?.configured && "Amplitude",
+                  status.posthogKey?.configured && "PostHog",
+                  status.atlassianKey?.configured && "Atlassian",
+                  status.linearKey?.configured && "Linear",
+                ].filter(Boolean) as string[];
+                const ai = keys.aiProvider === "anthropic" ? "Anthropic"
+                  : keys.aiProvider === "openai" ? "OpenAI"
+                  : "Gemini";
+                return ["RAG", ...sources, ai].join(" · ");
+              })()}
             </p>
           </div>
         </div>
