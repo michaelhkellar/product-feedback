@@ -1,8 +1,9 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { useFilters, TimeRangeOption } from "./filter-provider";
 import { cn } from "@/lib/utils";
-import { SlidersHorizontal, X } from "lucide-react";
+import { X, Plus } from "lucide-react";
 
 const TIME_OPTIONS: { value: TimeRangeOption; label: string }[] = [
   { value: "all", label: "All time" },
@@ -12,20 +13,30 @@ const TIME_OPTIONS: { value: TimeRangeOption; label: string }[] = [
   { value: "90d", label: "90d" },
 ];
 
-const SENTIMENT_OPTIONS = [
-  { value: "positive", label: "Positive", color: "text-green-600 bg-green-500/10" },
-  { value: "negative", label: "Negative", color: "text-red-600 bg-red-500/10" },
-  { value: "neutral", label: "Neutral", color: "text-muted-foreground bg-muted" },
+const ALL_THEMES = [
+  "SSO", "Billing", "API", "Reporting", "Performance",
+  "Onboarding", "AI", "Integrations", "Mobile", "Security",
 ];
 
 export function FilterBar() {
-  const { filters, setTimeRange, toggleSentiment, clearFilters } = useFilters();
-  const isActive = filters.timeRange !== "all" || filters.sentiments.length > 0 || filters.themes.length > 0;
+  const { filters, setTimeRange, toggleTheme, clearFilters } = useFilters();
+  const isActive = filters.timeRange !== "all" || filters.themes.length > 0;
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // Close picker when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setThemePickerOpen(false);
+      }
+    }
+    if (themePickerOpen) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [themePickerOpen]);
 
   return (
     <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/30 flex-shrink-0 overflow-x-auto scrollbar-none">
-      <SlidersHorizontal className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-
       {/* Time range */}
       <div className="flex items-center gap-0.5 flex-shrink-0">
         {TIME_OPTIONS.map((opt) => (
@@ -46,35 +57,60 @@ export function FilterBar() {
 
       <div className="w-px h-4 bg-border flex-shrink-0" />
 
-      {/* Sentiment */}
-      <div className="flex items-center gap-0.5 flex-shrink-0">
-        {SENTIMENT_OPTIONS.map((opt) => (
+      {/* Active theme chips */}
+      {filters.themes.map((t) => (
+        <span
+          key={t}
+          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium flex-shrink-0"
+        >
+          {t}
           <button
-            key={opt.value}
-            onClick={() => toggleSentiment(opt.value)}
-            className={cn(
-              "px-2 py-1 rounded text-[10px] font-medium transition-colors whitespace-nowrap",
-              filters.sentiments.includes(opt.value) ? opt.color : "text-muted-foreground hover:text-foreground hover:bg-muted"
-            )}
+            onClick={() => toggleTheme(t)}
+            className="ml-0.5 hover:text-primary/60 transition-colors"
+            aria-label={`Remove ${t} filter`}
           >
-            {opt.label}
+            <X className="w-2.5 h-2.5" />
           </button>
-        ))}
-      </div>
+        </span>
+      ))}
 
-      {/* Active themes */}
-      {filters.themes.length > 0 && (
-        <>
-          <div className="w-px h-4 bg-border flex-shrink-0" />
-          <div className="flex items-center gap-1">
-            {filters.themes.map((t) => (
-              <span key={t} className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary/10 text-primary text-[9px] font-medium">
-                {t}
-              </span>
+      {/* Theme picker */}
+      <div className="relative flex-shrink-0" ref={pickerRef}>
+        <button
+          onClick={() => setThemePickerOpen((o) => !o)}
+          className={cn(
+            "flex items-center gap-0.5 px-2 py-1 rounded text-[10px] font-medium transition-colors",
+            themePickerOpen
+              ? "bg-muted text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          )}
+        >
+          <Plus className="w-2.5 h-2.5" />
+          Theme
+        </button>
+
+        {themePickerOpen && (
+          <div className="absolute top-full left-0 mt-1 z-50 bg-background border border-border rounded-lg shadow-lg p-1 min-w-[120px]">
+            {ALL_THEMES.map((theme) => (
+              <button
+                key={theme}
+                onClick={() => { toggleTheme(theme); setThemePickerOpen(false); }}
+                className={cn(
+                  "w-full text-left px-2.5 py-1.5 rounded text-xs transition-colors",
+                  filters.themes.includes(theme)
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-foreground hover:bg-muted"
+                )}
+              >
+                {theme}
+                {filters.themes.includes(theme) && (
+                  <span className="ml-1 text-[10px]">✓</span>
+                )}
+              </button>
             ))}
           </div>
-        </>
-      )}
+        )}
+      </div>
 
       {/* Clear */}
       {isActive && (

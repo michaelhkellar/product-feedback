@@ -8,7 +8,7 @@ import { SourcePanel } from "@/components/source-panel";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { EntityDrawerProvider } from "@/components/entity-drawer-provider";
 import { EntityDrawer } from "@/components/entity-drawer";
-import { FilterProvider } from "@/components/filter-provider";
+import { FilterProvider, useFilters } from "@/components/filter-provider";
 import { FilterBar } from "@/components/filter-bar";
 import {
   Bot,
@@ -17,6 +17,7 @@ import {
   PanelLeft,
   PanelRight,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,8 @@ function AppContent() {
   const [rightOpen, setRightOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const chatRef = useRef<ChatInterfaceHandle>(null);
+  const { filters, filtersVisible, toggleFiltersVisible } = useFilters();
+  const hasActiveFilters = filters.timeRange !== "all" || filters.themes.length > 0;
 
   function handleQueryFromPanel(query: string) {
     chatRef.current?.sendMessage(query);
@@ -55,6 +58,23 @@ function AppContent() {
           >
             <Settings className="w-4 h-4" />
           </button>
+          <div className="relative">
+            <button
+              onClick={toggleFiltersVisible}
+              className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+                filtersVisible
+                  ? "bg-primary/10 text-primary hover:bg-primary/20"
+                  : "hover:bg-muted text-muted-foreground hover:text-foreground"
+              )}
+              title="Toggle filters"
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+            {hasActiveFilters && (
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-primary" />
+            )}
+          </div>
           <div className="w-px h-5 bg-border" />
           <div className="flex items-center gap-1">
             <button
@@ -83,7 +103,7 @@ function AppContent() {
         </div>
       </header>
 
-      <FilterBar />
+      {filtersVisible && <FilterBar />}
 
       <div className="flex-1 flex overflow-hidden">
         <div

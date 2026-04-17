@@ -6,25 +6,26 @@ export type TimeRangeOption = "7d" | "14d" | "30d" | "90d" | "all";
 
 export interface GlobalFilters {
   timeRange: TimeRangeOption;
-  sentiments: string[];
   themes: string[];
 }
 
 interface FilterContextValue {
   filters: GlobalFilters;
+  filtersVisible: boolean;
+  toggleFiltersVisible: () => void;
   setTimeRange: (v: TimeRangeOption) => void;
-  toggleSentiment: (s: string) => void;
   toggleTheme: (t: string) => void;
   clearFilters: () => void;
 }
 
-const DEFAULT_FILTERS: GlobalFilters = { timeRange: "all", sentiments: [], themes: [] };
-const STORAGE_KEY = "global-filters-v1";
+const DEFAULT_FILTERS: GlobalFilters = { timeRange: "all", themes: [] };
+const STORAGE_KEY = "global-filters-v2";
 
 const FilterContext = createContext<FilterContextValue>({
   filters: DEFAULT_FILTERS,
+  filtersVisible: false,
+  toggleFiltersVisible: () => {},
   setTimeRange: () => {},
-  toggleSentiment: () => {},
   toggleTheme: () => {},
   clearFilters: () => {},
 });
@@ -40,21 +41,25 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  const [filtersVisible, setFiltersVisible] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return false;
+      return JSON.parse(stored).filtersVisible === true;
+    } catch {
+      return false;
+    }
+  });
+
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...filters, filtersVisible }));
     } catch {}
-  }, [filters]);
+  }, [filters, filtersVisible]);
 
   const setTimeRange = useCallback((v: TimeRangeOption) => {
     setFilters((f) => ({ ...f, timeRange: v }));
-  }, []);
-
-  const toggleSentiment = useCallback((s: string) => {
-    setFilters((f) => ({
-      ...f,
-      sentiments: f.sentiments.includes(s) ? f.sentiments.filter((x) => x !== s) : [...f.sentiments, s],
-    }));
   }, []);
 
   const toggleTheme = useCallback((t: string) => {
@@ -64,10 +69,14 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
+  const toggleFiltersVisible = useCallback(() => {
+    setFiltersVisible((v) => !v);
+  }, []);
+
   const clearFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
 
   return (
-    <FilterContext.Provider value={{ filters, setTimeRange, toggleSentiment, toggleTheme, clearFilters }}>
+    <FilterContext.Provider value={{ filters, filtersVisible, toggleFiltersVisible, setTimeRange, toggleTheme, clearFilters }}>
       {children}
     </FilterContext.Provider>
   );

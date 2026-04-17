@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useEntityDrawer } from "./entity-drawer-provider";
 import { useApiKeys } from "./api-key-provider";
+import { useFilters, filterTimeHeaders } from "./filter-provider";
 import { FeedbackItem, AttentionCall, JiraIssue, LinearIssue } from "@/lib/types";
 import { X, ThumbsUp, ThumbsDown, Minus, MessageCircle, Phone, Ticket, ArrowUpRight, Loader2, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,24 +40,41 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
   const [tab, setTab] = useState<Tab>("quotes");
   const [data, setData] = useState<EntityData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const { filters } = useFilters();
 
   const fetchData = useCallback(async () => {
     if (!entity) return;
     setLoading(true);
     setData(null);
+    setFetchError(null);
     try {
+      const themeHeaders: Record<string, string> = filters.themes.length > 0
+        ? { "x-themes": filters.themes.join(",") }
+        : {};
       const res = await fetch("/api/entity", {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...keyHeaders, "x-use-demo": useDemoData ? "true" : "false" },
+        headers: {
+          "Content-Type": "application/json",
+          ...keyHeaders,
+          "x-use-demo": useDemoData ? "true" : "false",
+          ...filterTimeHeaders(filters.timeRange),
+          ...themeHeaders,
+        },
         body: JSON.stringify({ kind: entity.kind, name: entity.name }),
       });
-      if (res.ok) setData(await res.json());
+      if (res.ok) {
+        setData(await res.json());
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setFetchError((err as { error?: string }).error || `Server error (${res.status})`);
+      }
     } catch {
-      // silent fail
+      setFetchError("Network error — could not reach the server.");
     } finally {
       setLoading(false);
     }
-  }, [entity, keyHeaders, useDemoData]);
+  }, [entity, keyHeaders, useDemoData, filters.timeRange, filters.themes]);
 
   useEffect(() => {
     if (entity) {
@@ -160,6 +178,18 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
             <div className="flex items-center justify-center py-12 text-muted-foreground">
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
               <span className="text-xs">Loading...</span>
+            </div>
+          )}
+
+          {!loading && fetchError && (
+            <div className="mx-4 mt-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-center">
+              <p className="text-xs text-red-600 mb-3">{fetchError}</p>
+              <button
+                onClick={fetchData}
+                className="px-3 py-1.5 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500/20 text-xs font-medium transition-colors"
+              >
+                Retry
+              </button>
             </div>
           )}
 

@@ -66,11 +66,14 @@ type DetailView =
   | { type: "call"; data: AttentionCall }
   | { type: "jira"; data: JiraIssue }
   | { type: "confluence"; data: ConfluencePage }
-  | { type: "pendo"; data: PendoFinding }
+  | { type: "pendo"; data: AnalyticsFinding }
+  | { type: "amplitude"; data: AnalyticsFinding }
+  | { type: "posthog"; data: AnalyticsFinding }
   | null;
 
-type PendoFinding = {
+type AnalyticsFinding = {
   id: string;
+  provider: string;
   kind: "page" | "feature" | "account";
   title: string;
   subtitle: string;
@@ -79,18 +82,22 @@ type PendoFinding = {
   loadedAt: string;
 };
 
+// Keep for backwards compat within this file
+type PendoFinding = AnalyticsFinding;
+
 function formatPendoMinutes(totalMinutes: number): string {
   if (totalMinutes >= 60) return `${(totalMinutes / 60).toFixed(1)}h`;
   if (totalMinutes > 0) return `${totalMinutes.toFixed(1)}m`;
   return "0m";
 }
 
-function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] {
+function buildAnalyticsFindings(overview: AnalyticsOverview | null, provider: string): AnalyticsFinding[] {
   if (!overview) return [];
 
-  const findings: PendoFinding[] = [
+  const findings: AnalyticsFinding[] = [
     ...overview.topPages.map((item) => ({
       id: `page:${item.id}`,
+      provider,
       kind: "page" as const,
       title: item.name,
       subtitle: "Page activity",
@@ -100,6 +107,7 @@ function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] 
     })),
     ...overview.topFeatures.map((item) => ({
       id: `feature:${item.id}`,
+      provider,
       kind: "feature" as const,
       title: item.name,
       subtitle: "Feature activity",
@@ -109,6 +117,7 @@ function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] 
     })),
     ...overview.topEvents.map((item) => ({
       id: `event:${item.id}`,
+      provider,
       kind: "feature" as const,
       title: item.name,
       subtitle: "Event activity",
@@ -118,6 +127,7 @@ function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] 
     })),
     ...overview.topAccounts.map((item) => ({
       id: `account:${item.id}`,
+      provider,
       kind: "account" as const,
       title: item.id,
       subtitle: "Account-level product usage",
@@ -130,6 +140,11 @@ function buildPendoFindings(overview: AnalyticsOverview | null): PendoFinding[] 
   return findings.sort((a, b) => b.totalEvents - a.totalEvents);
 }
 
+// Keep the old name as an alias so callers don't need updating
+function buildPendoFindings(overview: AnalyticsOverview | null): AnalyticsFinding[] {
+  return buildAnalyticsFindings(overview, "pendo");
+}
+
 export function SourcePanel({
   className,
   onQuerySource,
@@ -140,7 +155,7 @@ export function SourcePanel({
   const { filters } = useFilters();
 
   const [activeTab, setActiveTab] = useState<
-    "sources" | "feedback" | "features" | "calls" | "pendo" | "jira" | "confluence"
+    "sources" | "feedback" | "features" | "calls" | "pendo" | "amplitude" | "posthog" | "jira" | "confluence"
   >("sources");
   const [detail, setDetail] = useState<DetailView>(null);
   const [loading, setLoading] = useState(false);
@@ -151,7 +166,9 @@ export function SourcePanel({
   const [calls, setCalls] = useState<AttentionCall[]>([]);
   const [jiraIssues, setJiraIssues] = useState<JiraIssue[]>([]);
   const [confluencePages, setConfluencePages] = useState<ConfluencePage[]>([]);
-  const [pendoFindings, setPendoFindings] = useState<PendoFinding[]>([]);
+  const [pendoFindings, setPendoFindings] = useState<AnalyticsFinding[]>([]);
+  const [amplitudeFindings, setAmplitudeFindings] = useState<AnalyticsFinding[]>([]);
+  const [posthogFindings, setPosthogFindings] = useState<AnalyticsFinding[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceStatus[]>([]);
   const [dataIsDemo, setDataIsDemo] = useState(true);
   const [pendoItemCount, setPendoItemCount] = useState(0);
@@ -167,8 +184,10 @@ export function SourcePanel({
         fetch("/api/sources/attention", { headers }).then((r) => r.json()),
         fetch("/api/sources/atlassian", { headers }).then((r) => r.json()).catch(() => ({ connected: false, jiraIssues: [], confluencePages: [] })),
         fetch("/api/sources/pendo", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
+        fetch("/api/sources/amplitude", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
+        fetch("/api/sources/posthog", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
       ];
-      const [pbRes, attRes, atlRes, pendoRes] = await Promise.all(fetches);
+      const [pbRes, attRes, atlRes, pendoRes, ampRes, phRes] = await Promise.all(fetches);
 
       const newFeatures: ProductboardFeature[] = pbRes.features || [];
       const newFeedback: FeedbackItem[] = pbRes.notes || [];
@@ -179,6 +198,8 @@ export function SourcePanel({
       const isDemo = pbRes.featuresIsDemo || attRes.callsIsDemo;
       const newPendoFindings = buildPendoFindings(pendoRes.overview || null);
       const newPendoCount = newPendoFindings.length;
+      const newAmplitudeFindings = buildAnalyticsFindings(ampRes.overview || null, "amplitude");
+      const newPosthogFindings = buildAnalyticsFindings(phRes.overview || null, "posthog");
 
       if (useDemoData && isDemo && !atlConnected) {
         setFeedback(DEMO_FEEDBACK);
@@ -194,6 +215,8 @@ export function SourcePanel({
         setConfluencePages(newConfluence);
       }
       setPendoFindings(newPendoFindings);
+      setAmplitudeFindings(newAmplitudeFindings);
+      setPosthogFindings(newPosthogFindings);
       setPendoItemCount(newPendoCount);
       setDataIsDemo(isDemo && useDemoData && !atlConnected);
 
@@ -211,6 +234,26 @@ export function SourcePanel({
           connected: pendoRes.connected,
           lastSync: pendoRes.connected ? "just now" : undefined,
           itemCount: newPendoCount,
+          icon: "hash",
+        });
+      }
+      if (status.amplitudeKey?.configured || ampRes.connected) {
+        sources.push({
+          name: "Amplitude",
+          source: "amplitude" as "pendo",
+          connected: ampRes.connected,
+          lastSync: ampRes.connected ? "just now" : undefined,
+          itemCount: newAmplitudeFindings.length,
+          icon: "hash",
+        });
+      }
+      if (status.posthogKey?.configured || phRes.connected) {
+        sources.push({
+          name: "PostHog",
+          source: "posthog" as "pendo",
+          connected: phRes.connected,
+          lastSync: phRes.connected ? "just now" : undefined,
+          itemCount: newPosthogFindings.length,
           icon: "hash",
         });
       }
@@ -236,6 +279,8 @@ export function SourcePanel({
         setJiraIssues(DEMO_JIRA_ISSUES);
         setConfluencePages(DEMO_CONFLUENCE_PAGES);
         setPendoFindings([]);
+        setAmplitudeFindings([]);
+        setPosthogFindings([]);
         setDataSources(DEMO_DATA_SOURCES);
         setDataIsDemo(true);
         setPendoItemCount(0);
@@ -266,11 +311,8 @@ export function SourcePanel({
 
   const filteredFeedback = useMemo(() => {
     let items = feedback;
-    // Global filters
     if (filterCutoffMs) items = items.filter((fb) => itemIsInTimeRange(fb.date));
-    if (filters.sentiments.length > 0) items = items.filter((fb) => filters.sentiments.includes(fb.sentiment));
     if (filters.themes.length > 0) items = items.filter((fb) => fb.themes.some((t) => filters.themes.includes(t)));
-    // Search
     if (!sq) return items;
     return items.filter(
       (fb) =>
@@ -280,7 +322,7 @@ export function SourcePanel({
         (fb.company || "").toLowerCase().includes(sq) ||
         fb.themes.some((t) => t.toLowerCase().includes(sq))
     );
-  }, [feedback, sq, filterCutoffMs, filters.sentiments, filters.themes]);
+  }, [feedback, sq, filterCutoffMs, filters.themes]);
 
   const filteredFeatures = useMemo(() => {
     if (!sq) return features;
@@ -296,6 +338,7 @@ export function SourcePanel({
   const filteredCalls = useMemo(() => {
     let items = calls;
     if (filterCutoffMs) items = items.filter((c) => itemIsInTimeRange(c.date));
+    if (filters.themes.length > 0) items = items.filter((c) => c.themes.some((t) => filters.themes.includes(t)));
     if (!sq) return items;
     return items.filter(
       (c) =>
@@ -304,7 +347,7 @@ export function SourcePanel({
         c.participants.some((p) => p.toLowerCase().includes(sq)) ||
         c.themes.some((t) => t.toLowerCase().includes(sq))
     );
-  }, [calls, sq, filterCutoffMs]);
+  }, [calls, sq, filterCutoffMs, filters.themes]);
 
   const filteredJira = useMemo(() => {
     if (!sq) return jiraIssues;
@@ -340,7 +383,27 @@ export function SourcePanel({
     );
   }, [pendoFindings, sq]);
 
-  const totalItems = feedback.length + features.length + calls.length + jiraIssues.length + confluencePages.length + pendoItemCount;
+  const filteredAmplitude = useMemo(() => {
+    if (!sq) return amplitudeFindings;
+    return amplitudeFindings.filter(
+      (item) =>
+        item.title.toLowerCase().includes(sq) ||
+        item.subtitle.toLowerCase().includes(sq) ||
+        item.kind.toLowerCase().includes(sq)
+    );
+  }, [amplitudeFindings, sq]);
+
+  const filteredPosthog = useMemo(() => {
+    if (!sq) return posthogFindings;
+    return posthogFindings.filter(
+      (item) =>
+        item.title.toLowerCase().includes(sq) ||
+        item.subtitle.toLowerCase().includes(sq) ||
+        item.kind.toLowerCase().includes(sq)
+    );
+  }, [posthogFindings, sq]);
+
+  const totalItems = feedback.length + features.length + calls.length + jiraIssues.length + confluencePages.length + pendoItemCount + amplitudeFindings.length + posthogFindings.length;
 
   function formatDate(dateStr: string | undefined): string {
     if (!dateStr) return "";
@@ -373,6 +436,8 @@ export function SourcePanel({
   const sortedJira = useMemo(() => sortByDate(filteredJira), [filteredJira]);
   const sortedConfluence = useMemo(() => sortByDate(filteredConfluence), [filteredConfluence]);
   const sortedPendo = useMemo(() => [...filteredPendo].sort((a, b) => b.totalEvents - a.totalEvents), [filteredPendo]);
+  const sortedAmplitude = useMemo(() => [...filteredAmplitude].sort((a, b) => b.totalEvents - a.totalEvents), [filteredAmplitude]);
+  const sortedPosthog = useMemo(() => [...filteredPosthog].sort((a, b) => b.totalEvents - a.totalEvents), [filteredPosthog]);
 
   const sentimentIcon = (s: string) => {
     if (s === "positive")
@@ -411,6 +476,8 @@ export function SourcePanel({
               { key: "features" as const, label: `Features (${features.length})` },
               ...(calls.length > 0 ? [{ key: "calls" as const, label: `Calls (${calls.length})` }] : []),
               ...(pendoFindings.length > 0 || status.pendoKey?.configured ? [{ key: "pendo" as const, label: `Pendo (${pendoFindings.length})` }] : []),
+              ...(amplitudeFindings.length > 0 || status.amplitudeKey?.configured ? [{ key: "amplitude" as const, label: `Amplitude (${amplitudeFindings.length})` }] : []),
+              ...(posthogFindings.length > 0 || status.posthogKey?.configured ? [{ key: "posthog" as const, label: `PostHog (${posthogFindings.length})` }] : []),
               ...(jiraIssues.length > 0 || status.atlassianKey?.configured ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
               ...(confluencePages.length > 0 || status.atlassianKey?.configured ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
             ]
@@ -457,6 +524,8 @@ export function SourcePanel({
               {activeTab === "features" && `${filteredFeatures.length} of ${features.length} results`}
               {activeTab === "calls" && `${filteredCalls.length} of ${calls.length} results`}
               {activeTab === "pendo" && `${filteredPendo.length} of ${pendoFindings.length} results`}
+              {activeTab === "amplitude" && `${filteredAmplitude.length} of ${amplitudeFindings.length} results`}
+              {activeTab === "posthog" && `${filteredPosthog.length} of ${posthogFindings.length} results`}
               {activeTab === "jira" && `${filteredJira.length} of ${jiraIssues.length} results`}
               {activeTab === "confluence" && `${filteredConfluence.length} of ${confluencePages.length} results`}
             </p>
@@ -694,6 +763,68 @@ export function SourcePanel({
             )}
           </div>
         )}
+
+        {!loading && activeTab === "amplitude" && (
+          <div>
+            {sortedAmplitude.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground px-4">
+                <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p className="text-xs mb-1">{sq ? "No matching Amplitude findings" : "No Amplitude data loaded"}</p>
+                {!sq && <p className="text-[10px]">Connect Amplitude to review top events and user activity</p>}
+              </div>
+            ) : (
+              sortedAmplitude.map((item) => (
+                <button key={item.id} onClick={() => setDetail({ type: "amplitude", data: item })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                  <div className="flex items-start gap-2.5">
+                    <Hash className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-medium line-clamp-1">{item.title}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        <span className="capitalize">{item.kind}</span>
+                        <span>·</span>
+                        <span>{item.totalEvents} events</span>
+                        {item.totalMinutes > 0 && <><span>·</span><span>{formatPendoMinutes(item.totalMinutes)}</span></>}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+
+        {!loading && activeTab === "posthog" && (
+          <div>
+            {sortedPosthog.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground px-4">
+                <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+                <p className="text-xs mb-1">{sq ? "No matching PostHog findings" : "No PostHog data loaded"}</p>
+                {!sq && <p className="text-[10px]">Connect PostHog to review top events and page activity</p>}
+              </div>
+            ) : (
+              sortedPosthog.map((item) => (
+                <button key={item.id} onClick={() => setDetail({ type: "posthog", data: item })}
+                  className="w-full text-left px-4 py-3 border-b border-border hover:bg-accent/30 transition-colors group">
+                  <div className="flex items-start gap-2.5">
+                    <Hash className="w-3.5 h-3.5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-medium line-clamp-1">{item.title}</h4>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                        <span className="capitalize">{item.kind}</span>
+                        <span>·</span>
+                        <span>{item.totalEvents} events</span>
+                        {item.totalMinutes > 0 && <><span>·</span><span>{formatPendoMinutes(item.totalMinutes)}</span></>}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity mt-0.5" />
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
         {!loading && activeTab === "jira" && (
           <div>
             {sortedJira.length === 0 ? (
@@ -902,34 +1033,36 @@ export function SourcePanel({
                 {detail.data.url && <a href={detail.data.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Confluence</a>}
               </>
             )}
-            {detail.type === "pendo" && (
+            {(detail.type === "pendo" || detail.type === "amplitude" || detail.type === "posthog") && (
               <>
                 <h3 className="text-sm font-semibold">{detail.data.title}</h3>
                 <div className="flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                  <span className="capitalize">{detail.data.provider}</span>
+                  <span>·</span>
                   <span className="capitalize">{detail.data.kind}</span>
                   <span>·</span>
                   <span>{detail.data.totalEvents} events</span>
-                  <span>·</span>
-                  <span>{formatPendoMinutes(detail.data.totalMinutes)}</span>
+                  {detail.data.totalMinutes > 0 && <><span>·</span><span>{formatPendoMinutes(detail.data.totalMinutes)}</span></>}
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  {detail.data.subtitle}. This is one of the recent Pendo usage signals loaded for the workspace.
+                  {detail.data.subtitle}. This is one of the recent usage signals loaded from {detail.data.provider}.
                 </p>
               </>
             )}
             {onQuerySource && (
               <button
                 onClick={() => {
+                  const isAnalytics = detail.type === "pendo" || detail.type === "amplitude" || detail.type === "posthog";
                   const title =
                     detail.type === "feedback" ? detail.data.title
                     : detail.type === "feature" ? detail.data.name
-                    : detail.type === "pendo" ? `${detail.data.kind} ${detail.data.title}`
+                    : isAnalytics ? `${detail.data.kind} ${detail.data.title}`
                     : detail.type === "jira" ? `${detail.data.key}: ${detail.data.summary}`
                     : detail.type === "confluence" ? detail.data.title
                     : detail.data.title;
                   onQuerySource(
-                    detail.type === "pendo"
-                      ? `Use Pendo to explain the recent ${detail.data.kind} activity for ${detail.data.title}, including what this usage might mean and any related customer feedback.`
+                    isAnalytics
+                      ? `Use ${detail.data.provider} to explain the recent ${detail.data.kind} activity for ${detail.data.title}, including what this usage might mean and any related customer feedback.`
                       : `Tell me more about: ${title}`
                   );
                   setDetail(null);

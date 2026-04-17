@@ -50,7 +50,9 @@ export async function saveSnapshot(insights: Insight[]): Promise<void> {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-  } catch {}
+  } catch (err) {
+    console.error("[insight-snapshots] saveSnapshot failed:", err);
+  }
 }
 
 export async function loadYesterdaySnapshot(): Promise<InsightSnapshot | null> {

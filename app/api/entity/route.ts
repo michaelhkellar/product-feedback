@@ -44,6 +44,12 @@ export async function POST(req: NextRequest) {
     const posthogKey = req.headers.get("x-posthog-key") || undefined;
     const posthogHost = req.headers.get("x-posthog-host") || undefined;
 
+    // Global filter headers from the client
+    const timeStart = req.headers.get("x-time-start") || undefined;
+    const timeEnd = req.headers.get("x-time-end") || undefined;
+    const themeFilter = req.headers.get("x-themes") || undefined;
+    const activeThemes = themeFilter ? themeFilter.split(",").map((t) => t.trim()).filter(Boolean) : [];
+
     const data = await getData(
       pbKey, attKey, pendoKey, useDemoData,
       atlDomain, atlEmail, atlToken,
@@ -52,33 +58,51 @@ export async function POST(req: NextRequest) {
       linearKey, linearTeamId
     );
 
+    // Apply time filter to all collections
+    const tsStart = timeStart ? new Date(timeStart).getTime() : null;
+    const tsEnd = timeEnd ? new Date(timeEnd).getTime() : null;
+    const inTimeRange = (dateStr: string | undefined): boolean => {
+      if (!tsStart || !tsEnd || !dateStr) return true;
+      const d = new Date(dateStr).getTime();
+      return d >= tsStart && d <= tsEnd;
+    };
+
+    const allFeedback = data.feedback.filter((f) => inTimeRange(f.date));
+    const allCalls = data.calls.filter((c) => inTimeRange(c.date));
+
     const feedback: FeedbackItem[] = [];
     const calls: AttentionCall[] = [];
     const tickets: (JiraIssue | LinearIssue)[] = [];
 
     if (kind === "theme") {
-      feedback.push(...data.feedback.filter((f) => matchesTheme(f.themes, name)));
-      calls.push(...data.calls.filter((c) => matchesTheme(c.themes, name) || lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
+      feedback.push(...allFeedback.filter((f) => matchesTheme(f.themes, name)));
+      calls.push(...allCalls.filter((c) => matchesTheme(c.themes, name) || lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
       tickets.push(
         ...data.jiraIssues.filter((j) => matchesTheme(j.labels, name) || lc(j.summary).includes(lc(name)) || lc(j.description).includes(lc(name))),
         ...data.linearIssues.filter((l) => matchesTheme(l.labels, name) || lc(l.title).includes(lc(name)) || lc(l.description).includes(lc(name))),
       );
     } else if (kind === "account") {
-      feedback.push(...data.feedback.filter((f) => matchesAccount(f, name)));
-      calls.push(...data.calls.filter((c) => lc(c.title).includes(lc(name)) || c.participants.some((p) => lc(p).includes(lc(name)))));
+      let fb = allFeedback.filter((f) => matchesAccount(f, name));
+      if (activeThemes.length > 0) fb = fb.filter((f) => activeThemes.some((t) => matchesTheme(f.themes, t)));
+      feedback.push(...fb);
+      calls.push(...allCalls.filter((c) => lc(c.title).includes(lc(name)) || c.participants.some((p) => lc(p).includes(lc(name)))));
       tickets.push(
         ...data.jiraIssues.filter((j) => lc(j.summary).includes(lc(name)) || lc(j.description).includes(lc(name))),
       );
     } else if (kind === "feature") {
-      feedback.push(...data.feedback.filter((f) => matchesFeature(f.themes, name) || lc(f.title).includes(lc(name)) || lc(f.content).includes(lc(name))));
-      calls.push(...data.calls.filter((c) => lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
+      let fb = allFeedback.filter((f) => matchesFeature(f.themes, name) || lc(f.title).includes(lc(name)) || lc(f.content).includes(lc(name)));
+      if (activeThemes.length > 0) fb = fb.filter((f) => activeThemes.some((t) => matchesTheme(f.themes, t)));
+      feedback.push(...fb);
+      calls.push(...allCalls.filter((c) => lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
       tickets.push(
         ...data.jiraIssues.filter((j) => matchesTheme(j.labels, name) || lc(j.summary).includes(lc(name))),
         ...data.linearIssues.filter((l) => matchesTheme(l.labels, name) || lc(l.title).includes(lc(name))),
       );
     } else if (kind === "customer") {
-      feedback.push(...data.feedback.filter((f) => matchesAccount(f, name)));
-      calls.push(...data.calls.filter((c) => c.participants.some((p) => lc(p).includes(lc(name)))));
+      let fb = allFeedback.filter((f) => matchesAccount(f, name));
+      if (activeThemes.length > 0) fb = fb.filter((f) => activeThemes.some((t) => matchesTheme(f.themes, t)));
+      feedback.push(...fb);
+      calls.push(...allCalls.filter((c) => c.participants.some((p) => lc(p).includes(lc(name)))));
     }
 
     const sentimentCounts: Record<string, number> = {};

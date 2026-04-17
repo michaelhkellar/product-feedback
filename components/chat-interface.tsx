@@ -465,11 +465,13 @@ function PrdPreview({
   content: string;
   sources: { type: string; id: string; title: string; url?: string }[];
   hasAtlassian: boolean;
-  onCreateConfluence: (title: string, content: string) => void;
+  onCreateConfluence: (title: string, content: string) => Promise<{ url: string; title: string } | { error: string }>;
 }) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(content);
+  const [confluenceState, setConfluenceState] = useState<{ url: string; title: string } | { error: string } | null>(null);
+  const [confluenceLoading, setConfluenceLoading] = useState(false);
 
   const titleMatch = content.match(/^# (.+)$/m);
   const prdTitle = titleMatch?.[1] || "Untitled PRD";
@@ -488,6 +490,14 @@ function PrdPreview({
     a.download = `${prdTitle.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-")}.md`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function handlePublishConfluence() {
+    setConfluenceLoading(true);
+    setConfluenceState(null);
+    const result = await onCreateConfluence(prdTitle, editing ? editContent : content);
+    setConfluenceState(result);
+    setConfluenceLoading(false);
   }
 
   return (
@@ -519,14 +529,26 @@ function PrdPreview({
         </button>
         {hasAtlassian && (
           <button
-            onClick={() => onCreateConfluence(prdTitle, editing ? editContent : content)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90"
+            onClick={handlePublishConfluence}
+            disabled={confluenceLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
           >
             <Globe className="w-3 h-3" />
-            Create Confluence Page
+            {confluenceLoading ? "Publishing…" : "Create Confluence Page"}
           </button>
         )}
       </div>
+      {confluenceState && "url" in confluenceState && (
+        <p className="text-xs text-green-600">
+          Published:{" "}
+          <a href={confluenceState.url} target="_blank" rel="noopener noreferrer" className="underline">
+            {confluenceState.title}
+          </a>
+        </p>
+      )}
+      {confluenceState && "error" in confluenceState && (
+        <p className="text-xs text-red-600">{confluenceState.error}</p>
+      )}
       {editing && (
         <textarea
           value={editContent}
@@ -642,15 +664,19 @@ Try one of the suggested queries below to get started.`;
     }
   }, [keyHeaders, keys.atlassianJiraFilter]);
 
-  const handleCreateConfluence = useCallback(async (title: string, content: string) => {
+  const handleCreateConfluence = useCallback(async (title: string, content: string): Promise<{ url: string; title: string } | { error: string }> => {
     try {
-      await fetch("/api/documents", {
+      const res = await fetch("/api/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...keyHeaders },
         body: JSON.stringify({ title, content, spaceId: keys.atlassianConfluenceFilter?.split(",")[0]?.trim() || "" }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: (data as { error?: string }).error || `Failed (${res.status})` };
+      return { url: (data as { url?: string }).url || "#", title };
     } catch (error) {
       console.error("Failed to create Confluence page:", error);
+      return { error: "Network error. Please check your connection and try again." };
     }
   }, [keyHeaders, keys.atlassianConfluenceFilter]);
 
@@ -686,19 +712,23 @@ Try one of the suggested queries below to get started.`;
     setShowSuggestions(true);
   }, [mode]);
 
-  useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessage(msg, { skipFilterSuffix: true }) }), []);
+  // Keep a ref so the imperative handle always calls the latest sendMessage
+  const sendMessageRef = useRef<((text?: string, opts?: { skipFilterSuffix?: boolean }) => void) | null>(null);
+
+  useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessageRef.current?.(msg, { skipFilterSuffix: true }) }), []);
 
   async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean }) {
     let content = text || input.trim();
     if (!content || isLoading) return;
 
-    // Prepend global time range filter if set and not already mentioned in message
+    // Append global time range and theme filters if not overridden
     if (!opts?.skipFilterSuffix) {
+      const parts: string[] = [];
       const tlNL = timeRangeToNL(filters.timeRange);
       const hasTimeKeyword = /\b(day|week|month|last|past|ago|since|today|yesterday|recent|previous|period|compare|versus|\bvs\b)\b/i.test(content);
-      if (tlNL && !hasTimeKeyword) {
-        content = `${content} (for ${tlNL})`;
-      }
+      if (tlNL && !hasTimeKeyword) parts.push(`for ${tlNL}`);
+      if (filters.themes.length > 0) parts.push(`focused on ${filters.themes.join(", ")}`);
+      if (parts.length) content = `${content} (${parts.join("; ")})`;
     }
 
     const userMessage: ChatMessage = {
@@ -792,6 +822,9 @@ Try one of the suggested queries below to get started.`;
       setIsLoading(false);
     }
   }
+
+  // Always keep the ref current so the imperative handle picks up latest state
+  sendMessageRef.current = sendMessage;
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {

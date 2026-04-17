@@ -103,11 +103,6 @@ export function InsightsPanel({
     listPinnedIds().then((ids) => setPinnedIds(new Set(ids))).catch(() => {});
   }, [loadInsights]);
 
-  // Reload insights when time filter changes
-  useEffect(() => {
-    loadInsights();
-  }, [filters.timeRange, loadInsights]);
-
   const filtered = insights
     .filter((i) => {
       if (filter === "pinned") return pinnedIds.has(i.id);

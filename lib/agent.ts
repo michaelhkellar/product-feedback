@@ -55,6 +55,7 @@ export interface ChatTrace {
   contextMode: "focused" | "standard" | "deep";
   tokensUsed: { input: number; output: number; total: number };
   pivotExcluded?: string[];
+  aiError?: boolean;
 }
 
 export interface ChatResult {
@@ -1452,6 +1453,7 @@ ${formatInstructions}`;
     ...(pivot.isPivot && pivot.excluded.length > 0 ? { pivotExcluded: pivot.excluded } : {}),
   };
 
+  let aiAttemptedButFailed = false;
   if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
     const provider = getAIProvider(aiProvider);
     const aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
@@ -1465,6 +1467,7 @@ ${formatInstructions}`;
         trace: finalTrace,
       };
     }
+    aiAttemptedButFailed = true;
   }
 
   if (total === 0) {
@@ -1476,7 +1479,10 @@ ${formatInstructions}`;
   }
 
   const builtIn = generateBuiltInResponse(userMessage, searchContext, sources, scopedData);
-  return { response: builtIn, sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace };
+  const builtInResponse = aiAttemptedButFailed
+    ? `> **Note:** The configured ${aiProvider} provider didn't return a response — check your API key, quota, or network connection. Showing built-in fallback.\n\n${builtIn}`
+    : builtIn;
+  return { response: builtInResponse, sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace: { ...trace, aiError: aiAttemptedButFailed } };
 }
 
 function getSystemPrompt(mode: InteractionMode): string {

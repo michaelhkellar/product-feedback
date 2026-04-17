@@ -142,6 +142,7 @@ export interface ChatMessageTrace {
   contextMode: string;
   tokensUsed: { input: number; output: number; total: number };
   pivotExcluded?: string[];
+  aiError?: boolean;
 }
 
 export interface ChatMessage {

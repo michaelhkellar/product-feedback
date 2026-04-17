@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft } from "lucide-react";
+import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatMessageTrace } from "@/lib/types";
 
@@ -54,6 +54,14 @@ export function TraceModal({ trace }: TraceModalProps) {
             </div>
 
             <div className="p-4 space-y-4">
+              {/* AI error banner */}
+              {trace.aiError && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-700">AI provider returned no response — this is a built-in fallback answer. Check your API key, quota, or network.</p>
+                </div>
+              )}
+
               {/* Intent */}
               <section className="space-y-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
