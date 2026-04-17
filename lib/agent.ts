@@ -218,7 +218,8 @@ DATA SOURCE RULES:
 - Feedback arrives in Productboard through pipelines (Zapier, email, CRM). Zapier/email is the delivery mechanism, NOT the subject. Read the actual TITLE and CONTENT to understand what the customer wants.
 - Source is shown in brackets like [Source: productboard] or [Jira CX-1234]. A note titled "Integration Request (Salesforce)" = customer wants Salesforce integration, NOT feedback about Salesforce as a tool.
 - Prefer source citations that are directly actionable: Jira key/link, Productboard note link, and customer name/email from the note.
-- If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.`;
+- If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.
+- Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
@@ -1068,7 +1069,10 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
 
   if (data.features.length > 0) {
     const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 8);
-    parts.push(`\nTop features: ${top.map((f) => `${f.name} (${f.votes}v, ${f.status})`).join("; ")}`);
+    parts.push(`\nTop features: ${top.map((f) => {
+      const desc = f.description ? ` — ${f.description.slice(0, 200)}` : "";
+      return `${f.name} (${f.votes}v, ${f.status})${desc}`;
+    }).join("\n- ")}`);
   }
 
   const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
@@ -1078,7 +1082,8 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
     parts.push(`\nRecent ${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
       const when = shortDate(j as unknown as Record<string, unknown>);
-      parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.priority}]`);
+      const desc = j.description ? ` — ${j.description.slice(0, 250)}` : "";
+      parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.priority}]${desc}`);
     }
   }
 
@@ -1087,7 +1092,8 @@ function buildStandardContext(data: AgentData, searchResults: string, includeEng
     parts.push(`\nLinear issues (${recent.length} of ${data.linearIssues.length}):`);
     for (const l of recent) {
       const when = shortDate(l as unknown as Record<string, unknown>);
-      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}]`);
+      const desc = l.description ? ` — ${l.description.slice(0, 250)}` : "";
+      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}]${desc}`);
     }
   }
 
@@ -1116,7 +1122,10 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
     const active = data.features.filter((f) => f.status === "in_progress" || f.status === "planned");
     const top = [...data.features].sort((a, b) => b.votes - a.votes).slice(0, 12);
     parts.push(`\nFeatures (${active.length} active of ${data.features.length}):`);
-    for (const f of top) parts.push(`- ${f.name} — ${f.status}, ${f.votes} votes`);
+    for (const f of top) {
+      const desc = f.description ? ` — ${f.description.slice(0, 200)}` : "";
+      parts.push(`- ${f.name} — ${f.status}, ${f.votes} votes${desc}`);
+    }
   }
 
   const jiraFiltered = filterJiraForContext(data.jiraIssues, includeEng);
@@ -1126,14 +1135,26 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
     parts.push(`\n${label} (${recent.length} of ${jiraFiltered.length}):`);
     for (const j of recent) {
       const when = shortDate(j as unknown as Record<string, unknown>);
-      parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}] → ${j.assignee}`);
+      const desc = j.description ? ` — ${j.description.slice(0, 250)}` : "";
+      parts.push(`- [${when}] ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}] → ${j.assignee}${desc}`);
     }
   }
 
   if (data.calls.length > 0) {
     const recent = recentItems(data.calls, 5);
     parts.push(`\nCalls:`);
-    for (const c of recent) parts.push(`- [${shortDate(c as unknown as Record<string, unknown>)}] ${c.title} — ${c.summary.slice(0, 100)}`);
+    for (const c of recent) {
+      parts.push(`- [${shortDate(c as unknown as Record<string, unknown>)}] ${c.title} — ${c.summary.slice(0, 100)}`);
+      const negMoments = c.keyMoments
+        .filter((m) => m.sentiment === "negative")
+        .slice(0, 3);
+      const otherMoments = c.keyMoments
+        .filter((m) => m.sentiment !== "negative")
+        .slice(0, Math.max(0, 6 - negMoments.length));
+      for (const m of [...negMoments, ...otherMoments]) {
+        parts.push(`  > "${m.text.slice(0, 100)}"${m.sentiment === "negative" ? " ⚠" : ""}`);
+      }
+    }
   }
 
   if (data.linearIssues.length > 0) {
@@ -1141,7 +1162,8 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
     parts.push(`\nLinear issues (${recent.length} of ${data.linearIssues.length}):`);
     for (const l of recent) {
       const when = shortDate(l as unknown as Record<string, unknown>);
-      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}] → ${l.assignee}`);
+      const desc = l.description ? ` — ${l.description.slice(0, 250)}` : "";
+      parts.push(`- [${when}] ${l.identifier} ${l.title} [${l.status}/${l.priority}] → ${l.assignee}${desc}`);
     }
   }
 
@@ -1242,6 +1264,13 @@ export async function chat(
     }
   }
 
+  // Build per-company feedback counts for evidence annotation
+  const companyFeedbackCount: Record<string, number> = {};
+  for (const fb of scopedData.feedback) {
+    const co = fb.company || "";
+    if (co) companyFeedbackCount[co] = (companyFeedbackCount[co] || 0) + 1;
+  }
+
   const sources: { type: string; id: string; title: string; url?: string }[] = [];
   const searchParts: string[] = [];
   const recentItemIds = new Set<string>();
@@ -1259,7 +1288,9 @@ export async function chat(
       const fb = scopedData.feedback.find((f) => f.id === doc.id);
       const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
       const contact = email || fb?.customer || fb?.company || "";
-      title = fb ? `${cleanFeedbackTitle(fb)}${contact ? ` — ${contact}` : ""}` : title;
+      const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
+      const coNote = coCount >= 2 ? ` (1 of ${coCount} from ${fb!.company})` : "";
+      title = fb ? `${cleanFeedbackTitle(fb)}${contact ? ` — ${contact}` : ""}${coNote}` : title;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
     } else if (doc.type === "feature") {
       title = scopedData.features.find((f) => f.id === doc.id)?.name || title;

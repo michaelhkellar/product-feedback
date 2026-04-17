@@ -1,4 +1,4 @@
-import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue } from "./types";
+import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue, LinearIssue } from "./types";
 import { AgentData } from "./agent";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 
@@ -117,6 +117,14 @@ export function generateProgrammaticInsights(data: AgentData): Insight[] {
 
   if (data.features.length > 0 && data.feedback.length > 0) {
     insights.push(...gapInsights(data.features, data.feedback, now));
+  }
+
+  if (data.feedback.length > 0) {
+    insights.push(...trendInsights(data.feedback, now));
+  }
+
+  if (data.jiraIssues.length > 0 || data.linearIssues.length > 0) {
+    insights.push(...staleInsights(data.jiraIssues, data.linearIssues, data.feedback, now));
   }
 
   if (data.jiraIssues.length > 0) {
@@ -290,27 +298,32 @@ function feedbackVolumeInsight(feedback: FeedbackItem[], now: string): Insight[]
 function themeInsights(feedback: FeedbackItem[], features: ProductboardFeature[], now: string): Insight[] {
   const insights: Insight[] = [];
 
-  const themeCounts: Record<string, { count: number; ids: string[] }> = {};
+  const themeCounts: Record<string, { count: number; score: number; neg: number; pos: number; ids: string[] }> = {};
   for (const fb of feedback) {
+    const sentimentWeight = fb.sentiment === "negative" ? 1.5 : fb.sentiment === "positive" ? 0.5 : 1.0;
     for (const t of cleanThemes(fb.themes)) {
       const key = normalizeTheme(t);
-      if (!themeCounts[key]) themeCounts[key] = { count: 0, ids: [] };
+      if (!themeCounts[key]) themeCounts[key] = { count: 0, score: 0, neg: 0, pos: 0, ids: [] };
       themeCounts[key].count++;
+      themeCounts[key].score += sentimentWeight;
+      if (fb.sentiment === "negative") themeCounts[key].neg++;
+      if (fb.sentiment === "positive") themeCounts[key].pos++;
       themeCounts[key].ids.push(fb.id);
     }
   }
   for (const f of features) {
     for (const t of cleanThemes(f.themes)) {
       const key = normalizeTheme(t);
-      if (!themeCounts[key]) themeCounts[key] = { count: 0, ids: [] };
+      if (!themeCounts[key]) themeCounts[key] = { count: 0, score: 0, neg: 0, pos: 0, ids: [] };
       themeCounts[key].count++;
+      themeCounts[key].score += 1.0;
       themeCounts[key].ids.push(f.id);
     }
   }
 
   const topThemes = Object.entries(themeCounts)
     .filter(([, d]) => d.count >= 2)
-    .sort(([, a], [, b]) => b.count - a.count)
+    .sort(([, a], [, b]) => b.score - a.score)
     .slice(0, 8);
 
   if (topThemes.length > 0) {
@@ -318,9 +331,12 @@ function themeInsights(feedback: FeedbackItem[], features: ProductboardFeature[]
       id: "gen-top-themes",
       type: "theme",
       title: `Top Themes: ${topThemes.slice(0, 4).map(([t, d]) => `${t} (${d.count})`).join(", ")}`,
-      description: `The strongest signals across feedback and features: ${topThemes
-        .map(([t, d]) => `**${t}** (${d.count}x)`)
-        .join(", ")}. These should drive roadmap prioritization.`,
+      description: `Sentiment-weighted signals across feedback and features: ${topThemes
+        .map(([t, d]) => {
+          const sentNote = d.neg > 0 ? ` ${d.neg} neg` : "";
+          return `**${t}** (${d.count}x${sentNote})`;
+        })
+        .join(", ")}. Themes weighted by negative sentiment surface urgent pain points first.`,
       confidence: 0.88,
       relatedFeedbackIds: topThemes.flatMap(([, d]) => d.ids).slice(0, 10),
       themes: topThemes.map(([t]) => t),
@@ -507,6 +523,146 @@ function jiraInsights(issues: JiraIssue[], now: string): Insight[] {
   return insights;
 }
 
+function staleInsights(
+  jiraIssues: JiraIssue[],
+  linearIssues: LinearIssue[],
+  feedback: FeedbackItem[],
+  now: string
+): Insight[] {
+  const insights: Insight[] = [];
+  const STALE_DAYS = 90;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - STALE_DAYS);
+
+  const staleStatuses = ["planned", "in_progress", "in progress", "todo", "to do", "backlog", "open"];
+  const isStale = (updated: string, status: string) => {
+    const d = parseDate(updated);
+    return d && d < cutoff && staleStatuses.some((s) => status.toLowerCase().includes(s));
+  };
+
+  const staleItems: { key: string; title: string; updatedDays: number }[] = [];
+  for (const j of jiraIssues) {
+    if (isStale(j.updated, j.status)) {
+      const days = Math.floor((Date.now() - new Date(j.updated).getTime()) / 86400000);
+      staleItems.push({ key: j.key, title: j.summary, updatedDays: days });
+    }
+  }
+  for (const l of linearIssues) {
+    if (isStale(l.updated, l.status)) {
+      const days = Math.floor((Date.now() - new Date(l.updated).getTime()) / 86400000);
+      staleItems.push({ key: l.identifier, title: l.title, updatedDays: days });
+    }
+  }
+
+  if (staleItems.length === 0) return insights;
+
+  // Cross-reference with feedback themes
+  const feedbackThemes = new Set<string>();
+  for (const fb of feedback) {
+    for (const t of cleanThemes(fb.themes)) feedbackThemes.add(normalizeTheme(t));
+  }
+  const relatedIds = feedback
+    .filter((fb) => fb.themes.some((t) => feedbackThemes.has(normalizeTheme(t))))
+    .slice(0, 8)
+    .map((fb) => fb.id);
+
+  const top = staleItems.sort((a, b) => b.updatedDays - a.updatedDays).slice(0, 4);
+  insights.push({
+    id: "gen-stale-commitments",
+    type: "risk",
+    title: `${staleItems.length} Issues Stagnant for ${STALE_DAYS}+ Days`,
+    description: `These planned or in-progress items haven't been updated in over ${STALE_DAYS} days: ${top
+      .map((i) => `${i.key} "${i.title}" (${i.updatedDays}d)`)
+      .join("; ")}${staleItems.length > 4 ? ` and ${staleItems.length - 4} more` : ""}. Stale commitments erode customer trust when they reference actively requested features.`,
+    confidence: 0.87,
+    relatedFeedbackIds: relatedIds,
+    themes: ["stale-backlog", "delivery-risk"],
+    impact: relatedIds.length >= 3 ? "high" : "medium",
+    createdAt: now,
+  });
+
+  return insights;
+}
+
+function trendInsights(feedback: FeedbackItem[], now: string): Insight[] {
+  const insights: Insight[] = [];
+  const WINDOW = 14;
+  const recent = new Date();
+  recent.setDate(recent.getDate() - WINDOW);
+  const prior = new Date();
+  prior.setDate(prior.getDate() - WINDOW * 2);
+
+  const recentCounts: Record<string, { count: number; ids: string[] }> = {};
+  const priorCounts: Record<string, number> = {};
+
+  for (const fb of feedback) {
+    const d = parseDate(fb.date);
+    if (!d) continue;
+    for (const t of cleanThemes(fb.themes)) {
+      const key = normalizeTheme(t);
+      if (d >= recent) {
+        if (!recentCounts[key]) recentCounts[key] = { count: 0, ids: [] };
+        recentCounts[key].count++;
+        recentCounts[key].ids.push(fb.id);
+      } else if (d >= prior) {
+        priorCounts[key] = (priorCounts[key] || 0) + 1;
+      }
+    }
+  }
+
+  const emerging: { theme: string; recent: number; prior: number; ids: string[] }[] = [];
+  const resolving: { theme: string; recent: number; prior: number }[] = [];
+
+  for (const [theme, { count: rCount, ids }] of Object.entries(recentCounts)) {
+    const pCount = priorCounts[theme] || 0;
+    if (rCount >= 3 && pCount > 0 && rCount >= pCount * 2) {
+      emerging.push({ theme, recent: rCount, prior: pCount, ids });
+    }
+  }
+  for (const [theme, pCount] of Object.entries(priorCounts)) {
+    const rCount = recentCounts[theme]?.count || 0;
+    if (pCount >= 4 && rCount <= pCount * 0.25) {
+      resolving.push({ theme, recent: rCount, prior: pCount });
+    }
+  }
+
+  if (emerging.length > 0) {
+    const top = emerging.sort((a, b) => b.recent - a.recent).slice(0, 3);
+    insights.push({
+      id: "gen-emerging-themes",
+      type: "trend",
+      title: `Emerging: ${top.map((e) => `${e.theme} (+${Math.round((e.recent / (e.prior || 1)) * 100 - 100)}%)`).join(", ")}`,
+      description: `These themes spiked in the last ${WINDOW} days vs. the prior ${WINDOW}: ${top
+        .map((e) => `**${e.theme}** (${e.recent} recent vs ${e.prior} prior)`)
+        .join(", ")}. Worth monitoring for emerging pain points or a new customer segment.`,
+      confidence: 0.82,
+      relatedFeedbackIds: top.flatMap((e) => e.ids).slice(0, 10),
+      themes: top.map((e) => e.theme),
+      impact: "high",
+      createdAt: now,
+    });
+  }
+
+  if (resolving.length > 0) {
+    const top = resolving.sort((a, b) => b.prior - a.prior).slice(0, 3);
+    insights.push({
+      id: "gen-resolving-themes",
+      type: "trend",
+      title: `Declining: ${top.map((e) => `${e.theme} (↓${Math.round((1 - e.recent / e.prior) * 100)}%)`).join(", ")}`,
+      description: `These previously active themes have dropped significantly in the last ${WINDOW} days: ${top
+        .map((e) => `**${e.theme}** (${e.prior} prior → ${e.recent} recent)`)
+        .join(", ")}. May indicate a fix took hold or customer interest shifted.`,
+      confidence: 0.78,
+      relatedFeedbackIds: [],
+      themes: top.map((e) => e.theme),
+      impact: "medium",
+      createdAt: now,
+    });
+  }
+
+  return insights;
+}
+
 function analyticsInsights(data: NonNullable<AgentData["analyticsOverview"]>, now: string): Insight[] {
   const insights: Insight[] = [];
   const label = data.provider.charAt(0).toUpperCase() + data.provider.slice(1);
@@ -579,6 +735,11 @@ async function generateAIInsights(data: AgentData, providerType: AIProviderType 
   if (data.jiraIssues.length > 0) {
     const highPri = data.jiraIssues.filter((j) => j.priority.toLowerCase().includes("high") || j.priority.toLowerCase().includes("critical"));
     summaryParts.push(`\nJira (${data.jiraIssues.length} issues, ${highPri.length} high/critical):\n${data.jiraIssues.slice(0, 10).map((j) => `- ${j.key} ${j.summary} [${j.status}/${j.issueType}/${j.priority}]`).join("\n")}`);
+  }
+
+  if (data.linearIssues.length > 0) {
+    const highPri = data.linearIssues.filter((l) => l.priority.toLowerCase().includes("urgent") || l.priority.toLowerCase().includes("high"));
+    summaryParts.push(`\nLinear (${data.linearIssues.length} issues, ${highPri.length} urgent/high):\n${data.linearIssues.slice(0, 10).map((l) => `- ${l.identifier} ${l.title} [${l.status}/${l.priority}]`).join("\n")}`);
   }
 
   if (data.analyticsOverview) {

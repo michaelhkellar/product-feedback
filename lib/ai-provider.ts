@@ -11,18 +11,39 @@ export interface AIProvider {
 
 // --- Gemini adapter (wraps existing lib/gemini.ts) ---
 
+const FALLBACK_GEMINI_MODELS = [
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+];
+
 const geminiProvider: AIProvider = {
   async generate(systemPrompt, userPrompt, key, model) {
     return generateWithGemini(systemPrompt, userPrompt, key, model || undefined);
   },
-  async listModels(_key) {
-    return [
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
-      "gemini-2.0-flash",
-      "gemini-1.5-flash",
-      "gemini-1.5-pro",
-    ];
+  async listModels(key) {
+    const apiKey = key || process.env.GEMINI_API_KEY;
+    if (!apiKey) return [];
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}&pageSize=100`
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+      const models = (data.models ?? [])
+        .filter((m) =>
+          m.name.includes("gemini") &&
+          (m.supportedGenerationMethods ?? []).includes("generateContent")
+        )
+        .map((m) => m.name.replace("models/", ""))
+        .sort();
+      return models.length > 0 ? models : FALLBACK_GEMINI_MODELS;
+    } catch (err) {
+      console.error("Gemini list models error:", err);
+      return FALLBACK_GEMINI_MODELS;
+    }
   },
   isConfigured(key) {
     return isGeminiConfigured(key);

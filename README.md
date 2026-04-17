@@ -6,15 +6,20 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 
 ## What's New
 
+- **Richer AI context** — feature descriptions, Jira/Linear issue details, and call key moments (with negative-sentiment prioritization) now flow into the AI context, giving it substantially more signal to reason from
+- **Sentiment-weighted themes** — the Insights panel now ranks themes by urgency (negative mentions weighted 1.5×), surfacing pain points above popularity
+- **Emerging trend detection** — new insight rule flags themes that doubled in the last 14 days vs. the prior 14, and highlights declining themes that may indicate a fix took hold
+- **Stale commitment detection** — new insight rule flags Jira/Linear issues stuck in "planned" or "in-progress" for 90+ days with customer feedback overlap
+- **Account signal annotation** — when multiple feedback items from the same company appear in evidence, they're annotated `(1 of N from Company)` so the AI correctly treats them as one customer voice
+- **Live Gemini model list** — the Gemini model dropdown now fetches available models directly from the Google AI API (with fallback), so new models appear without a code change
+- **Linear in AI insights** — Linear issues now included in the AI-generated insights prompt alongside Jira
 - **Conversation threads** — save, name, and resume previous chat sessions via the thread history menu
 - **Inline citations** — every AI claim links back to its source with `[n]` markers; hover to preview
 - **Entity drawer** — click any customer or feature name in the chat to open a side panel with their full history, analytics context, and sentiment breakdown
 - **Global filter bar** — scope the entire app by time range, sentiment, or theme; persists across sessions
 - **Pivot detection** — say "ConnectWise is in progress, what else?" and the agent correctly shifts focus to other topics
-- **Smarter tables** — the Source / What / When table appears whenever the answer enumerates 3+ concrete items, mid-conversation or not
 - **Bold highlights** — the AI bolds 1–3 key facts per response (counts, risks, dates) for at-a-glance scanning
 - **Pinned insights** — pin any insight card in the Insights panel to surface it first
-- **Change detection** — insight cards show trend arrows and "New" badges when something shifts day-over-day
 - **Answer provenance** — open the trace modal on any message to see which query type was chosen, which sources were retrieved, and why
 
 ## Architecture
@@ -64,7 +69,8 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 
 ### Core Intelligence
 - **RAG Agent**: TF-IDF vector store indexes all feedback, features, calls, Jira issues, Linear issues, and insights for semantic search
-- **Multi-Provider AI**: Choose between Google Gemini, Anthropic Claude, or OpenAI GPT — with dynamic model selection per provider
+- **Deep Context**: Feature descriptions, Jira/Linear issue details, and call key moments (negative-sentiment first) all flow into AI context — not just titles and summaries
+- **Multi-Provider AI**: Choose between Google Gemini, Anthropic Claude, or OpenAI GPT — with live model lists fetched from each provider's API
 - **Cross-Source Intelligence**: Links feedback to features to calls — surfaces revenue impact, churn risk, and competitive signals
 - **Catalog Awareness**: The AI knows about all tracked pages, features, and events across analytics providers — not just the top 10
 - **Targeted Lookups**: Ask about a specific feature or event by name and the agent runs scoped queries against Pendo, Amplitude, or PostHog to retrieve its usage data
