@@ -16,9 +16,9 @@ No test suite is configured.
 
 Copy `.env.example` to `.env.local`. The app works without any keys (uses demo data). To enable live data, set keys for any combination of:
 - **AI**: `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENAI_API_KEY`
-- **Feedback**: `PRODUCTBOARD_API_KEY`, `ATTENTION_API_KEY`
-- **Analytics**: `PENDO_INTEGRATION_KEY`, `AMPLITUDE_API_KEY`/`AMPLITUDE_SECRET_KEY`, `POSTHOG_API_KEY`/`POSTHOG_PROJECT_ID`
-- **Tickets**: `JIRA_*` vars, `LINEAR_API_KEY`
+- **Feedback**: `PRODUCTBOARD_API_TOKEN`, `ATTENTION_API_KEY`
+- **Analytics**: `PENDO_INTEGRATION_KEY`, `AMPLITUDE_API_KEY` (format: `key:secret`), `POSTHOG_API_KEY` (format: `key:projectId`) + optional `POSTHOG_HOST`
+- **Tickets**: `ATLASSIAN_DOMAIN`/`ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`, `LINEAR_API_KEY`
 
 Client-entered keys are stored in encrypted IndexedDB (AES-GCM via SubtleCrypto) and transmitted via request headers. Server-side env vars are a fallback for deployment.
 
