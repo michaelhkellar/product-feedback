@@ -3,12 +3,6 @@ import { getData } from "@/lib/data-fetcher";
 import { generateInsights } from "@/lib/insights-generator";
 import { AIProviderType } from "@/lib/ai-provider";
 import { Insight } from "@/lib/types";
-import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
-
-const INSIGHTS_COOLDOWN_MS = 3_000;
-const INSIGHTS_RATE_TTL_MS = 60_000;
-const insightsLastRequest = new Map<string, number>();
-
 function filterInsightsByTime(insights: Insight[], start: string, end: string): Insight[] {
   const s = new Date(start).getTime();
   const e = new Date(end).getTime();
@@ -21,11 +15,6 @@ function filterInsightsByTime(insights: Insight[], start: string, end: string): 
 }
 
 export async function GET(req: NextRequest) {
-  const clientKey = getClientKey(req);
-  if (checkRateLimit(insightsLastRequest, clientKey, INSIGHTS_COOLDOWN_MS, INSIGHTS_RATE_TTL_MS)) {
-    return NextResponse.json({ insights: [], isDemo: false, error: "Too many requests" }, { status: 429 });
-  }
-
   try {
     const useDemoData = req.headers.get("x-use-demo") !== "false";
     const pbKey = req.headers.get("x-productboard-key") || undefined;
