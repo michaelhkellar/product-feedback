@@ -180,8 +180,8 @@ export function SourcePanel({
       const headers = { ...keyHeaders, "x-use-demo": demoHeader };
 
       const fetches = [
-        fetch("/api/sources/productboard", { headers }).then((r) => r.json()),
-        fetch("/api/sources/attention", { headers }).then((r) => r.json()),
+        fetch("/api/sources/productboard", { headers }).then((r) => r.json()).catch(() => ({ connected: false, features: [], featuresIsDemo: false, notes: [], notesIsDemo: false })),
+        fetch("/api/sources/attention", { headers }).then((r) => r.json()).catch(() => ({ connected: false, calls: [], callsIsDemo: false })),
         fetch("/api/sources/atlassian", { headers }).then((r) => r.json()).catch(() => ({ connected: false, jiraIssues: [], confluencePages: [] })),
         fetch("/api/sources/pendo", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
         fetch("/api/sources/amplitude", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
@@ -195,7 +195,16 @@ export function SourcePanel({
       const newJira: JiraIssue[] = atlRes.jiraIssues || [];
       const newConfluence: ConfluencePage[] = atlRes.confluencePages || [];
       const atlConnected = atlRes.connected === true;
-      const isDemo = pbRes.featuresIsDemo || attRes.callsIsDemo;
+
+      // isDemo is true only when no data source returned real (non-demo) data
+      const anyRealData =
+        (pbRes.connected && !pbRes.featuresIsDemo) ||
+        (attRes.connected && !attRes.callsIsDemo) ||
+        atlConnected ||
+        pendoRes.connected ||
+        ampRes.connected ||
+        phRes.connected;
+      const isDemo = !anyRealData;
       const newPendoFindings = buildPendoFindings(pendoRes.overview || null);
       const newPendoCount = newPendoFindings.length;
       const newAmplitudeFindings = buildAnalyticsFindings(ampRes.overview || null, "amplitude");
@@ -221,10 +230,10 @@ export function SourcePanel({
       setDataIsDemo(isDemo && useDemoData && !atlConnected);
 
       const sources: DataSourceStatus[] = [];
-      if (status.productboardKey.configured) {
+      if (status.productboardKey.configured || pbRes.connected) {
         sources.push({ name: "Productboard", source: "productboard", connected: pbRes.connected, lastSync: pbRes.connected ? "just now" : undefined, itemCount: newFeatures.length + newFeedback.length, icon: "clipboard-list" });
       }
-      if (status.attentionKey.configured) {
+      if (status.attentionKey.configured || attRes.connected) {
         sources.push({ name: "Attention", source: "attention", connected: attRes.connected, lastSync: attRes.connected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
       }
       if (status.pendoKey?.configured || pendoRes.connected) {
