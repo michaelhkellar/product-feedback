@@ -49,7 +49,7 @@ export function InsightsPanel({
   className,
   onQueryInsight,
 }: InsightsPanelProps) {
-  const { useDemoData, keyHeaders } = useApiKeys();
+  const { useDemoData, loaded, keyHeaders } = useApiKeys();
   const { openEntity } = useEntityDrawer();
   const { filters } = useFilters();
 
@@ -99,9 +99,10 @@ export function InsightsPanel({
   }, [keyHeaders, useDemoData, filters.timeRange]);
 
   useEffect(() => {
+    if (!loaded) return;
     loadInsights();
     listPinnedIds().then((ids) => setPinnedIds(new Set(ids))).catch(() => {});
-  }, [loadInsights]);
+  }, [loadInsights, loaded]);
 
   const filtered = insights
     .filter((i) => {

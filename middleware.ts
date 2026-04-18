@@ -45,18 +45,27 @@ function authMisconfigured(): NextResponse {
   );
 }
 
+// Cached at module scope so importKey only runs once across requests.
+let _hmacKeyPromise: Promise<CryptoKey> | null = null;
+function getHmacKey(): Promise<CryptoKey> {
+  if (!_hmacKeyPromise) {
+    _hmacKeyPromise = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode("timing-compare-key"),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return _hmacKeyPromise;
+}
+
 // Timing-safe string comparison using HMAC-SHA-256 to produce fixed-length outputs.
 // Both strings are hashed with the same key; the 32-byte digests are compared with
 // a constant-time XOR loop, preventing timing attacks.
 async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    enc.encode("timing-compare-key"),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
+  const keyMaterial = await getHmacKey();
   const [aHash, bHash] = await Promise.all([
     crypto.subtle.sign("HMAC", keyMaterial, enc.encode(a)),
     crypto.subtle.sign("HMAC", keyMaterial, enc.encode(b)),

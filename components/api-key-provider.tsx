@@ -7,6 +7,7 @@ interface ApiKeyContextValue {
   keys: ApiKeyState;
   status: ApiKeyStatus;
   useDemoData: boolean;
+  loaded: boolean;
   setKey: (name: keyof ApiKeyState, value: string) => void;
   removeKey: (name: keyof ApiKeyState) => void;
   clearAllKeys: () => void;
@@ -125,7 +126,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   return (
     <ApiKeyContext.Provider
       value={{
-        keys, status, useDemoData,
+        keys, status, useDemoData, loaded,
         setKey, removeKey, clearAllKeys: clearAllKeysHandler, setUseDemoData,
         refreshStatus, keyHeaders, hasAnyKey,
       }}

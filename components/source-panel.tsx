@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useApiKeys } from "./api-key-provider";
 import { useEntityDrawer } from "./entity-drawer-provider";
 import { useFilters, timeRangeToDays } from "./filter-provider";
@@ -150,7 +150,7 @@ export function SourcePanel({
   onQuerySource,
   onOpenSettings,
 }: SourcePanelProps) {
-  const { keys, status, useDemoData, keyHeaders } = useApiKeys();
+  const { keys, status, useDemoData, loaded, keyHeaders } = useApiKeys();
   const { openEntity } = useEntityDrawer();
   const { filters } = useFilters();
 
@@ -173,7 +173,10 @@ export function SourcePanel({
   const [dataIsDemo, setDataIsDemo] = useState(true);
   const [pendoItemCount, setPendoItemCount] = useState(0);
 
+  const fetchGenRef = useRef(0);
+
   const loadData = useCallback(async () => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     try {
       const demoHeader = useDemoData ? "true" : "false";
@@ -188,6 +191,9 @@ export function SourcePanel({
         fetch("/api/sources/posthog", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
       ];
       const [pbRes, attRes, atlRes, pendoRes, ampRes, phRes] = await Promise.all(fetches);
+
+      // Discard if a newer fetch has already started
+      if (gen !== fetchGenRef.current) return;
 
       const newFeatures: ProductboardFeature[] = pbRes.features || [];
       const newFeedback: FeedbackItem[] = pbRes.notes || [];
@@ -295,13 +301,14 @@ export function SourcePanel({
         setPendoItemCount(0);
       }
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) setLoading(false);
     }
-  }, [keys, keyHeaders, status, useDemoData]);
+  }, [keys, keyHeaders, useDemoData]);
 
   useEffect(() => {
+    if (!loaded) return;
     loadData();
-  }, [loadData]);
+  }, [loadData, loaded]);
 
   const sq = searchQuery.toLowerCase().trim();
 
