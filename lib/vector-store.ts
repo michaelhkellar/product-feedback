@@ -1,6 +1,6 @@
 import { FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage, LinearIssue } from "./types";
 
-interface VectorDocument {
+export interface VectorDocument {
   id: string;
   type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | "linear";
   text: string;
@@ -26,11 +26,23 @@ function computeTF(tokens: string[]): Map<string, number> {
   return tf;
 }
 
+function cosineSim(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
+}
+
 export class InMemoryVectorStore {
   private documents: VectorDocument[] = [];
   private idf: Map<string, number> = new Map();
   private tfidf: Map<string, Map<string, number>> = new Map();
   private docById: Map<string, VectorDocument> = new Map();
+  private embeddings: Map<string, number[]> = new Map();
 
   addFeedback(items: FeedbackItem[]) {
     for (const item of items) {
@@ -168,11 +180,35 @@ export class InMemoryVectorStore {
     }
   }
 
+  /** Supply pre-computed embeddings keyed by document id. Call after buildIndex(). */
+  setEmbeddings(embeddings: Map<string, number[]>) {
+    this.embeddings = embeddings;
+  }
+
+  /** Build embeddings for all documents using the supplied embed function. */
+  async buildEmbeddings(embedFn: (texts: string[]) => Promise<number[][] | null>) {
+    const BATCH = 64;
+    for (let i = 0; i < this.documents.length; i += BATCH) {
+      const batch = this.documents.slice(i, i + BATCH);
+      try {
+        const vecs = await embedFn(batch.map((d) => d.text.slice(0, 512)));
+        if (vecs) {
+          batch.forEach((doc, j) => {
+            if (vecs[j]?.length) this.embeddings.set(doc.id, vecs[j]);
+          });
+        }
+      } catch { /* non-fatal; TF-IDF fallback remains */ }
+    }
+  }
+
   search(
     query: string,
-    options?: { limit?: number; type?: VectorDocument["type"]; themes?: string[] }
+    options?: { limit?: number; type?: VectorDocument["type"]; themes?: string[]; queryEmbedding?: number[] }
   ): { document: VectorDocument; score: number }[] {
     const limit = options?.limit || 8;
+    const useEmbeddings = !!options?.queryEmbedding && this.embeddings.size > 0;
+
+    // TF-IDF query vector (always built as fallback)
     const queryTokens = tokenize(query);
     const queryTF = computeTF(queryTokens);
     const queryVec = new Map<string, number>();
@@ -189,34 +225,42 @@ export class InMemoryVectorStore {
         if (!overlap) continue;
       }
 
-      const docVec = this.tfidf.get(doc.id);
-      if (!docVec) continue;
+      let score = 0;
 
-      let dot = 0;
-      let normA = 0;
-      let normB = 0;
-      const allKeys = new Set<string>();
-      queryVec.forEach((_, k) => allKeys.add(k));
-      docVec.forEach((_, k) => allKeys.add(k));
-
-      allKeys.forEach((key) => {
-        const a = queryVec.get(key) || 0;
-        const b = docVec.get(key) || 0;
-        dot += a * b;
-        normA += a * a;
-        normB += b * b;
-      });
-
-      const denom = Math.sqrt(normA) * Math.sqrt(normB);
-      const score = denom > 0 ? dot / denom : 0;
-
-      if (score > 0.01) {
-        results.push({ document: doc, score });
+      if (useEmbeddings) {
+        const docEmb = this.embeddings.get(doc.id);
+        if (docEmb?.length) {
+          score = cosineSim(options!.queryEmbedding!, docEmb);
+        } else {
+          // Fall back to TF-IDF for docs without embeddings
+          const docVec = this.tfidf.get(doc.id);
+          if (docVec) score = this._tfidfScore(queryVec, docVec) * 0.7;
+        }
+      } else {
+        const docVec = this.tfidf.get(doc.id);
+        if (!docVec) continue;
+        score = this._tfidfScore(queryVec, docVec);
       }
+
+      if (score > 0.01) results.push({ document: doc, score });
     }
 
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, limit);
+  }
+
+  private _tfidfScore(queryVec: Map<string, number>, docVec: Map<string, number>): number {
+    let dot = 0, normA = 0, normB = 0;
+    const allKeys = new Set<string>();
+    queryVec.forEach((_, k) => allKeys.add(k));
+    docVec.forEach((_, k) => allKeys.add(k));
+    allKeys.forEach((key) => {
+      const a = queryVec.get(key) || 0;
+      const b = docVec.get(key) || 0;
+      dot += a * b; normA += a * a; normB += b * b;
+    });
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    return denom > 0 ? dot / denom : 0;
   }
 
   getDocumentById(id: string): VectorDocument | undefined {

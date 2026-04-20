@@ -85,7 +85,11 @@ export async function POST(req: NextRequest) {
       analyticsDays,
       posthogHost,
       linearKey,
-      linearTeamId
+      linearTeamId,
+      keys.aiProvider,
+      keys.geminiKey,
+      keys.anthropicKey,
+      keys.openaiKey
     );
 
     const generatedInsights = generateProgrammaticInsights(data);
@@ -101,6 +105,42 @@ export async function POST(req: NextRequest) {
     const ctxMode: ContextMode = (contextMode === "standard" || contextMode === "deep") ? contextMode : "focused";
     const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket") ? interactionMode : "summarize";
     const sourceIds = Array.isArray(accumulatedSourceIds) ? accumulatedSourceIds : undefined;
+
+    const wantStream = req.headers.get("x-stream") === "1";
+
+    if (wantStream) {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          chat(
+            trimmedMessage,
+            Array.isArray(history) ? history : [],
+            dataWithInsights,
+            agentKeys,
+            ctxMode,
+            chatMode,
+            sourceIds,
+            (chunk: string) => {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: chunk })}\n\n`));
+            }
+          ).then((result) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", ...result })}\n\n`));
+            controller.close();
+          }).catch((err) => {
+            console.error("Chat stream error:", err);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Stream error" })}\n\n`));
+            controller.close();
+          });
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
 
     const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds);
 

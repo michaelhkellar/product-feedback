@@ -2,11 +2,39 @@ import { generateWithGemini, isGeminiConfigured, getResolvedModel } from "./gemi
 
 export type AIProviderType = "gemini" | "anthropic" | "openai";
 
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema object
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
 export interface AIProvider {
   generate(systemPrompt: string, userPrompt: string, key?: string, model?: string): Promise<string | null>;
+  generateStream?(systemPrompt: string, userPrompt: string, key?: string, model?: string): AsyncGenerator<string>;
+  generateWithTools?(
+    systemPrompt: string,
+    messages: { role: "user" | "assistant"; content: string }[],
+    tools: ToolDefinition[],
+    key?: string,
+    model?: string
+  ): Promise<{ text: string | null; toolCalls: ToolCall[] }>;
+  embed?(texts: string[], key?: string): Promise<number[][] | null>;
   listModels(key?: string): Promise<string[]>;
   isConfigured(key?: string): boolean;
   getActiveModel(): string | null;
+}
+
+// --- Embedding cache (shared across providers) ---
+const _embeddingCache = new Map<string, number[]>();
+function embCacheKey(text: string, model: string): string {
+  // Use a short prefix + length to avoid hashing cost on every call
+  return `${model}:${text.length}:${text.slice(0, 64)}`;
 }
 
 // --- Gemini adapter (wraps existing lib/gemini.ts) ---
@@ -22,6 +50,67 @@ const FALLBACK_GEMINI_MODELS = [
 const geminiProvider: AIProvider = {
   async generate(systemPrompt, userPrompt, key, model) {
     return generateWithGemini(systemPrompt, userPrompt, key, model || undefined);
+  },
+
+  async *generateStream(systemPrompt, userPrompt, key, model) {
+    const apiKey = key || process.env.GEMINI_API_KEY;
+    if (!apiKey) return;
+    const modelId = model || "gemini-2.0-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?key=${apiKey}&alt=sse`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      }),
+    });
+    if (!res.ok || !res.body) return;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr || jsonStr === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(jsonStr) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+          const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+          if (text) yield text;
+        } catch { /* skip malformed chunk */ }
+      }
+    }
+  },
+
+  async embed(texts, key) {
+    const apiKey = key || process.env.GEMINI_API_KEY;
+    if (!apiKey || texts.length === 0) return null;
+    const model = "text-embedding-004";
+    const results: number[][] = [];
+    for (const text of texts) {
+      const ck = embCacheKey(text, model);
+      const cached = _embeddingCache.get(ck);
+      if (cached) { results.push(cached); continue; }
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`,
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: `models/${model}`, content: { parts: [{ text }] } }) }
+        );
+        if (!res.ok) { results.push([]); continue; }
+        const data = await res.json() as { embedding?: { values?: number[] } };
+        const vec = data.embedding?.values ?? [];
+        _embeddingCache.set(ck, vec);
+        results.push(vec);
+      } catch { results.push([]); }
+    }
+    return results.some((v) => v.length > 0) ? results : null;
   },
   async listModels(key) {
     const apiKey = key || process.env.GEMINI_API_KEY;
@@ -57,6 +146,7 @@ const geminiProvider: AIProvider = {
 
 const anthropicProvider: AIProvider = {
   async generate(systemPrompt, userPrompt, key, model) {
+
     const apiKey = key || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return null;
 
@@ -94,6 +184,56 @@ const anthropicProvider: AIProvider = {
         "claude-opus-4-20250514",
         "claude-3-5-haiku-20241022",
       ];
+    }
+  },
+
+  async *generateStream(systemPrompt, userPrompt, key, model) {
+    const apiKey = key || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return;
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    const stream = client.messages.stream({
+      model: model || "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        yield event.delta.text;
+      }
+    }
+  },
+
+  async generateWithTools(systemPrompt, messages, tools, key, model) {
+    const apiKey = key || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return { text: null, toolCalls: [] };
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey });
+    try {
+      const resp = await client.messages.create({
+        model: model || "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: systemPrompt,
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.parameters as { type: "object"; properties: Record<string, unknown>; required?: string[] },
+        })),
+        messages,
+      });
+      const toolCalls: ToolCall[] = resp.content
+        .filter((b) => b.type === "tool_use")
+        .map((b) => {
+          const tb = b as { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+          return { id: tb.id, name: tb.name, input: tb.input };
+        });
+      const textBlock = resp.content.find((b) => b.type === "text");
+      const text = textBlock?.type === "text" ? textBlock.text : null;
+      return { text, toolCalls };
+    } catch (err) {
+      console.error("Anthropic tool call error:", err);
+      return { text: null, toolCalls: [] };
     }
   },
 
@@ -150,6 +290,82 @@ const openaiProvider: AIProvider = {
     } catch (err) {
       console.error("OpenAI list models error:", err);
       return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"];
+    }
+  },
+
+  async *generateStream(systemPrompt, userPrompt, key, model) {
+    const apiKey = key || process.env.OPENAI_API_KEY;
+    if (!apiKey) return;
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    const stream = await client.chat.completions.create({
+      model: model || "gpt-4o",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: 4096,
+      stream: true,
+    });
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content ?? "";
+      if (text) yield text;
+    }
+  },
+
+  async embed(texts, key) {
+    const apiKey = key || process.env.OPENAI_API_KEY;
+    if (!apiKey || texts.length === 0) return null;
+    const model = "text-embedding-3-small";
+    const uncached: { idx: number; text: string }[] = [];
+    const results: (number[] | null)[] = new Array(texts.length).fill(null);
+    texts.forEach((t, i) => {
+      const ck = embCacheKey(t, model);
+      const cached = _embeddingCache.get(ck);
+      if (cached) results[i] = cached;
+      else uncached.push({ idx: i, text: t });
+    });
+    if (uncached.length > 0) {
+      try {
+        const { default: OpenAI } = await import("openai");
+        const client = new OpenAI({ apiKey });
+        const resp = await client.embeddings.create({ model, input: uncached.map((u) => u.text) });
+        resp.data.forEach((d, j) => {
+          const { idx, text } = uncached[j];
+          _embeddingCache.set(embCacheKey(text, model), d.embedding);
+          results[idx] = d.embedding;
+        });
+      } catch { return null; }
+    }
+    return results.every((r) => r !== null) ? (results as number[][]) : null;
+  },
+
+  async generateWithTools(systemPrompt, messages, tools, key, model) {
+    const apiKey = key || process.env.OPENAI_API_KEY;
+    if (!apiKey) return { text: null, toolCalls: [] };
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({ apiKey });
+    try {
+      const resp = await client.chat.completions.create({
+        model: model || "gpt-4o",
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        tools: tools.map((t) => ({
+          type: "function" as const,
+          function: { name: t.name, description: t.description, parameters: t.parameters },
+        })),
+        tool_choice: "auto",
+        max_tokens: 4096,
+      });
+      const choice = resp.choices[0];
+      const toolCalls: ToolCall[] = (choice?.message?.tool_calls ?? []).map((tc) => ({
+        id: tc.id,
+        name: tc.function.name,
+        input: JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>,
+      }));
+      return { text: choice?.message?.content ?? null, toolCalls };
+    } catch (err) {
+      console.error("OpenAI tool call error:", err);
+      return { text: null, toolCalls: [] };
     }
   },
 

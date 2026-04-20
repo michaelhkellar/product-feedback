@@ -1,5 +1,6 @@
 import { InMemoryVectorStore } from "./vector-store";
-import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
+import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType, ToolDefinition } from "./ai-provider";
+import { clusterFeedback, annotateClusters } from "./clustering";
 import { getRelevantPendoContext, getFullPendoAnalytics } from "./pendo";
 import { getRelevantAmplitudeContext, getFullAmplitudeAnalytics } from "./amplitude";
 import { getRelevantPostHogContext, getFullPostHogAnalytics } from "./posthog";
@@ -69,27 +70,56 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
 
-let cachedStore: { fingerprint: string; store: InMemoryVectorStore } | null = null;
+let cachedStore: { fingerprint: string; store: InMemoryVectorStore; embeddingMap: Map<string, number[]> } | null = null;
 
-function dataFingerprint(data: AgentData): string {
-  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}`;
+function dataFingerprint(data: AgentData, aiProvider?: string): string {
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${aiProvider || ""}`;
 }
 
-function buildStore(data: AgentData): InMemoryVectorStore {
-  const fp = dataFingerprint(data);
-  if (cachedStore && cachedStore.fingerprint === fp) return cachedStore.store;
+async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
+  const aiProvider = keys?.aiProvider || "gemini";
+  const fp = dataFingerprint(data, aiProvider);
+
+  if (cachedStore && cachedStore.fingerprint === fp) {
+    return { store: cachedStore.store, embeddingMap: cachedStore.embeddingMap, enrichedData: data };
+  }
 
   const store = new InMemoryVectorStore();
-  if (data.feedback.length) store.addFeedback(data.feedback);
-  if (data.features.length) store.addFeatures(data.features);
-  if (data.calls.length) store.addCalls(data.calls);
-  if (data.insights.length) store.addInsights(data.insights);
-  if (data.jiraIssues.length) store.addJiraIssues(data.jiraIssues);
-  if (data.linearIssues.length) store.addLinearIssues(data.linearIssues);
-  if (data.confluencePages.length) store.addConfluencePages(data.confluencePages);
+
+  // Compute embeddings and cluster feedback if the AI provider supports it
+  let enrichedData = data;
+  const embeddingMap = new Map<string, number[]>();
+
+  if (keys && data.feedback.length > 0) {
+    const provider = getAIProvider(aiProvider);
+    const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+    if (provider.embed && provider.isConfigured(aiKey)) {
+      try {
+        const texts = data.feedback.map((f) => `${f.title}. ${f.content.slice(0, 400)}`);
+        const vecs = await provider.embed(texts, aiKey);
+        if (vecs) {
+          data.feedback.forEach((f, i) => { if (vecs[i]?.length) embeddingMap.set(f.id, vecs[i]); });
+          // Cluster similar feedback and annotate with cluster metadata
+          const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
+          const annotated = annotateClusters(data.feedback, clusterMap, clusters);
+          enrichedData = { ...data, feedback: annotated };
+        }
+      } catch { /* non-fatal: proceed with TF-IDF */ }
+    }
+  }
+
+  if (enrichedData.feedback.length) store.addFeedback(enrichedData.feedback);
+  if (enrichedData.features.length) store.addFeatures(enrichedData.features);
+  if (enrichedData.calls.length) store.addCalls(enrichedData.calls);
+  if (enrichedData.insights.length) store.addInsights(enrichedData.insights);
+  if (enrichedData.jiraIssues.length) store.addJiraIssues(enrichedData.jiraIssues);
+  if (enrichedData.linearIssues.length) store.addLinearIssues(enrichedData.linearIssues);
+  if (enrichedData.confluencePages.length) store.addConfluencePages(enrichedData.confluencePages);
   store.buildIndex();
-  cachedStore = { fingerprint: fp, store };
-  return store;
+  if (embeddingMap.size > 0) store.setEmbeddings(embeddingMap);
+
+  cachedStore = { fingerprint: fp, store, embeddingMap };
+  return { store, embeddingMap, enrichedData };
 }
 
 export function getDemoData(): AgentData {
@@ -1189,12 +1219,14 @@ export async function chat(
   keys: AgentKeys = {},
   contextMode: ContextMode = "focused",
   mode: InteractionMode = "summarize",
-  accumulatedSourceIds?: string[]
+  accumulatedSourceIds?: string[],
+  onChunk?: (chunk: string) => void
 ): Promise<ChatResult> {
   const timeRange = extractTimeRange(userMessage);
-  const scopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
+  const _rawScopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
 
-  const store = buildStore(scopedData);
+  // buildStore enriches feedback with cluster annotations and builds embeddings
+  const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys);
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
@@ -1205,9 +1237,23 @@ export async function chat(
   const searchLimit = wideQuery || pivot.isPivot ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
   const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage), pivot);
 
+  // Compute query embedding for semantic search (non-fatal if unavailable)
+  let queryEmbedding: number[] | undefined;
+  if (embeddingMap.size > 0) {
+    const aiProvider = keys.aiProvider || "gemini";
+    const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+    const provider = getAIProvider(aiProvider);
+    if (provider.embed) {
+      try {
+        const vecs = await provider.embed([userMessage], aiKey);
+        if (vecs?.[0]?.length) queryEmbedding = vecs[0];
+      } catch { /* use TF-IDF */ }
+    }
+  }
+
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -1489,7 +1535,89 @@ ${formatInstructions}`;
   let aiAttemptedButFailed = false;
   if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
     const provider = getAIProvider(aiProvider);
-    const aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
+
+    const agentTools: ToolDefinition[] = [
+      {
+        name: "search_feedback",
+        description: "Search customer feedback, feature requests, and call summaries by topic. Use when you need more specific evidence on a topic not fully covered by the provided context.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Topic or keywords to search" },
+            limit: { type: "number", description: "Max results to return (1-10, default 5)" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "search_issues",
+        description: "Search Linear and Jira engineering issues by topic or status. Use when the user asks about tickets, bugs, or roadmap items not already in the provided context.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Topic or keywords to search" },
+            limit: { type: "number", description: "Max results to return (1-10, default 5)" },
+          },
+          required: ["query"],
+        },
+      },
+    ];
+
+    const executeAgentTool = (name: string, input: Record<string, unknown>): string => {
+      const query = String(input.query || "");
+      const limit = Math.min(Math.max(Number(input.limit) || 5, 1), 10);
+      if (name === "search_feedback") {
+        const hits = store.search(query, { limit });
+        if (hits.length === 0) return "No feedback found for that query.";
+        return hits.map((h) => {
+          const fb = scopedData.feedback.find((f) => f.id === h.document.id);
+          return fb
+            ? `[${fb.customer}] ${cleanFeedbackTitle(fb)}: ${fb.content.slice(0, 200)}`
+            : h.document.text.slice(0, 200);
+        }).join("\n---\n");
+      }
+      if (name === "search_issues") {
+        const linearHits = store.search(query, { limit: Math.ceil(limit / 2), type: "linear" });
+        const jiraHits = store.search(query, { limit: Math.floor(limit / 2), type: "jira" });
+        if (linearHits.length === 0 && jiraHits.length === 0) return "No issues found for that query.";
+        return [...linearHits, ...jiraHits].map((h) => {
+          const meta = h.document.metadata;
+          return `[${meta.key || h.document.id}] ${h.document.text.slice(0, 200)} (${meta.status || "unknown"})`;
+        }).join("\n---\n");
+      }
+      return "Unknown tool.";
+    }
+
+    let aiResponse: string | null = null;
+
+    if (provider.generateWithTools) {
+      const toolMessages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: prompt }];
+      for (let round = 0; round < 3; round++) {
+        const result = await provider.generateWithTools(systemPrompt, toolMessages, agentTools, aiKey, keys.aiModel || undefined);
+        if (result.toolCalls.length === 0) {
+          aiResponse = result.text;
+          break;
+        }
+        toolMessages.push({ role: "assistant", content: result.text || "" });
+        const toolResults = result.toolCalls
+          .map((tc) => `Tool: ${tc.name}\nResult: ${executeAgentTool(tc.name, tc.input)}`)
+          .join("\n\n");
+        toolMessages.push({ role: "user", content: `Tool results:\n${toolResults}\n\nNow answer the original question using these additional results.` });
+      }
+      if (!aiResponse) {
+        aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
+      }
+    } else if (onChunk && provider.generateStream) {
+      let fullText = "";
+      for await (const chunk of provider.generateStream(systemPrompt, prompt, aiKey, keys.aiModel || undefined)) {
+        onChunk(chunk);
+        fullText += chunk;
+      }
+      aiResponse = fullText || null;
+    } else {
+      aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
+    }
+
     if (aiResponse) {
       const outputTokens = estimateTokens(aiResponse);
       const finalTrace = { ...trace, tokensUsed: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens } };

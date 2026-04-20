@@ -770,6 +770,7 @@ Try one of the suggested queries below to get started.`;
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-stream": "1",
           ...keyHeaders,
         },
         body: JSON.stringify({
@@ -782,15 +783,14 @@ Try one of the suggested queries below to get started.`;
         }),
       });
 
-      const data = await res.json();
-
       if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
         const errorText = data?.error || `Request failed (${res.status}). Please try again.`;
         setMessages((prev) => [
           ...prev,
           {
             id: `error-${Date.now()}`,
-            role: "assistant",
+            role: "assistant" as const,
             content: `**Error:** ${errorText}`,
             timestamp: new Date().toISOString(),
           },
@@ -798,36 +798,107 @@ Try one of the suggested queries below to get started.`;
         return;
       }
 
-      if (data.tokenEstimate?.total > 0) {
-        setSessionTokens((prev) => prev + data.tokenEstimate.total);
-      }
+      const contentType = res.headers.get("content-type") || "";
 
-      if (data.sources && Array.isArray(data.sources)) {
-        setAccumulatedSourceIds((prev) => {
-          const next = new Set(prev);
-          for (const src of data.sources) {
-            if (src.id) next.add(src.id);
+      if (contentType.includes("text/event-stream") && res.body) {
+        const streamingId = `streaming-${Date.now()}`;
+        setMessages((prev) => [...prev, {
+          id: streamingId,
+          role: "assistant" as const,
+          content: "",
+          isStreaming: true,
+          timestamp: new Date().toISOString(),
+        }]);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr) continue;
+            try {
+              const event = JSON.parse(jsonStr) as {
+                type: string;
+                text?: string;
+                response?: string;
+                sources?: ChatMessage["sources"];
+                trace?: ChatMessage["trace"];
+                tokenEstimate?: { input: number; output: number; total: number };
+              };
+              if (event.type === "delta" && event.text) {
+                setMessages((prev) => prev.map((m) =>
+                  m.id === streamingId ? { ...m, content: m.content + event.text! } : m
+                ));
+              } else if (event.type === "done") {
+                if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
+                  setSessionTokens((prev) => prev + event.tokenEstimate!.total);
+                }
+                if (event.sources && Array.isArray(event.sources)) {
+                  setAccumulatedSourceIds((prev) => {
+                    const next = new Set(prev);
+                    for (const src of event.sources!) { if (src.id) next.add(src.id); }
+                    return next;
+                  });
+                }
+                setMessages((prev) => prev.map((m) =>
+                  m.id === streamingId ? {
+                    ...m,
+                    id: `assistant-${Date.now()}`,
+                    isStreaming: false,
+                    content: event.response || m.content || "No response generated. Please try again.",
+                    sources: event.sources,
+                    trace: event.trace,
+                  } : m
+                ));
+              }
+            } catch { /* skip malformed chunk */ }
           }
-          return next;
-        });
+        }
+      } else {
+        const data = await res.json() as {
+          response?: string;
+          sources?: ChatMessage["sources"];
+          trace?: ChatMessage["trace"];
+          tokenEstimate?: { input: number; output: number; total: number };
+        };
+
+        if (data.tokenEstimate?.total && data.tokenEstimate.total > 0) {
+          setSessionTokens((prev) => prev + data.tokenEstimate!.total);
+        }
+
+        if (data.sources && Array.isArray(data.sources)) {
+          setAccumulatedSourceIds((prev) => {
+            const next = new Set(prev);
+            for (const src of data.sources!) { if (src.id) next.add(src.id); }
+            return next;
+          });
+        }
+
+        const assistantMessage: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: data.response || "No response generated. Please try again.",
+          timestamp: new Date().toISOString(),
+          sources: data.sources,
+          trace: data.trace,
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
       }
-
-      const assistantMessage: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: data.response || "No response generated. Please try again.",
-        timestamp: new Date().toISOString(),
-        sources: data.sources,
-        trace: data.trace,
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
     } catch {
       setMessages((prev) => [
         ...prev,
         {
           id: `error-${Date.now()}`,
-          role: "assistant",
+          role: "assistant" as const,
           content:
             "I encountered an error processing your request. Please try again.",
           timestamp: new Date().toISOString(),

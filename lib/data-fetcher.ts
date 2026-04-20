@@ -7,6 +7,8 @@ import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
 import { getPostHogOverview, isPostHogConfigured } from "./posthog";
 import { getLinearIssues, isLinearConfigured } from "./linear";
 import { AnalyticsProviderType } from "./api-keys";
+import { AIProviderType } from "./ai-provider";
+import { enrichFeedback } from "./enrichment";
 import { createHash } from "crypto";
 import {
   DEMO_FEEDBACK,
@@ -190,7 +192,11 @@ export async function getData(
   analyticsDays?: number,
   posthogHost?: string,
   linearKey?: string,
-  linearTeamId?: string
+  linearTeamId?: string,
+  aiProvider?: AIProviderType,
+  geminiKey?: string,
+  anthropicKey?: string,
+  openaiKey?: string
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
@@ -210,7 +216,14 @@ export async function getData(
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const data = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId);
+  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId);
+
+  // AI-powered sentiment and theme enrichment (skipped for demo data)
+  const enrichedFeedback = (!useDemoData && raw.feedback.length > 0)
+    ? await enrichFeedback(raw.feedback, aiProvider, geminiKey, anthropicKey, openaiKey).catch(() => raw.feedback)
+    : raw.feedback;
+  const data: AgentData = { ...raw, feedback: enrichedFeedback };
+
   dataCache.set(key, { data, timestamp: Date.now() });
 
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
