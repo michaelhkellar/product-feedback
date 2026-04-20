@@ -3,6 +3,7 @@ import { AIProviderType } from "./ai-provider";
 export type ContextMode = "focused" | "standard" | "deep";
 export type AnalyticsProviderType = "pendo" | "amplitude" | "posthog";
 export type TicketProviderType = "atlassian" | "linear";
+export type CallProviderType = "attention" | "grain";
 
 export interface ApiKeyState {
   geminiKey: string;
@@ -27,6 +28,8 @@ export interface ApiKeyState {
   posthogHost: string;
   linearTeamId: string;
   braveSearchKey: string;
+  grainKey: string;
+  callProvider: CallProviderType;
 }
 
 export interface ApiKeyStatus {
@@ -40,6 +43,7 @@ export interface ApiKeyStatus {
   amplitudeKey: { configured: boolean; source: "app" | "env" | null };
   linearKey: { configured: boolean; source: "app" | "env" | null };
   posthogKey: { configured: boolean; source: "app" | "env" | null };
+  grainKey: { configured: boolean; source: "app" | "env" | null };
 }
 
 const LEGACY_STORAGE_KEY = "feedback-agent-api-keys";
@@ -73,6 +77,8 @@ const EMPTY_KEYS: ApiKeyState = {
   posthogHost: "",
   linearTeamId: "",
   braveSearchKey: "",
+  grainKey: "",
+  callProvider: "attention",
 };
 
 interface EncryptedPayload {
@@ -104,11 +110,17 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     posthogHost: parsed?.posthogHost || "",
     linearTeamId: parsed?.linearTeamId || "",
     braveSearchKey: parsed?.braveSearchKey || "",
+    grainKey: parsed?.grainKey || "",
+    callProvider: (parsed?.callProvider as CallProviderType) || "attention",
   };
 }
 
 export function isBraveConfigured(key?: string): boolean {
   return !!(key || process.env.BRAVE_SEARCH_KEY);
+}
+
+export function isGrainKeyConfigured(key?: string): boolean {
+  return !!(key || process.env.GRAIN_API_KEY);
 }
 
 function hasStoredValues(keys: ApiKeyState): boolean {
@@ -341,6 +353,8 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.posthogHost) headers["x-posthog-host"] = keys.posthogHost;
   if (keys.linearTeamId) headers["x-linear-team-id"] = keys.linearTeamId;
   if (keys.braveSearchKey) headers["x-brave-search-key"] = keys.braveSearchKey;
+  if (keys.grainKey) headers["x-grain-key"] = keys.grainKey;
+  if (keys.callProvider) headers["x-call-provider"] = keys.callProvider;
   return headers;
 }
 

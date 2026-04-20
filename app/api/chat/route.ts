@@ -59,6 +59,8 @@ export async function POST(req: NextRequest) {
     const linearKey = req.headers.get("x-linear-key") || undefined;
     const linearTeamId = req.headers.get("x-linear-team-id") || undefined;
     const braveSearchKey = req.headers.get("x-brave-search-key") || undefined;
+    const grainKey = req.headers.get("x-grain-key") || undefined;
+    const callProvider = (req.headers.get("x-call-provider") as "attention" | "grain") || undefined;
 
     const agentKeys = {
       ...keys,
@@ -91,7 +93,9 @@ export async function POST(req: NextRequest) {
       keys.aiProvider,
       keys.geminiKey,
       keys.anthropicKey,
-      keys.openaiKey
+      keys.openaiKey,
+      grainKey,
+      callProvider
     );
 
     const generatedInsights = generateProgrammaticInsights(data);

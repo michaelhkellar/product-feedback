@@ -1,12 +1,13 @@
 import { AgentData, getDemoData } from "./agent";
 import { getFeatures, getNotes, isProductboardConfigured } from "./productboard";
 import { getCalls, isAttentionConfigured } from "./attention";
+import { getGrainCalls, isGrainConfigured } from "./grain";
 import { getJiraIssues, getConfluencePages, isAtlassianConfigured } from "./atlassian";
 import { getPendoOverview, isPendoConfigured } from "./pendo";
 import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
 import { getPostHogOverview, isPostHogConfigured } from "./posthog";
 import { getLinearIssues, isLinearConfigured } from "./linear";
-import { AnalyticsProviderType } from "./api-keys";
+import { AnalyticsProviderType, CallProviderType } from "./api-keys";
 import { AIProviderType } from "./ai-provider";
 import { enrichFeedback } from "./enrichment";
 import { createHash } from "crypto";
@@ -45,7 +46,9 @@ function cacheKey(
   posthogKey?: string,
   analyticsDays?: number,
   posthogHost?: string,
-  aiProvider?: string
+  aiProvider?: string,
+  grainKey?: string,
+  callProvider?: string
 ): string {
   const parts = [
     pbKey ? `pb:${shortHash(pbKey)}` : "",
@@ -59,6 +62,8 @@ function cacheKey(
     `ap:${analyticsProvider || "pendo"}`,
     analyticsDays ? `days:${analyticsDays}` : "",
     `ai:${aiProvider || "gemini"}`,
+    grainKey ? `grain:${shortHash(grainKey)}` : "",
+    `cp:${callProvider || "attention"}`,
     atlJiraFilter || "",
     atlConfluenceFilter || "",
   ];
@@ -81,7 +86,9 @@ async function fetchLiveData(
   analyticsDays?: number,
   posthogHost?: string,
   linearKey?: string,
-  linearTeamId?: string
+  linearTeamId?: string,
+  grainKey?: string,
+  callProvider?: CallProviderType
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -111,7 +118,15 @@ async function fetchLiveData(
     );
   }
 
-  if (isAttentionConfigured(attKey)) {
+  const effectiveCallProvider = callProvider || "attention";
+  if (effectiveCallProvider === "grain" && isGrainConfigured(grainKey)) {
+    fetches.push(
+      (async () => {
+        const callResult = await getGrainCalls(grainKey, false);
+        if (!callResult.isDemo && callResult.data.length > 0) calls = callResult.data;
+      })()
+    );
+  } else if (isAttentionConfigured(attKey)) {
     fetches.push(
       (async () => {
         const callResult = await getCalls(attKey, false);
@@ -198,27 +213,30 @@ export async function getData(
   aiProvider?: AIProviderType,
   geminiKey?: string,
   anthropicKey?: string,
-  openaiKey?: string
+  openaiKey?: string,
+  grainKey?: string,
+  callProvider?: CallProviderType
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
+  const hasGrain = isGrainConfigured(grainKey);
   const hasPendo = isPendoConfigured(pendoKey);
   const hasAmplitude = isAmplitudeConfigured(amplitudeKey);
   const hasPostHog = isPostHogConfigured(posthogKey);
   const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
   const hasLinear = isLinearConfigured(linearKey);
-  const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
+  const hasAnyLiveKey = hasPb || hasAtt || hasGrain || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
 
   if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost, aiProvider);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost, aiProvider, grainKey, callProvider);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId);
+  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider);
 
   // AI-powered sentiment and theme enrichment (skipped for demo data)
   const enrichedFeedback = (!useDemoData && raw.feedback.length > 0)

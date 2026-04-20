@@ -763,6 +763,10 @@ Try one of the suggested queries below to get started.`;
     setIsLoading(true);
     setShowSuggestions(false);
 
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const history = messages
         .filter((m) => m.role !== "system" && m.id !== "welcome")
@@ -770,10 +774,6 @@ Try one of the suggested queries below to get started.`;
           role: m.role as "user" | "assistant",
           content: m.content,
         }));
-
-      abortControllerRef.current?.abort();
-      const controller = new AbortController();
-      abortControllerRef.current = controller;
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -875,8 +875,12 @@ Try one of the suggested queries below to get started.`;
               } catch { /* skip malformed chunk */ }
             }
           }
-        } catch {
+        } catch (err) {
           streamCompleted = true;
+          if ((err as { name?: string })?.name === "AbortError") {
+            setMessages((prev) => prev.filter((m) => m.id !== streamingId));
+            return;
+          }
           setMessages((prev) => prev.map((m) =>
             m.id === streamingId ? { ...m, isStreaming: false, content: m.content || "Stream interrupted. Please try again." } : m
           ));
@@ -919,7 +923,8 @@ Try one of the suggested queries below to get started.`;
 
         setMessages((prev) => [...prev, assistantMessage]);
       }
-    } catch {
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
       setMessages((prev) => [
         ...prev,
         {
@@ -931,7 +936,7 @@ Try one of the suggested queries below to get started.`;
         },
       ]);
     } finally {
-      setIsLoading(false);
+      if (!controller.signal.aborted) setIsLoading(false);
     }
   }
 

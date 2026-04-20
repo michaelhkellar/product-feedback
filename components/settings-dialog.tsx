@@ -6,7 +6,7 @@ import { buildKeyHeaders, ApiKeyState } from "@/lib/api-keys";
 import { AIProviderType } from "@/lib/ai-provider";
 import {
   X, Settings, Key, CheckCircle2, XCircle, Loader2,
-  Trash2, Save, AlertTriangle, Info,
+  Trash2, Save, AlertTriangle, Info, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,7 @@ interface SettingsDialogProps { open: boolean; onClose: () => void; }
 interface KeyFieldState {
   value: string; visible: boolean; dirty: boolean;
   validating: boolean; valid: boolean | null; error: string | null;
+  editing?: boolean;
 }
 
 const SIMPLE_KEYS: { id: keyof ApiKeyState; label: string; placeholder: string; description: string }[] = [
@@ -70,6 +71,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     { id: "posthogKey" as keyof ApiKeyState, label: "PostHog API Key", placeholder: "phx_...:projectId", description: "" },
     { id: "linearKey" as keyof ApiKeyState, label: "Linear API Key", placeholder: "lin_api_...", description: "" },
     { id: "braveSearchKey" as keyof ApiKeyState, label: "Brave Search API Key", placeholder: "BSA...", description: "" },
+    { id: "grainKey" as keyof ApiKeyState, label: "Grain API Key", placeholder: "grain_...", description: "" },
   ];
 
   useEffect(() => {
@@ -184,7 +186,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const nextKeys: Partial<ApiKeyState> = { [id]: trimmed } as Partial<ApiKeyState>;
     if (trimmed) setKey(id as keyof ApiKeyState, trimmed);
     else removeKey(id as keyof ApiKeyState);
-    updateField(id, { dirty: false });
+    updateField(id, { dirty: false, editing: false });
     showSave(`Setting saved`, nextKeys);
   }
 
@@ -242,6 +244,30 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const field = fields[id];
     if (!field) return null;
     const envConfigured = (status as unknown as Record<string, { source: string | null }>)[id]?.source === "env";
+    const isSaved = !!(keys[id] && !field.dirty && !field.editing);
+
+    if (isSaved) {
+      return (
+        <div key={id} className="flex items-center justify-between py-1">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
+            <span className="text-xs font-medium">{label}</span>
+            {envConfigured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-medium">ENV</span>}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => updateField(id, { editing: true })}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-muted hover:bg-accent transition-colors">
+              <Pencil className="w-2.5 h-2.5" />Edit
+            </button>
+            <button onClick={() => handleRemove(id)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
+              <Trash2 className="w-2.5 h-2.5" />Remove
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div key={id} className="space-y-2">
         <div className="flex items-center justify-between">
@@ -253,7 +279,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {envConfigured && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 font-medium">ENV</span>}
             {field.valid === true && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
             {field.valid === false && <XCircle className="w-3.5 h-3.5 text-red-500" />}
-            {keys[id] && !field.dirty && <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-600 font-medium">Saved</span>}
+            {field.editing && keys[id] && (
+              <button onClick={() => updateField(id, { editing: false, dirty: false, value: keys[id], error: null })}
+                className="text-[9px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+            )}
           </div>
         </div>
         {description && <p className="text-[10px] text-muted-foreground">{description}</p>}
@@ -495,6 +524,31 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 )}
               </>
             )}
+          </div>
+
+          {/* Call Recording Provider */}
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
+            <p className="text-xs font-medium">Call Recording Provider</p>
+            <div className="flex gap-1.5">
+              {([
+                { key: "attention" as const, label: "Attention" },
+                { key: "grain" as const, label: "Grain" },
+              ]).map((p) => (
+                <button key={p.key}
+                  onClick={() => setKey("callProvider", p.key)}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    (keys.callProvider || "attention") === p.key
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{p.label}</div>
+                </button>
+              ))}
+            </div>
+            {(keys.callProvider || "attention") === "grain"
+              ? renderKeyField("grainKey", "Grain API Key", "grain_...", "Workspace API token from Grain Settings › Integrations › API. Fetches recordings and transcripts.")
+              : renderKeyField("attentionKey", "Attention API Key", "att_...", "Fetches call recordings from Attention")}
           </div>
 
           {/* Data Sources */}

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(npm run *)",
+      "Bash(git stash *)",
+      "Bash(git reset *)",
+      "Bash(curl -sL https://developers.grain.com/)"
+    ]
+  }
+}

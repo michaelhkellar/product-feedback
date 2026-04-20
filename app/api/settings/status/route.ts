@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const amplitude = req.headers.get("x-amplitude-key") || process.env.AMPLITUDE_API_KEY;
   const linear = req.headers.get("x-linear-key") || process.env.LINEAR_API_KEY;
   const posthog = req.headers.get("x-posthog-key") || process.env.POSTHOG_API_KEY;
+  const grain = req.headers.get("x-grain-key") || process.env.GRAIN_API_KEY;
 
   return NextResponse.json({
     status: {
@@ -56,6 +57,10 @@ export async function GET(req: NextRequest) {
       posthogKey: {
         configured: !!posthog,
         source: req.headers.get("x-posthog-key") ? "app" : process.env.POSTHOG_API_KEY ? "env" : null,
+      },
+      grainKey: {
+        configured: !!grain,
+        source: req.headers.get("x-grain-key") ? "app" : process.env.GRAIN_API_KEY ? "env" : null,
       },
     },
   });

@@ -35,6 +35,8 @@ const EMPTY: ApiKeyState = {
   ticketProvider: "atlassian", linearKey: "",
   posthogKey: "", posthogHost: "", linearTeamId: "",
   braveSearchKey: "",
+  grainKey: "",
+  callProvider: "attention",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {
@@ -48,11 +50,12 @@ const EMPTY_STATUS: ApiKeyStatus = {
   amplitudeKey: { configured: false, source: null },
   linearKey: { configured: false, source: null },
   posthogKey: { configured: false, source: null },
+  grainKey: { configured: false, source: null },
 };
 
 const DATA_SOURCE_KEY_NAMES: (keyof ApiKeyState)[] = [
   "productboardKey", "attentionKey", "pendoKey", "amplitudeKey",
-  "posthogKey", "atlassianDomain", "atlassianEmail", "atlassianToken", "linearKey",
+  "posthogKey", "atlassianDomain", "atlassianEmail", "atlassianToken", "linearKey", "grainKey",
 ];
 
 function isDataSourceKey(name: keyof ApiKeyState): boolean {
