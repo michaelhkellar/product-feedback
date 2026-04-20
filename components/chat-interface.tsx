@@ -729,6 +729,11 @@ Try one of the suggested queries below to get started.`;
 
   // Keep a ref so the imperative handle always calls the latest sendMessage
   const sendMessageRef = useRef<((text?: string, opts?: { skipFilterSuffix?: boolean }) => void) | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => { abortControllerRef.current?.abort(); };
+  }, []);
 
   useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessageRef.current?.(msg, { skipFilterSuffix: true }) }), []);
 
@@ -766,8 +771,13 @@ Try one of the suggested queries below to get started.`;
           content: m.content,
         }));
 
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       const res = await fetch("/api/chat", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           "x-stream": "1",

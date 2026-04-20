@@ -13,6 +13,7 @@ import {
   AnalyticsOverview, FullAnalyticsResult, LinearIssue,
 } from "./types";
 import { ContextMode } from "./api-keys";
+import { searchWeb } from "./web-search";
 
 export type InteractionMode = "summarize" | "prd" | "ticket";
 
@@ -34,6 +35,7 @@ export interface AgentKeys {
   posthogHost?: string;
   linearKey?: string;
   linearTeamId?: string;
+  braveSearchKey?: string;
 }
 
 export interface AgentData {
@@ -1551,6 +1553,7 @@ ${formatInstructions}`;
   if (isAnyAIConfigured(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey)) {
     const provider = getAIProvider(aiProvider);
 
+    const braveKey = keys.braveSearchKey || process.env.BRAVE_SEARCH_KEY;
     const agentTools: ToolDefinition[] = [
       {
         name: "search_feedback",
@@ -1576,68 +1579,94 @@ ${formatInstructions}`;
           required: ["query"],
         },
       },
+      ...(braveKey ? [{
+        name: "web_search",
+        description: "Search the public web for competitor product behavior, industry benchmarks, or external context not available in internal data. Use ONLY for questions about the external world — competitors, standards, industry trends. Do NOT use for questions answerable from internal feedback or tickets.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            num_results: { type: "number", description: "Number of results to return (1-5, default 3)" },
+          },
+          required: ["query"],
+        },
+      }] : []),
     ];
 
-    const executeAgentTool = (name: string, input: Record<string, unknown>): string => {
+    const webSources: { type: string; id: string; title: string; url?: string }[] = [];
+
+    const executeAgentTool = async (name: string, input: Record<string, unknown>): Promise<{ text: string; count: number }> => {
       const query = String(input.query || "");
       const limit = Math.min(Math.max(Number(input.limit) || 5, 1), 10);
       if (name === "search_feedback") {
         const hits = store.search(query, { limit });
-        if (hits.length === 0) return "No feedback found for that query.";
-        return hits.map((h) => {
-          const fb = scopedData.feedback.find((f) => f.id === h.document.id);
-          return fb
-            ? `[${fb.customer}] ${cleanFeedbackTitle(fb)}: ${fb.content.slice(0, 200)}`
-            : h.document.text.slice(0, 200);
-        }).join("\n---\n");
+        if (hits.length === 0) return { text: "No feedback found for that query.", count: 0 };
+        return {
+          text: hits.map((h) => {
+            const fb = scopedData.feedback.find((f) => f.id === h.document.id);
+            return fb
+              ? `[${fb.customer}] ${cleanFeedbackTitle(fb)}: ${fb.content.slice(0, 200)}`
+              : h.document.text.slice(0, 200);
+          }).join("\n---\n"),
+          count: hits.length,
+        };
       }
       if (name === "search_issues") {
         const linearHits = store.search(query, { limit: Math.ceil(limit / 2), type: "linear" });
         const jiraHits = store.search(query, { limit: Math.floor(limit / 2), type: "jira" });
-        if (linearHits.length === 0 && jiraHits.length === 0) return "No issues found for that query.";
-        return [...linearHits, ...jiraHits].map((h) => {
-          const meta = h.document.metadata;
-          return `[${meta.key || h.document.id}] ${h.document.text.slice(0, 200)} (${meta.status || "unknown"})`;
-        }).join("\n---\n");
+        const allHits = [...linearHits, ...jiraHits];
+        if (allHits.length === 0) return { text: "No issues found for that query.", count: 0 };
+        return {
+          text: allHits.map((h) => {
+            const meta = h.document.metadata;
+            return `[${meta.key || h.document.id}] ${h.document.text.slice(0, 200)} (${meta.status || "unknown"})`;
+          }).join("\n---\n"),
+          count: allHits.length,
+        };
       }
-      return "Unknown tool.";
-    }
+      if (name === "web_search") {
+        if (!braveKey) return { text: "Web search not configured.", count: 0 };
+        const numResults = Math.min(Math.max(Number(input.num_results) || 3, 1), 5);
+        const results = await searchWeb(query, braveKey, numResults);
+        if (results.length === 0) return { text: "No web results found.", count: 0 };
+        for (const r of results) {
+          if (!webSources.some((s) => s.id === r.url)) {
+            webSources.push({ type: "web", id: r.url, title: r.title, url: r.url });
+          }
+        }
+        return {
+          text: results.map((r) => `[${r.domain}] ${r.title} — ${r.description} (${r.url})`).join("\n---\n"),
+          count: results.length,
+        };
+      }
+      return { text: "Unknown tool.", count: 0 };
+    };
 
     let aiResponse: string | null = null;
     const recordedToolCalls: { name: string; query: string; resultCount: number }[] = [];
 
     if (provider.generateWithTools) {
       const toolMessages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: prompt }];
-      let usedTools = false;
 
       for (let round = 0; round < 3; round++) {
         const result = await provider.generateWithTools(systemPrompt, toolMessages, agentTools, aiKey, keys.aiModel || undefined);
 
         if (result.toolCalls.length === 0) {
-          // No tools requested — if this is the first round, stream the response if supported
-          if (!usedTools && onChunk && provider.generateStream) {
-            let fullText = "";
-            for await (const chunk of provider.generateStream(systemPrompt, prompt, aiKey, keys.aiModel || undefined)) {
-              onChunk(chunk);
-              fullText += chunk;
-            }
-            aiResponse = fullText || result.text;
-          } else {
-            aiResponse = result.text;
-          }
+          // No tools — fake-stream the text we already have (avoids a second API call)
+          if (onChunk && result.text) onChunk(result.text);
+          aiResponse = result.text;
           break;
         }
 
         // Execute tool calls and record for trace
-        usedTools = true;
         toolMessages.push({ role: "assistant", content: result.text || "" });
         const toolResultParts: string[] = [];
         for (const tc of result.toolCalls) {
-          const output = executeAgentTool(tc.name, tc.input);
+          const { text: output, count } = await executeAgentTool(tc.name, tc.input);
           recordedToolCalls.push({
             name: tc.name,
             query: String(tc.input.query || ""),
-            resultCount: output.split("\n---\n").length,
+            resultCount: count,
           });
           toolResultParts.push(`Tool: ${tc.name}\nResult: ${output}`);
         }
@@ -1645,9 +1674,13 @@ ${formatInstructions}`;
       }
 
       if (!aiResponse) {
-        // Loop exhausted without terminating — synthesize with all collected evidence
-        const finalPrompt = toolMessages.length > 1
-          ? `${prompt}\n\n[Additional evidence collected via tool calls above — use it to answer the question.]`
+        // Loop exhausted — inline collected tool evidence so the AI can actually use it
+        const toolEvidence = toolMessages
+          .filter((m, i) => i > 0 && m.role === "user" && m.content.startsWith("Tool results:"))
+          .map((m) => m.content)
+          .join("\n\n");
+        const finalPrompt = toolEvidence
+          ? `${prompt}\n\n--- Evidence from tool calls ---\n${toolEvidence}`
           : prompt;
         if (onChunk && provider.generateStream) {
           let fullText = "";
@@ -1680,7 +1713,7 @@ ${formatInstructions}`;
       };
       return {
         response: aiResponse,
-        sources,
+        sources: [...sources, ...webSources],
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
       };

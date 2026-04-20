@@ -58,7 +58,7 @@ function cacheKey(
     `demo:${demo}`,
     `ap:${analyticsProvider || "pendo"}`,
     analyticsDays ? `days:${analyticsDays}` : "",
-    aiProvider ? `ai:${aiProvider}` : "",
+    `ai:${aiProvider || "gemini"}`,
     atlJiraFilter || "",
     atlConfluenceFilter || "",
   ];
