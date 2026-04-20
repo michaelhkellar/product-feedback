@@ -57,6 +57,7 @@ export interface ChatTrace {
   tokensUsed: { input: number; output: number; total: number };
   pivotExcluded?: string[];
   aiError?: boolean;
+  toolCalls?: { name: string; query: string; resultCount: number }[];
 }
 
 export interface ChatResult {
@@ -86,20 +87,34 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
 
   const store = new InMemoryVectorStore();
 
-  // Compute embeddings and cluster feedback if the AI provider supports it
+  // Compute embeddings and cluster feedback — fall back across providers when primary lacks embed().
   let enrichedData = data;
   const embeddingMap = new Map<string, number[]>();
 
   if (keys && data.feedback.length > 0) {
-    const provider = getAIProvider(aiProvider);
-    const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
-    if (provider.embed && provider.isConfigured(aiKey)) {
+    // Pick best available embedder: primary provider > Gemini > OpenAI > none
+    const embedCandidates: { provider: ReturnType<typeof getAIProvider>; key: string | undefined }[] = [];
+    const primaryProvider = getAIProvider(aiProvider);
+    const primaryKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+    if (primaryProvider.embed && primaryProvider.isConfigured(primaryKey)) {
+      embedCandidates.push({ provider: primaryProvider, key: primaryKey });
+    }
+    if (aiProvider !== "gemini" && keys.geminiKey) {
+      const gp = getAIProvider("gemini");
+      if (gp.embed && gp.isConfigured(keys.geminiKey)) embedCandidates.push({ provider: gp, key: keys.geminiKey });
+    }
+    if (aiProvider !== "openai" && keys.openaiKey) {
+      const op = getAIProvider("openai");
+      if (op.embed && op.isConfigured(keys.openaiKey)) embedCandidates.push({ provider: op, key: keys.openaiKey });
+    }
+
+    const embedder = embedCandidates[0];
+    if (embedder) {
       try {
         const texts = data.feedback.map((f) => `${f.title}. ${f.content.slice(0, 400)}`);
-        const vecs = await provider.embed(texts, aiKey);
+        const vecs = await embedder.provider.embed!(texts, embedder.key);
         if (vecs) {
           data.feedback.forEach((f, i) => { if (vecs[i]?.length) embeddingMap.set(f.id, vecs[i]); });
-          // Cluster similar feedback and annotate with cluster metadata
           const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
           const annotated = annotateClusters(data.feedback, clusterMap, clusters);
           enrichedData = { ...data, feedback: annotated };
@@ -1589,23 +1604,61 @@ ${formatInstructions}`;
     }
 
     let aiResponse: string | null = null;
+    const recordedToolCalls: { name: string; query: string; resultCount: number }[] = [];
 
     if (provider.generateWithTools) {
       const toolMessages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: prompt }];
+      let usedTools = false;
+
       for (let round = 0; round < 3; round++) {
         const result = await provider.generateWithTools(systemPrompt, toolMessages, agentTools, aiKey, keys.aiModel || undefined);
+
         if (result.toolCalls.length === 0) {
-          aiResponse = result.text;
+          // No tools requested — if this is the first round, stream the response if supported
+          if (!usedTools && onChunk && provider.generateStream) {
+            let fullText = "";
+            for await (const chunk of provider.generateStream(systemPrompt, prompt, aiKey, keys.aiModel || undefined)) {
+              onChunk(chunk);
+              fullText += chunk;
+            }
+            aiResponse = fullText || result.text;
+          } else {
+            aiResponse = result.text;
+          }
           break;
         }
+
+        // Execute tool calls and record for trace
+        usedTools = true;
         toolMessages.push({ role: "assistant", content: result.text || "" });
-        const toolResults = result.toolCalls
-          .map((tc) => `Tool: ${tc.name}\nResult: ${executeAgentTool(tc.name, tc.input)}`)
-          .join("\n\n");
-        toolMessages.push({ role: "user", content: `Tool results:\n${toolResults}\n\nNow answer the original question using these additional results.` });
+        const toolResultParts: string[] = [];
+        for (const tc of result.toolCalls) {
+          const output = executeAgentTool(tc.name, tc.input);
+          recordedToolCalls.push({
+            name: tc.name,
+            query: String(tc.input.query || ""),
+            resultCount: output.split("\n---\n").length,
+          });
+          toolResultParts.push(`Tool: ${tc.name}\nResult: ${output}`);
+        }
+        toolMessages.push({ role: "user", content: `Tool results:\n${toolResultParts.join("\n\n")}\n\nNow answer the original question using these additional results.` });
       }
+
       if (!aiResponse) {
-        aiResponse = await provider.generate(systemPrompt, prompt, aiKey, keys.aiModel || undefined);
+        // Loop exhausted without terminating — synthesize with all collected evidence
+        const finalPrompt = toolMessages.length > 1
+          ? `${prompt}\n\n[Additional evidence collected via tool calls above — use it to answer the question.]`
+          : prompt;
+        if (onChunk && provider.generateStream) {
+          let fullText = "";
+          for await (const chunk of provider.generateStream(systemPrompt, finalPrompt, aiKey, keys.aiModel || undefined)) {
+            onChunk(chunk);
+            fullText += chunk;
+          }
+          aiResponse = fullText || null;
+        } else {
+          aiResponse = await provider.generate(systemPrompt, finalPrompt, aiKey, keys.aiModel || undefined);
+        }
       }
     } else if (onChunk && provider.generateStream) {
       let fullText = "";
@@ -1620,7 +1673,11 @@ ${formatInstructions}`;
 
     if (aiResponse) {
       const outputTokens = estimateTokens(aiResponse);
-      const finalTrace = { ...trace, tokensUsed: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens } };
+      const finalTrace: ChatTrace = {
+        ...trace,
+        tokensUsed: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
+        ...(recordedToolCalls.length > 0 ? { toolCalls: recordedToolCalls } : {}),
+      };
       return {
         response: aiResponse,
         sources,

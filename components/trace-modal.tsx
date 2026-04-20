@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft, AlertTriangle } from "lucide-react";
+import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft, AlertTriangle, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatMessageTrace } from "@/lib/types";
 
@@ -134,6 +134,25 @@ export function TraceModal({ trace }: TraceModalProps) {
                     ))}
                   </div>
                   <p className="text-[10px] text-muted-foreground">Agent focused on other topics instead.</p>
+                </section>
+              )}
+
+              {/* Tool calls */}
+              {trace.toolCalls && trace.toolCalls.length > 0 && (
+                <section className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <Wrench className="w-3 h-3" />
+                    Mid-chat Tool Calls
+                  </div>
+                  <div className="space-y-1">
+                    {trace.toolCalls.map((tc, i) => (
+                      <div key={i} className="flex items-start gap-2 text-[10px]">
+                        <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 font-medium flex-shrink-0">{tc.name}</span>
+                        <span className="text-muted-foreground italic truncate flex-1">"{tc.query}"</span>
+                        <span className="text-muted-foreground flex-shrink-0">{tc.resultCount} result{tc.resultCount !== 1 ? "s" : ""}</span>
+                      </div>
+                    ))}
+                  </div>
                 </section>
               )}
 

@@ -30,10 +30,22 @@ export interface AIProvider {
   getActiveModel(): string | null;
 }
 
+// --- Simple LRU map (insertion-order eviction) ---
+function lruSet<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): void {
+  map.delete(key); // remove so re-insert goes to end
+  map.set(key, value);
+  if (map.size > maxSize) map.delete(map.keys().next().value as K);
+}
+function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const v = map.get(key);
+  if (v !== undefined) { map.delete(key); map.set(key, v); } // bump to end
+  return v;
+}
+
 // --- Embedding cache (shared across providers) ---
 const _embeddingCache = new Map<string, number[]>();
+const EMBED_CACHE_MAX = 2000;
 function embCacheKey(text: string, model: string): string {
-  // Use a short prefix + length to avoid hashing cost on every call
   return `${model}:${text.length}:${text.slice(0, 64)}`;
 }
 
@@ -92,25 +104,39 @@ const geminiProvider: AIProvider = {
     const apiKey = key || process.env.GEMINI_API_KEY;
     if (!apiKey || texts.length === 0) return null;
     const model = "text-embedding-004";
-    const results: number[][] = [];
-    for (const text of texts) {
-      const ck = embCacheKey(text, model);
-      const cached = _embeddingCache.get(ck);
-      if (cached) { results.push(cached); continue; }
+
+    // Separate cached from uncached
+    const results: (number[] | null)[] = new Array(texts.length).fill(null);
+    const uncached: { idx: number; text: string }[] = [];
+    texts.forEach((text, i) => {
+      const cached = lruGet(_embeddingCache, embCacheKey(text, model));
+      if (cached) results[i] = cached;
+      else uncached.push({ idx: i, text });
+    });
+
+    // Batch uncached via batchEmbedContents (100 per call)
+    const BATCH = 100;
+    for (let b = 0; b < uncached.length; b += BATCH) {
+      const slice = uncached.slice(b, b + BATCH);
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents?key=${apiKey}`,
           { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: `models/${model}`, content: { parts: [{ text }] } }) }
+            body: JSON.stringify({ requests: slice.map((u) => ({ model: `models/${model}`, content: { parts: [{ text: u.text }] } })) }) }
         );
-        if (!res.ok) { results.push([]); continue; }
-        const data = await res.json() as { embedding?: { values?: number[] } };
-        const vec = data.embedding?.values ?? [];
-        _embeddingCache.set(ck, vec);
-        results.push(vec);
-      } catch { results.push([]); }
+        if (!res.ok) { slice.forEach(({ idx }) => { results[idx] = []; }); continue; }
+        const data = await res.json() as { embeddings?: { values?: number[] }[] };
+        (data.embeddings ?? []).forEach((emb, j) => {
+          const { idx, text } = slice[j];
+          const vec = emb.values ?? [];
+          lruSet(_embeddingCache, embCacheKey(text, model), vec, EMBED_CACHE_MAX);
+          results[idx] = vec;
+        });
+      } catch { slice.forEach(({ idx }) => { results[idx] = []; }); }
     }
-    return results.some((v) => v.length > 0) ? results : null;
+
+    const filled = results.map((r) => r ?? []);
+    return filled.some((v) => v.length > 0) ? filled : null;
   },
   async listModels(key) {
     const apiKey = key || process.env.GEMINI_API_KEY;
@@ -321,7 +347,7 @@ const openaiProvider: AIProvider = {
     const results: (number[] | null)[] = new Array(texts.length).fill(null);
     texts.forEach((t, i) => {
       const ck = embCacheKey(t, model);
-      const cached = _embeddingCache.get(ck);
+      const cached = lruGet(_embeddingCache, ck);
       if (cached) results[i] = cached;
       else uncached.push({ idx: i, text: t });
     });
@@ -332,7 +358,7 @@ const openaiProvider: AIProvider = {
         const resp = await client.embeddings.create({ model, input: uncached.map((u) => u.text) });
         resp.data.forEach((d, j) => {
           const { idx, text } = uncached[j];
-          _embeddingCache.set(embCacheKey(text, model), d.embedding);
+          lruSet(_embeddingCache, embCacheKey(text, model), d.embedding, EMBED_CACHE_MAX);
           results[idx] = d.embedding;
         });
       } catch { return null; }

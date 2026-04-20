@@ -813,54 +813,70 @@ Try one of the suggested queries below to get started.`;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let streamCompleted = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr) continue;
-            try {
-              const event = JSON.parse(jsonStr) as {
-                type: string;
-                text?: string;
-                response?: string;
-                sources?: ChatMessage["sources"];
-                trace?: ChatMessage["trace"];
-                tokenEstimate?: { input: number; output: number; total: number };
-              };
-              if (event.type === "delta" && event.text) {
-                setMessages((prev) => prev.map((m) =>
-                  m.id === streamingId ? { ...m, content: m.content + event.text! } : m
-                ));
-              } else if (event.type === "done") {
-                if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
-                  setSessionTokens((prev) => prev + event.tokenEstimate!.total);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const jsonStr = line.slice(6).trim();
+              if (!jsonStr) continue;
+              try {
+                const event = JSON.parse(jsonStr) as {
+                  type: string;
+                  text?: string;
+                  response?: string;
+                  sources?: ChatMessage["sources"];
+                  trace?: ChatMessage["trace"];
+                  tokenEstimate?: { input: number; output: number; total: number };
+                };
+                if (event.type === "delta" && event.text) {
+                  setMessages((prev) => prev.map((m) =>
+                    m.id === streamingId ? { ...m, content: m.content + event.text! } : m
+                  ));
+                } else if (event.type === "done") {
+                  streamCompleted = true;
+                  if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
+                    setSessionTokens((prev) => prev + event.tokenEstimate!.total);
+                  }
+                  if (event.sources && Array.isArray(event.sources)) {
+                    setAccumulatedSourceIds((prev) => {
+                      const next = new Set(prev);
+                      for (const src of event.sources!) { if (src.id) next.add(src.id); }
+                      return next;
+                    });
+                  }
+                  setMessages((prev) => prev.map((m) =>
+                    m.id === streamingId ? {
+                      ...m,
+                      id: `assistant-${Date.now()}`,
+                      isStreaming: false,
+                      content: event.response || m.content || "No response generated. Please try again.",
+                      sources: event.sources,
+                      trace: event.trace,
+                    } : m
+                  ));
                 }
-                if (event.sources && Array.isArray(event.sources)) {
-                  setAccumulatedSourceIds((prev) => {
-                    const next = new Set(prev);
-                    for (const src of event.sources!) { if (src.id) next.add(src.id); }
-                    return next;
-                  });
-                }
-                setMessages((prev) => prev.map((m) =>
-                  m.id === streamingId ? {
-                    ...m,
-                    id: `assistant-${Date.now()}`,
-                    isStreaming: false,
-                    content: event.response || m.content || "No response generated. Please try again.",
-                    sources: event.sources,
-                    trace: event.trace,
-                  } : m
-                ));
-              }
-            } catch { /* skip malformed chunk */ }
+              } catch { /* skip malformed chunk */ }
+            }
           }
+        } catch {
+          streamCompleted = true;
+          setMessages((prev) => prev.map((m) =>
+            m.id === streamingId ? { ...m, isStreaming: false, content: m.content || "Stream interrupted. Please try again." } : m
+          ));
+        }
+
+        // Stream ended without a done event (unexpected close)
+        if (!streamCompleted) {
+          setMessages((prev) => prev.map((m) =>
+            m.id === streamingId ? { ...m, isStreaming: false, content: m.content || "No response generated. Please try again." } : m
+          ));
         }
       } else {
         const data = await res.json() as {

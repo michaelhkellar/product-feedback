@@ -44,7 +44,8 @@ function cacheKey(
   analyticsProvider?: string,
   posthogKey?: string,
   analyticsDays?: number,
-  posthogHost?: string
+  posthogHost?: string,
+  aiProvider?: string
 ): string {
   const parts = [
     pbKey ? `pb:${shortHash(pbKey)}` : "",
@@ -57,6 +58,7 @@ function cacheKey(
     `demo:${demo}`,
     `ap:${analyticsProvider || "pendo"}`,
     analyticsDays ? `days:${analyticsDays}` : "",
+    aiProvider ? `ai:${aiProvider}` : "",
     atlJiraFilter || "",
     atlConfluenceFilter || "",
   ];
@@ -212,7 +214,7 @@ export async function getData(
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost, aiProvider);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 

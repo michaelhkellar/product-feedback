@@ -143,6 +143,7 @@ export interface ChatMessageTrace {
   tokensUsed: { input: number; output: number; total: number };
   pivotExcluded?: string[];
   aiError?: boolean;
+  toolCalls?: { name: string; query: string; resultCount: number }[];
 }
 
 export interface ChatMessage {

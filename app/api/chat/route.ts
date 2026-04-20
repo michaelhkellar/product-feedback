@@ -128,7 +128,8 @@ export async function POST(req: NextRequest) {
             controller.close();
           }).catch((err) => {
             console.error("Chat stream error:", err);
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Stream error" })}\n\n`));
+            const errMsg = err instanceof Error ? err.message : "Stream error";
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", response: `**Error:** ${errMsg}`, sources: [], tokenEstimate: { input: 0, output: 0, total: 0 } })}\n\n`));
             controller.close();
           });
         },

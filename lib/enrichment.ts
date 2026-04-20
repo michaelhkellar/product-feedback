@@ -15,7 +15,14 @@ interface CachedEnrichment {
 
 const enrichmentCache = new Map<string, CachedEnrichment>();
 const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
+const ENRICHMENT_CACHE_MAX = 200;
 const BATCH_SIZE = 40;
+
+function enrichCacheSet(k: string, v: CachedEnrichment): void {
+  enrichmentCache.delete(k);
+  enrichmentCache.set(k, v);
+  if (enrichmentCache.size > ENRICHMENT_CACHE_MAX) enrichmentCache.delete(enrichmentCache.keys().next().value as string);
+}
 
 const CHEAP_MODELS: Record<AIProviderType, string> = {
   anthropic: "claude-haiku-4-5-20251001",
@@ -103,7 +110,7 @@ export async function enrichFeedback(
     }
   }
 
-  enrichmentCache.set(key, { results, timestamp: Date.now() });
+  enrichCacheSet(key, { results, timestamp: Date.now() });
   return applyEnrichment(feedback, results);
 }
 
