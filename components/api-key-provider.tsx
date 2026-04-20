@@ -34,6 +34,7 @@ const EMPTY: ApiKeyState = {
   analyticsProvider: "pendo", amplitudeKey: "",
   ticketProvider: "atlassian", linearKey: "",
   posthogKey: "", posthogHost: "", linearTeamId: "",
+  braveSearchKey: "",
 };
 
 const EMPTY_STATUS: ApiKeyStatus = {

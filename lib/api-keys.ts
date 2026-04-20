@@ -26,6 +26,7 @@ export interface ApiKeyState {
   posthogKey: string;
   posthogHost: string;
   linearTeamId: string;
+  braveSearchKey: string;
 }
 
 export interface ApiKeyStatus {
@@ -71,6 +72,7 @@ const EMPTY_KEYS: ApiKeyState = {
   posthogKey: "",
   posthogHost: "",
   linearTeamId: "",
+  braveSearchKey: "",
 };
 
 interface EncryptedPayload {
@@ -101,7 +103,12 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     posthogKey: parsed?.posthogKey || "",
     posthogHost: parsed?.posthogHost || "",
     linearTeamId: parsed?.linearTeamId || "",
+    braveSearchKey: parsed?.braveSearchKey || "",
   };
+}
+
+export function isBraveConfigured(key?: string): boolean {
+  return !!(key || process.env.BRAVE_SEARCH_KEY);
 }
 
 function hasStoredValues(keys: ApiKeyState): boolean {
@@ -333,6 +340,7 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.posthogKey) headers["x-posthog-key"] = keys.posthogKey;
   if (keys.posthogHost) headers["x-posthog-host"] = keys.posthogHost;
   if (keys.linearTeamId) headers["x-linear-team-id"] = keys.linearTeamId;
+  if (keys.braveSearchKey) headers["x-brave-search-key"] = keys.braveSearchKey;
   return headers;
 }
 

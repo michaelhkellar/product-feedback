@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
 
     const linearKey = req.headers.get("x-linear-key") || undefined;
     const linearTeamId = req.headers.get("x-linear-team-id") || undefined;
+    const braveSearchKey = req.headers.get("x-brave-search-key") || undefined;
 
     const agentKeys = {
       ...keys,
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
       posthogHost,
       linearKey,
       linearTeamId,
+      braveSearchKey,
     };
 
     const timeRange = extractTimeRange(trimmedMessage);

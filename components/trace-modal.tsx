@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft, AlertTriangle, Wrench } from "lucide-react";
+import { X, FlaskConical, Clock, Tag, Search, Layers, Coins, ArrowRightLeft, AlertTriangle, Wrench, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChatMessageTrace } from "@/lib/types";
 
@@ -20,6 +20,7 @@ const typeColors: Record<string, string> = {
   amplitude: "bg-fuchsia-500/10 text-fuchsia-600",
   posthog: "bg-fuchsia-500/10 text-fuchsia-600",
   insight: "bg-purple-500/10 text-purple-600",
+  web: "bg-slate-500/10 text-slate-600",
 };
 
 export function TraceModal({ trace }: TraceModalProps) {
@@ -147,7 +148,10 @@ export function TraceModal({ trace }: TraceModalProps) {
                   <div className="space-y-1">
                     {trace.toolCalls.map((tc, i) => (
                       <div key={i} className="flex items-start gap-2 text-[10px]">
-                        <span className="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 font-medium flex-shrink-0">{tc.name}</span>
+                        <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 font-medium flex-shrink-0">
+                          {tc.name === "web_search" ? <Globe className="w-2.5 h-2.5" /> : <Wrench className="w-2.5 h-2.5" />}
+                          {tc.name}
+                        </span>
                         <span className="text-muted-foreground italic truncate flex-1">"{tc.query}"</span>
                         <span className="text-muted-foreground flex-shrink-0">{tc.resultCount} result{tc.resultCount !== 1 ? "s" : ""}</span>
                       </div>

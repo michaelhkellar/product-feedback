@@ -69,6 +69,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     { id: "amplitudeKey" as keyof ApiKeyState, label: "Amplitude API Key", placeholder: "apiKey:secretKey", description: "" },
     { id: "posthogKey" as keyof ApiKeyState, label: "PostHog API Key", placeholder: "phx_...:projectId", description: "" },
     { id: "linearKey" as keyof ApiKeyState, label: "Linear API Key", placeholder: "lin_api_...", description: "" },
+    { id: "braveSearchKey" as keyof ApiKeyState, label: "Brave Search API Key", placeholder: "BSA...", description: "" },
   ];
 
   useEffect(() => {
@@ -624,6 +625,11 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
             {fields.atlassianToken?.valid === true && <div className="flex items-center gap-1.5 text-[10px] text-green-600"><CheckCircle2 className="w-3 h-3" />Connected</div>}
             {fields.atlassianToken?.error && <div className="flex items-center gap-1.5 text-[10px] text-red-500"><AlertTriangle className="w-3 h-3" />{fields.atlassianToken.error}</div>}
+          </div>
+
+          <div className="pt-3 border-t border-border space-y-3">
+            <p className="text-xs font-medium">Web Search</p>
+            {renderKeyField("braveSearchKey", "Brave Search API Key", "BSA...", "Free tier: 2,000 searches/month — get a key at brave.com/search/api/")}
           </div>
 
           <div className="p-3 rounded-xl bg-muted/30 border border-border">
