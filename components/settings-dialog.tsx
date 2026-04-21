@@ -61,6 +61,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [loadingModels, setLoadingModels] = useState(false);
   const [linearTeams, setLinearTeams] = useState<{ id: string; name: string }[]>([]);
   const [loadingLinearTeams, setLoadingLinearTeams] = useState(false);
+  const [sliteParents, setSliteParents] = useState<{ id: string; title: string }[]>([]);
+  const [loadingSliteParents, setLoadingSliteParents] = useState(false);
 
   const allKeyFields = [
     ...SIMPLE_KEYS,
@@ -72,6 +74,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     { id: "linearKey" as keyof ApiKeyState, label: "Linear API Key", placeholder: "lin_api_...", description: "" },
     { id: "braveSearchKey" as keyof ApiKeyState, label: "Brave Search API Key", placeholder: "BSA...", description: "" },
     { id: "grainKey" as keyof ApiKeyState, label: "Grain API Key", placeholder: "grain_...", description: "" },
+    { id: "sliteKey" as keyof ApiKeyState, label: "Slite API Key", placeholder: "slite_...", description: "" },
   ];
 
   useEffect(() => {
@@ -91,6 +94,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
       if (keys.linearKey) {
         void fetchLinearTeams();
+      }
+      if (keys.sliteKey) {
+        void fetchSliteParents();
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,6 +180,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       if (data.valid && id === "linearKey") {
         void fetchLinearTeams(field.value);
       }
+      if (data.valid && id === "sliteKey") {
+        void fetchSliteParents(field.value);
+      }
     } catch {
       updateField(id, { validating: false, valid: false, error: "Could not reach validation endpoint" });
     }
@@ -228,6 +237,22 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
     } catch { /* ignore */ }
     setLoadingLinearTeams(false);
+  }
+
+  async function fetchSliteParents(sliteKeyValue?: string) {
+    const key = sliteKeyValue || keys.sliteKey;
+    if (!key) return;
+    setLoadingSliteParents(true);
+    try {
+      const res = await fetch("/api/settings/slite-parents", {
+        headers: { "x-slite-key": key },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSliteParents(data.notes || []);
+      }
+    } catch { /* ignore */ }
+    setLoadingSliteParents(false);
   }
 
   function handleRemoveAtlassian() {
@@ -522,6 +547,52 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 {loadingLinearTeams && (
                   <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                     <Loader2 className="w-3 h-3 animate-spin" />Loading teams...
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Doc Provider */}
+          <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
+            <p className="text-xs font-medium">Doc Provider</p>
+            <div className="flex gap-1.5">
+              {([
+                { key: "atlassian" as const, label: "Atlassian (Confluence)" },
+                { key: "slite" as const, label: "Slite" },
+              ]).map((p) => (
+                <button key={p.key}
+                  onClick={() => setKey("docProvider", p.key)}
+                  className={cn(
+                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                    (keys.docProvider || "atlassian") === p.key
+                      ? "bg-primary/10 border-primary/30 text-primary"
+                      : "bg-card border-border text-muted-foreground hover:text-foreground"
+                  )}>
+                  <div className="text-[10px] font-medium">{p.label}</div>
+                </button>
+              ))}
+            </div>
+            {(keys.docProvider || "atlassian") === "slite" && (
+              <>
+                {renderKeyField("sliteKey", "Slite API Key", "slite_...", "API token from Slite Settings > API")}
+                {sliteParents.length > 0 && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">Default parent note (optional)</label>
+                    <select
+                      value={keys.sliteParentNoteId || ""}
+                      onChange={(e) => setKey("sliteParentNoteId", e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs focus:outline-none focus:ring-2 focus:ring-primary/20">
+                      <option value="">Workspace root</option>
+                      {sliteParents.map((n) => (
+                        <option key={n.id} value={n.id}>{n.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {loadingSliteParents && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />Loading notes...
                   </div>
                 )}
               </>

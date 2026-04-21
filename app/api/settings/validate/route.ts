@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findWorkingModel } from "@/lib/gemini";
 import { validateLinearKey } from "@/lib/linear";
+import { validateSliteKey } from "@/lib/slite";
 import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
 
 const VALIDATE_COOLDOWN_MS = 5_000;
@@ -255,6 +256,18 @@ export async function POST(req: NextRequest) {
           valid: false,
           error: `Auth failed (${status}). For classic tokens: check email + token. For scoped tokens: ensure read:jira-work scope is enabled.`,
         });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
+      }
+    }
+
+    if (keyName === "sliteKey") {
+      const key = req.headers.get("x-slite-key") || process.env.SLITE_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      try {
+        const valid = await validateSliteKey(key);
+        if (valid) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: "Slite rejected the API key" });
       } catch (err) {
         return NextResponse.json({ valid: false, error: sanitizeError(err) });
       }

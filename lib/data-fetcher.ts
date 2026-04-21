@@ -7,7 +7,8 @@ import { getPendoOverview, isPendoConfigured } from "./pendo";
 import { getAmplitudeOverview, isAmplitudeConfigured } from "./amplitude";
 import { getPostHogOverview, isPostHogConfigured } from "./posthog";
 import { getLinearIssues, isLinearConfigured } from "./linear";
-import { AnalyticsProviderType, CallProviderType } from "./api-keys";
+import { getSliteNotes, isSliteConfigured } from "./slite";
+import { AnalyticsProviderType, CallProviderType, DocProviderType } from "./api-keys";
 import { AIProviderType } from "./ai-provider";
 import { enrichFeedback } from "./enrichment";
 import { createHash } from "crypto";
@@ -48,7 +49,9 @@ function cacheKey(
   posthogHost?: string,
   aiProvider?: string,
   grainKey?: string,
-  callProvider?: string
+  callProvider?: string,
+  sliteKey?: string,
+  docProvider?: string
 ): string {
   const parts = [
     pbKey ? `pb:${shortHash(pbKey)}` : "",
@@ -64,6 +67,8 @@ function cacheKey(
     `ai:${aiProvider || "gemini"}`,
     grainKey ? `grain:${shortHash(grainKey)}` : "",
     `cp:${callProvider || "attention"}`,
+    sliteKey ? `slite:${shortHash(sliteKey)}` : "",
+    `dp:${docProvider || "atlassian"}`,
     atlJiraFilter || "",
     atlConfluenceFilter || "",
   ];
@@ -88,7 +93,9 @@ async function fetchLiveData(
   linearKey?: string,
   linearTeamId?: string,
   grainKey?: string,
-  callProvider?: CallProviderType
+  callProvider?: CallProviderType,
+  sliteKey?: string,
+  docProvider?: DocProviderType
 ): Promise<AgentData> {
   const feedback = [...(useDemoFallback ? DEMO_FEEDBACK : [])];
   let features = useDemoFallback ? [...DEMO_PRODUCTBOARD_FEATURES] : [];
@@ -181,6 +188,26 @@ async function fetchLiveData(
     );
   }
 
+  const effectiveDocProvider = docProvider || "atlassian";
+  if (effectiveDocProvider === "slite" && isSliteConfigured(sliteKey)) {
+    fetches.push(
+      (async () => {
+        const result = await getSliteNotes(sliteKey, false);
+        if (!result.isDemo && result.data.length > 0) {
+          confluencePages = result.data.map((n) => ({
+            id: n.id,
+            title: n.title,
+            excerpt: n.excerpt,
+            space: "Slite",
+            lastModified: n.lastModified,
+            author: n.author,
+            url: n.url,
+          }));
+        }
+      })()
+    );
+  }
+
   if (fetches.length > 0) {
     const results = await Promise.allSettled(fetches);
     results.forEach((result, i) => {
@@ -215,7 +242,9 @@ export async function getData(
   anthropicKey?: string,
   openaiKey?: string,
   grainKey?: string,
-  callProvider?: CallProviderType
+  callProvider?: CallProviderType,
+  sliteKey?: string,
+  docProvider?: DocProviderType
 ): Promise<AgentData> {
   const hasPb = isProductboardConfigured(pbKey);
   const hasAtt = isAttentionConfigured(attKey);
@@ -225,18 +254,19 @@ export async function getData(
   const hasPostHog = isPostHogConfigured(posthogKey);
   const hasAtl = isAtlassianConfigured(atlDomain, atlEmail, atlToken);
   const hasLinear = isLinearConfigured(linearKey);
-  const hasAnyLiveKey = hasPb || hasAtt || hasGrain || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
+  const hasSlite = isSliteConfigured(sliteKey);
+  const hasAnyLiveKey = hasPb || hasAtt || hasGrain || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear || hasSlite;
 
   if (!hasAnyLiveKey && useDemoData) return getDemoData();
   if (!hasAnyLiveKey && !useDemoData) {
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
 
-  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost, aiProvider, grainKey, callProvider);
+  const key = cacheKey(pbKey, attKey, pendoKey, atlDomain, useDemoData, atlJiraFilter, atlConfluenceFilter, amplitudeKey, analyticsProvider, posthogKey, analyticsDays, posthogHost, aiProvider, grainKey, callProvider, sliteKey, docProvider);
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider);
+  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider, sliteKey, docProvider);
 
   // AI-powered sentiment and theme enrichment (skipped for demo data)
   const enrichedFeedback = (!useDemoData && raw.feedback.length > 0)

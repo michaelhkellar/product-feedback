@@ -1,4 +1,4 @@
-import { TicketProviderType } from "./api-keys";
+import { TicketProviderType, DocProviderType } from "./api-keys";
 
 export interface CreateTicketResult {
   id: string;
@@ -19,7 +19,7 @@ const JIRA_INJECTION_PATTERNS = [
 // Linear markdown is standard — just strip HTML
 const HTML_TAG_PATTERN = /<\/?[^>]+(>|$)/g;
 
-export function sanitizeForProvider(content: string, provider: TicketProviderType): string {
+export function sanitizeForProvider(content: string, provider: TicketProviderType | DocProviderType): string {
   let sanitized = content;
 
   // Strip any embedded HTML tags

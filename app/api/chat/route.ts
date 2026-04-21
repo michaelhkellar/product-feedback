@@ -61,6 +61,8 @@ export async function POST(req: NextRequest) {
     const braveSearchKey = req.headers.get("x-brave-search-key") || undefined;
     const grainKey = req.headers.get("x-grain-key") || undefined;
     const callProvider = (req.headers.get("x-call-provider") as "attention" | "grain") || undefined;
+    const sliteKey = req.headers.get("x-slite-key") || undefined;
+    const docProvider = (req.headers.get("x-doc-provider") as "atlassian" | "slite") || undefined;
 
     const agentKeys = {
       ...keys,
@@ -95,7 +97,9 @@ export async function POST(req: NextRequest) {
       keys.anthropicKey,
       keys.openaiKey,
       grainKey,
-      callProvider
+      callProvider,
+      sliteKey,
+      docProvider
     );
 
     const generatedInsights = generateProgrammaticInsights(data);

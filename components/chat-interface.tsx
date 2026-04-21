@@ -474,13 +474,15 @@ function TicketPreview({
 function PrdPreview({
   content,
   sources,
-  hasAtlassian,
-  onCreateConfluence,
+  hasDocProvider,
+  docProviderLabel,
+  onCreateDoc,
 }: {
   content: string;
   sources: { type: string; id: string; title: string; url?: string }[];
-  hasAtlassian: boolean;
-  onCreateConfluence: (title: string, content: string) => Promise<{ url: string; title: string } | { error: string }>;
+  hasDocProvider: boolean;
+  docProviderLabel: string;
+  onCreateDoc: (title: string, content: string) => Promise<{ url: string; title: string } | { error: string }>;
 }) {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -510,7 +512,7 @@ function PrdPreview({
   async function handlePublishConfluence() {
     setConfluenceLoading(true);
     setConfluenceState(null);
-    const result = await onCreateConfluence(prdTitle, editing ? editContent : content);
+    const result = await onCreateDoc(prdTitle, editing ? editContent : content);
     setConfluenceState(result);
     setConfluenceLoading(false);
   }
@@ -542,14 +544,14 @@ function PrdPreview({
           <Download className="w-3 h-3" />
           Download .md
         </button>
-        {hasAtlassian && (
+        {hasDocProvider && (
           <button
             onClick={handlePublishConfluence}
             disabled={confluenceLoading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
           >
             <Globe className="w-3 h-3" />
-            {confluenceLoading ? "Publishing…" : "Create Confluence Page"}
+            {confluenceLoading ? "Publishing…" : docProviderLabel}
           </button>
         )}
       </div>
@@ -679,21 +681,25 @@ Try one of the suggested queries below to get started.`;
     }
   }, [keyHeaders, keys.atlassianJiraFilter]);
 
-  const handleCreateConfluence = useCallback(async (title: string, content: string): Promise<{ url: string; title: string } | { error: string }> => {
+  const handleCreateDoc = useCallback(async (title: string, content: string): Promise<{ url: string; title: string } | { error: string }> => {
     try {
+      const docProvider = keys.docProvider || "atlassian";
+      const body = docProvider === "slite"
+        ? { title, content, parentNoteId: keys.sliteParentNoteId || undefined }
+        : { title, content, spaceId: keys.atlassianConfluenceFilter?.split(",")[0]?.trim() || "" };
       const res = await fetch("/api/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...keyHeaders },
-        body: JSON.stringify({ title, content, spaceId: keys.atlassianConfluenceFilter?.split(",")[0]?.trim() || "" }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { error: (data as { error?: string }).error || `Failed (${res.status})` };
       return { url: (data as { url?: string }).url || "#", title };
     } catch (error) {
-      console.error("Failed to create Confluence page:", error);
+      console.error("Failed to create doc:", error);
       return { error: "Network error. Please check your connection and try again." };
     }
-  }, [keyHeaders, keys.atlassianConfluenceFilter]);
+  }, [keyHeaders, keys.docProvider, keys.sliteParentNoteId, keys.atlassianConfluenceFilter]);
 
   const handleSaveThread = useCallback(async () => {
     const relevantMessages = messages.filter((m) => m.id !== "welcome" && m.role !== "system");
@@ -953,6 +959,10 @@ Try one of the suggested queries below to get started.`;
   const currentQueries = MODE_CONFIG[mode].queries;
   const hasAtlassian = status.atlassianKey?.configured || false;
   const ticketProvider = keys.ticketProvider || "atlassian";
+  const docProvider = keys.docProvider || "atlassian";
+  const hasSlite = status.sliteKey?.configured || false;
+  const hasDocProvider = docProvider === "slite" ? hasSlite : hasAtlassian;
+  const docProviderLabel = docProvider === "slite" ? "Create Slite Doc" : "Create Confluence Page";
 
   const placeholders: Record<InteractionMode, string> = {
     summarize: "Ask about customer feedback, churn risks, feature requests...",
@@ -1116,8 +1126,9 @@ Try one of the suggested queries below to get started.`;
                     <PrdPreview
                       content={msg.content}
                       sources={msg.sources || []}
-                      hasAtlassian={hasAtlassian}
-                      onCreateConfluence={handleCreateConfluence}
+                      hasDocProvider={hasDocProvider}
+                      docProviderLabel={docProviderLabel}
+                      onCreateDoc={handleCreateDoc}
                     />
                   )}
                 </>

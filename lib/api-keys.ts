@@ -4,6 +4,7 @@ export type ContextMode = "focused" | "standard" | "deep";
 export type AnalyticsProviderType = "pendo" | "amplitude" | "posthog";
 export type TicketProviderType = "atlassian" | "linear";
 export type CallProviderType = "attention" | "grain";
+export type DocProviderType = "atlassian" | "slite";
 
 export interface ApiKeyState {
   geminiKey: string;
@@ -30,6 +31,9 @@ export interface ApiKeyState {
   braveSearchKey: string;
   grainKey: string;
   callProvider: CallProviderType;
+  docProvider: DocProviderType;
+  sliteKey: string;
+  sliteParentNoteId: string;
 }
 
 export interface ApiKeyStatus {
@@ -45,6 +49,7 @@ export interface ApiKeyStatus {
   posthogKey: { configured: boolean; source: "app" | "env" | null };
   grainKey: { configured: boolean; source: "app" | "env" | null };
   braveSearchKey: { configured: boolean; source: "app" | "env" | null };
+  sliteKey: { configured: boolean; source: "app" | "env" | null };
 }
 
 const LEGACY_STORAGE_KEY = "feedback-agent-api-keys";
@@ -80,6 +85,9 @@ const EMPTY_KEYS: ApiKeyState = {
   braveSearchKey: "",
   grainKey: "",
   callProvider: "attention",
+  docProvider: "atlassian",
+  sliteKey: "",
+  sliteParentNoteId: "",
 };
 
 interface EncryptedPayload {
@@ -113,6 +121,9 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     braveSearchKey: parsed?.braveSearchKey || "",
     grainKey: parsed?.grainKey || "",
     callProvider: (parsed?.callProvider as CallProviderType) || "attention",
+    docProvider: (parsed?.docProvider as DocProviderType) || "atlassian",
+    sliteKey: parsed?.sliteKey || "",
+    sliteParentNoteId: parsed?.sliteParentNoteId || "",
   };
 }
 
@@ -356,6 +367,9 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.braveSearchKey) headers["x-brave-search-key"] = keys.braveSearchKey;
   if (keys.grainKey) headers["x-grain-key"] = keys.grainKey;
   if (keys.callProvider) headers["x-call-provider"] = keys.callProvider;
+  if (keys.docProvider) headers["x-doc-provider"] = keys.docProvider;
+  if (keys.sliteKey) headers["x-slite-key"] = keys.sliteKey;
+  if (keys.sliteParentNoteId) headers["x-slite-parent-note-id"] = keys.sliteParentNoteId;
   return headers;
 }
 

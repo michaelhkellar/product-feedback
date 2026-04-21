@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   const posthog = req.headers.get("x-posthog-key") || process.env.POSTHOG_API_KEY;
   const grain = req.headers.get("x-grain-key") || process.env.GRAIN_API_KEY;
   const brave = req.headers.get("x-brave-search-key") || process.env.BRAVE_SEARCH_KEY;
+  const slite = req.headers.get("x-slite-key") || process.env.SLITE_API_KEY;
 
   return NextResponse.json({
     status: {
@@ -66,6 +67,10 @@ export async function GET(req: NextRequest) {
       braveSearchKey: {
         configured: !!brave,
         source: req.headers.get("x-brave-search-key") ? "app" : process.env.BRAVE_SEARCH_KEY ? "env" : null,
+      },
+      sliteKey: {
+        configured: !!slite,
+        source: req.headers.get("x-slite-key") ? "app" : process.env.SLITE_API_KEY ? "env" : null,
       },
     },
   });

@@ -625,6 +625,7 @@ export function SourcePanel({
                 { label: "Atlassian", configured: status.atlassianKey?.configured },
                 { label: "Linear", configured: status.linearKey?.configured },
                 { label: "Brave Search", configured: status.braveSearchKey?.configured },
+                { label: "Slite", configured: status.sliteKey?.configured },
                 ...(callProvider === "grain"
                   ? [{ label: "Grain", configured: status.grainKey?.configured }]
                   : [{ label: "Attention", configured: status.attentionKey?.configured }]),

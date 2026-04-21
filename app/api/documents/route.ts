@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createConfluencePage } from "@/lib/atlassian";
+import { createSliteNote } from "@/lib/slite";
 import { sanitizeForProvider } from "@/lib/ticket-provider";
 import { getClientKey, checkRateLimit } from "@/lib/rate-limit";
+import { DocProviderType } from "@/lib/api-keys";
 
 const COOLDOWN_MS = 10_000;
 const RATE_LIMIT_TTL_MS = 120_000;
@@ -83,11 +85,24 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { title, spaceId, content } = body;
+    const { title, spaceId, parentNoteId, content } = body;
+    const docProvider = (req.headers.get("x-doc-provider") || "atlassian") as DocProviderType;
 
     if (!title || typeof title !== "string") {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
+
+    if (docProvider === "slite") {
+      const sliteKey = req.headers.get("x-slite-key") || process.env.SLITE_API_KEY || undefined;
+      if (!sliteKey) {
+        return NextResponse.json({ error: "Slite API key not configured" }, { status: 400 });
+      }
+      const sanitized = sanitizeForProvider(content || "", "slite");
+      const result = await createSliteNote(title, sanitized, parentNoteId || undefined, sliteKey);
+      return NextResponse.json({ ...result, title });
+    }
+
+    // Atlassian / Confluence path
     if (!spaceId || typeof spaceId !== "string") {
       return NextResponse.json({ error: "Space ID is required" }, { status: 400 });
     }
