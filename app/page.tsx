@@ -55,6 +55,7 @@ function AppContent() {
                   status.posthogKey?.configured && "PostHog",
                   status.atlassianKey?.configured && "Atlassian",
                   status.linearKey?.configured && "Linear",
+                  status.sliteKey?.configured && "Slite",
                 ].filter(Boolean) as string[];
                 const ai = keys.aiProvider === "anthropic" ? "Anthropic"
                   : keys.aiProvider === "openai" ? "OpenAI"

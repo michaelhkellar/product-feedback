@@ -182,6 +182,7 @@ export function SourcePanel({
       const demoHeader = useDemoData ? "true" : "false";
       const headers = { ...keyHeaders, "x-use-demo": demoHeader };
 
+      const docProvider = keys.docProvider || "atlassian";
       const fetches = [
         fetch("/api/sources/productboard", { headers }).then((r) => r.json()).catch(() => ({ connected: false, features: [], featuresIsDemo: false, notes: [], notesIsDemo: false })),
         fetch("/api/sources/attention", { headers }).then((r) => r.json()).catch(() => ({ connected: false, calls: [], callsIsDemo: false })),
@@ -189,8 +190,11 @@ export function SourcePanel({
         fetch("/api/sources/pendo", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
         fetch("/api/sources/amplitude", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
         fetch("/api/sources/posthog", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
+        docProvider === "slite"
+          ? fetch("/api/sources/slite", { headers }).then((r) => r.json()).catch(() => ({ connected: false, notes: [], notesIsDemo: false }))
+          : Promise.resolve(null),
       ];
-      const [pbRes, attRes, atlRes, pendoRes, ampRes, phRes] = await Promise.all(fetches);
+      const [pbRes, attRes, atlRes, pendoRes, ampRes, phRes, sliteRes] = await Promise.all(fetches);
 
       // Discard if a newer fetch has already started
       if (gen !== fetchGenRef.current) return;
@@ -199,14 +203,25 @@ export function SourcePanel({
       const newFeedback: FeedbackItem[] = pbRes.notes || [];
       const newCalls: AttentionCall[] = attRes.calls || [];
       const newJira: JiraIssue[] = atlRes.jiraIssues || [];
-      const newConfluence: ConfluencePage[] = atlRes.confluencePages || [];
       const atlConnected = atlRes.connected === true;
+      const sliteConnected = sliteRes?.connected === true;
+
+      let newConfluence: ConfluencePage[] = [];
+      if (docProvider === "slite") {
+        newConfluence = (sliteRes?.notes || []).map((n: { id: string; title: string; excerpt: string; parentId: string | null; lastModified: string; author: string; url: string }) => ({
+          id: n.id, title: n.title, excerpt: n.excerpt,
+          space: "Slite", lastModified: n.lastModified, author: n.author, url: n.url,
+        }));
+      } else {
+        newConfluence = atlRes.confluencePages || [];
+      }
 
       // isDemo is true only when no data source returned real (non-demo) data
       const anyRealData =
         (pbRes.connected && !pbRes.featuresIsDemo) ||
         (attRes.connected && !attRes.callsIsDemo) ||
         atlConnected ||
+        sliteConnected ||
         pendoRes.connected ||
         ampRes.connected ||
         phRes.connected;
@@ -216,12 +231,12 @@ export function SourcePanel({
       const newAmplitudeFindings = buildAnalyticsFindings(ampRes.overview || null, "amplitude");
       const newPosthogFindings = buildAnalyticsFindings(phRes.overview || null, "posthog");
 
-      if (useDemoData && isDemo && !atlConnected) {
+      if (useDemoData && isDemo && !atlConnected && !sliteConnected) {
         setFeedback(DEMO_FEEDBACK);
         setFeatures(DEMO_PRODUCTBOARD_FEATURES);
         setCalls(DEMO_ATTENTION_CALLS);
         setJiraIssues(DEMO_JIRA_ISSUES);
-        setConfluencePages(DEMO_CONFLUENCE_PAGES);
+        setConfluencePages(docProvider === "slite" ? newConfluence : DEMO_CONFLUENCE_PAGES);
       } else {
         setFeedback(newFeedback);
         setFeatures(newFeatures);
@@ -233,7 +248,7 @@ export function SourcePanel({
       setAmplitudeFindings(newAmplitudeFindings);
       setPosthogFindings(newPosthogFindings);
       setPendoItemCount(newPendoCount);
-      setDataIsDemo(isDemo && useDemoData && !atlConnected);
+      setDataIsDemo(isDemo && useDemoData && !atlConnected && !sliteConnected);
 
       const sources: DataSourceStatus[] = [];
       if (status.productboardKey.configured || pbRes.connected) {
@@ -274,9 +289,14 @@ export function SourcePanel({
       }
       if (status.atlassianKey?.configured || atlConnected) {
         const jiraStatus = atlRes.jiraError ? `Error: ${String(atlRes.jiraError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
-        const confStatus = atlRes.confluenceError ? `Error: ${String(atlRes.confluenceError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
         sources.push({ name: "Jira", source: "jira", connected: atlConnected && !atlRes.jiraError, lastSync: jiraStatus, itemCount: newJira.length, icon: "clipboard-list" });
-        sources.push({ name: "Confluence", source: "confluence", connected: atlConnected && !atlRes.confluenceError, lastSync: confStatus, itemCount: newConfluence.length, icon: "clipboard-list" });
+        if (docProvider === "atlassian") {
+          const confStatus = atlRes.confluenceError ? `Error: ${String(atlRes.confluenceError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
+          sources.push({ name: "Confluence", source: "confluence", connected: atlConnected && !atlRes.confluenceError, lastSync: confStatus, itemCount: newConfluence.length, icon: "clipboard-list" });
+        }
+      }
+      if (docProvider === "slite" && (status.sliteKey?.configured || sliteConnected)) {
+        sources.push({ name: "Slite", source: "confluence", connected: sliteConnected, lastSync: sliteConnected ? "just now" : undefined, itemCount: newConfluence.length, icon: "clipboard-list" });
       }
 
       if (useDemoData && isDemo && sources.length === 0) {
@@ -463,6 +483,7 @@ export function SourcePanel({
     return <Minus className="w-3 h-3 text-muted-foreground" />;
   };
 
+  const docProviderLabel = (keys.docProvider || "atlassian") === "slite" ? "Slite" : "Confluence";
   const showSearch = activeTab !== "sources";
 
   return (
@@ -495,7 +516,7 @@ export function SourcePanel({
               ...(amplitudeFindings.length > 0 || status.amplitudeKey?.configured ? [{ key: "amplitude" as const, label: `Amplitude (${amplitudeFindings.length})` }] : []),
               ...(posthogFindings.length > 0 || status.posthogKey?.configured ? [{ key: "posthog" as const, label: `PostHog (${posthogFindings.length})` }] : []),
               ...(jiraIssues.length > 0 || status.atlassianKey?.configured ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
-              ...(confluencePages.length > 0 || status.atlassianKey?.configured ? [{ key: "confluence" as const, label: `Docs (${confluencePages.length})` }] : []),
+              ...((confluencePages.length > 0 || status.atlassianKey?.configured || status.sliteKey?.configured) ? [{ key: "confluence" as const, label: `${docProviderLabel} (${confluencePages.length})` }] : []),
             ]
           ).map((tab) => (
             <button
@@ -890,8 +911,8 @@ export function SourcePanel({
             {sortedConfluence.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
-                <p className="text-xs mb-1">{sq ? "No matching pages" : "No Confluence pages loaded"}</p>
-                {!sq && status.atlassianKey?.configured && (
+                <p className="text-xs mb-1">{sq ? `No matching ${docProviderLabel} pages` : `No ${docProviderLabel} pages loaded`}</p>
+                {!sq && docProviderLabel === "Confluence" && status.atlassianKey?.configured && (
                   <p className="text-[10px]">Check your Confluence space filter in Settings. Try leaving it blank to fetch all spaces, or use exact space keys (e.g. PROD, KB).</p>
                 )}
               </div>
@@ -1053,7 +1074,7 @@ export function SourcePanel({
                   {detail.data.lastModified && <><span>·</span><span>{new Date(detail.data.lastModified).toLocaleDateString()}</span></>}
                 </div>
                 {detail.data.excerpt && <p className="text-xs text-muted-foreground leading-relaxed">{detail.data.excerpt.slice(0, 800)}</p>}
-                {detail.data.url && <a href={detail.data.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in Confluence</a>}
+                {detail.data.url && <a href={detail.data.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Open in {docProviderLabel}</a>}
               </>
             )}
             {(detail.type === "pendo" || detail.type === "amplitude" || detail.type === "posthog") && (

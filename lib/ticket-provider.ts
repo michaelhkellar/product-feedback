@@ -19,8 +19,20 @@ const JIRA_INJECTION_PATTERNS = [
 // Linear markdown is standard — just strip HTML
 const HTML_TAG_PATTERN = /<\/?[^>]+(>|$)/g;
 
+// Only allow safe URL schemes in markdown links/images
+const ALLOWED_URL_SCHEME = /^(https?:|mailto:|tel:|\/|#)/i;
+
 export function sanitizeForProvider(content: string, provider: TicketProviderType | DocProviderType): string {
   let sanitized = content;
+
+  // Rewrite disallowed URL schemes in markdown links and images to "#"
+  sanitized = sanitized.replace(
+    /(!?)\[([^\]]*)\]\(([^)]+)\)/g,
+    (_m, bang, text, url) => {
+      const trimmed = url.trim();
+      return ALLOWED_URL_SCHEME.test(trimmed) ? `${bang}[${text}](${trimmed})` : `${bang}[${text}](#)`;
+    }
+  );
 
   // Strip any embedded HTML tags
   sanitized = sanitized.replace(HTML_TAG_PATTERN, "");

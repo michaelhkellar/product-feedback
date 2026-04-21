@@ -369,7 +369,6 @@ export function buildKeyHeaders(keys: ApiKeyState): Record<string, string> {
   if (keys.callProvider) headers["x-call-provider"] = keys.callProvider;
   if (keys.docProvider) headers["x-doc-provider"] = keys.docProvider;
   if (keys.sliteKey) headers["x-slite-key"] = keys.sliteKey;
-  if (keys.sliteParentNoteId) headers["x-slite-parent-note-id"] = keys.sliteParentNoteId;
   return headers;
 }
 

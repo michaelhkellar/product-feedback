@@ -197,6 +197,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     else removeKey(id as keyof ApiKeyState);
     updateField(id, { dirty: false, editing: false });
     showSave(`Setting saved`, nextKeys);
+    if (id === "sliteKey" && trimmed) {
+      void fetchSliteParents(trimmed);
+    }
   }
 
   function handleRemove(id: string) {
@@ -562,7 +565,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 { key: "slite" as const, label: "Slite" },
               ]).map((p) => (
                 <button key={p.key}
-                  onClick={() => setKey("docProvider", p.key)}
+                  onClick={() => {
+                    setKey("docProvider", p.key);
+                    if (p.key === "atlassian") setKey("sliteParentNoteId", "");
+                  }}
                   className={cn(
                     "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
                     (keys.docProvider || "atlassian") === p.key

@@ -102,7 +102,8 @@ async function fetchLiveData(
   let calls = useDemoFallback ? [...DEMO_ATTENTION_CALLS] : [];
   const insights = useDemoFallback ? [...DEMO_INSIGHTS] : [];
   let jiraIssues: AgentData["jiraIssues"] = useDemoFallback ? [...DEMO_JIRA_ISSUES] : [];
-  let confluencePages: AgentData["confluencePages"] = useDemoFallback ? [...DEMO_CONFLUENCE_PAGES] : [];
+  const effectiveDocProvider = docProvider || "atlassian";
+  let confluencePages: AgentData["confluencePages"] = (useDemoFallback && effectiveDocProvider === "atlassian") ? [...DEMO_CONFLUENCE_PAGES] : [];
   let linearIssues: AgentData["linearIssues"] = [];
   let analyticsOverview: AgentData["analyticsOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
 
@@ -169,9 +170,12 @@ async function fetchLiveData(
   if (isAtlassianConfigured(atlDomain, atlEmail, atlToken)) {
     fetches.push(
       (async () => {
+        const fetchConf = effectiveDocProvider === "atlassian"
+          ? getConfluencePages(atlDomain, atlEmail, atlToken, atlConfluenceFilter)
+          : Promise.resolve({ data: [] as AgentData["confluencePages"] });
         const [jiraResult, confResult] = await Promise.all([
           getJiraIssues(atlDomain, atlEmail, atlToken, atlJiraFilter),
-          getConfluencePages(atlDomain, atlEmail, atlToken, atlConfluenceFilter),
+          fetchConf,
         ]);
         if (jiraResult.data.length > 0) jiraIssues = jiraResult.data;
         if (confResult.data.length > 0) confluencePages = confResult.data;
@@ -188,12 +192,11 @@ async function fetchLiveData(
     );
   }
 
-  const effectiveDocProvider = docProvider || "atlassian";
-  if (effectiveDocProvider === "slite" && isSliteConfigured(sliteKey)) {
+  if (effectiveDocProvider === "slite") {
     fetches.push(
       (async () => {
-        const result = await getSliteNotes(sliteKey, false);
-        if (!result.isDemo && result.data.length > 0) {
+        const result = await getSliteNotes(sliteKey, useDemoFallback);
+        if (result.data.length > 0) {
           confluencePages = result.data.map((n) => ({
             id: n.id,
             title: n.title,

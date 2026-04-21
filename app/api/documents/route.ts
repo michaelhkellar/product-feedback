@@ -92,6 +92,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Title is required" }, { status: 400 });
     }
 
+    if (parentNoteId !== undefined && typeof parentNoteId !== "string") {
+      return NextResponse.json({ error: "parentNoteId must be a string" }, { status: 400 });
+    }
+
     if (docProvider === "slite") {
       const sliteKey = req.headers.get("x-slite-key") || process.env.SLITE_API_KEY || undefined;
       if (!sliteKey) {

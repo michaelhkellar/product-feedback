@@ -77,7 +77,18 @@ export async function getSliteNotes(
         ? `${SLITE_BASE}/notes?limit=50&cursor=${encodeURIComponent(cursor)}`
         : `${SLITE_BASE}/notes?limit=50`;
       const res = await fetch(url, { headers: sliteHeaders(key) });
-      if (!res.ok) break;
+      if (!res.ok) {
+        if (notes.length === 0) {
+          const errorMsg =
+            res.status === 401 || res.status === 403
+              ? "Unauthorized — check your Slite API key"
+              : res.status === 429
+              ? "Rate limited by Slite"
+              : `Slite API returned ${res.status}`;
+          return { data: [], isDemo: false, error: errorMsg };
+        }
+        break;
+      }
 
       const json = await res.json() as {
         notes?: { id: string; title: string; parentNoteId?: string | null; updatedAt?: string; createdBy?: { name?: string }; url?: string; markdown?: string }[];
