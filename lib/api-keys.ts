@@ -44,6 +44,7 @@ export interface ApiKeyStatus {
   linearKey: { configured: boolean; source: "app" | "env" | null };
   posthogKey: { configured: boolean; source: "app" | "env" | null };
   grainKey: { configured: boolean; source: "app" | "env" | null };
+  braveSearchKey: { configured: boolean; source: "app" | "env" | null };
 }
 
 const LEGACY_STORAGE_KEY = "feedback-agent-api-keys";

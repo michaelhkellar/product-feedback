@@ -20,7 +20,6 @@ interface KeyFieldState {
 
 const SIMPLE_KEYS: { id: keyof ApiKeyState; label: string; placeholder: string; description: string }[] = [
   { id: "productboardKey", label: "Productboard API Token", placeholder: "pb_...", description: "Fetches features and notes from Productboard" },
-  { id: "attentionKey", label: "Attention API Key", placeholder: "att_...", description: "Fetches call recordings from Attention" },
 ];
 
 const ATLASSIAN_AUTH_FIELDS: { id: keyof ApiKeyState; label: string; placeholder: string; type: string }[] = [
@@ -65,6 +64,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const allKeyFields = [
     ...SIMPLE_KEYS,
+    { id: "attentionKey" as keyof ApiKeyState, label: "Attention API Key", placeholder: "att_...", description: "" },
     ...AI_PROVIDERS.map((p) => ({ id: p.keyField, label: p.label, placeholder: p.placeholder, description: "" })),
     { id: "pendoKey" as keyof ApiKeyState, label: "Pendo Integration Key", placeholder: "pendo_...", description: "" },
     { id: "amplitudeKey" as keyof ApiKeyState, label: "Amplitude API Key", placeholder: "apiKey:secretKey", description: "" },
@@ -244,7 +244,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     const field = fields[id];
     if (!field) return null;
     const envConfigured = (status as unknown as Record<string, { source: string | null }>)[id]?.source === "env";
-    const isSaved = !!(keys[id] && !field.dirty && !field.editing);
+    const isSaved = !!((keys[id] || envConfigured) && !field.dirty && !field.editing);
 
     if (isSaved) {
       return (
@@ -259,10 +259,12 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-muted hover:bg-accent transition-colors">
               <Pencil className="w-2.5 h-2.5" />Edit
             </button>
-            <button onClick={() => handleRemove(id)}
-              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
-              <Trash2 className="w-2.5 h-2.5" />Remove
-            </button>
+            {!(envConfigured && !keys[id]) && (
+              <button onClick={() => handleRemove(id)}
+                className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors">
+                <Trash2 className="w-2.5 h-2.5" />Remove
+              </button>
+            )}
           </div>
         </div>
       );

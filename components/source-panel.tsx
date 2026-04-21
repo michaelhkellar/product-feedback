@@ -612,52 +612,47 @@ export function SourcePanel({
                 <p className="text-xs">No data sources connected</p>
               </div>
             )}
-            <div
-              className="mt-3 p-3 rounded-xl border border-dashed border-border text-center cursor-pointer hover:bg-accent/30 transition-colors"
-              onClick={onOpenSettings}
-            >
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <Settings className="w-3 h-3 text-muted-foreground" />
-                <p className="text-[10px] text-muted-foreground font-medium">
-                  {status.geminiKey.configured ||
-                  status.anthropicKey?.configured ||
-                  status.openaiKey?.configured ||
-                  status.productboardKey.configured ||
-                  status.attentionKey.configured ||
-                  status.pendoKey?.configured ||
-                  status.amplitudeKey?.configured ||
-                  status.posthogKey?.configured ||
-                  status.atlassianKey?.configured ||
-                  status.linearKey?.configured
-                    ? "Manage API keys"
-                    : "Add API keys to connect live data"}
-                </p>
-              </div>
-              <div className="flex items-center justify-center gap-2 text-[9px] flex-wrap">
-                {[
-                  { label: "Gemini", configured: status.geminiKey.configured },
-                  { label: "Anthropic", configured: status.anthropicKey?.configured },
-                  { label: "OpenAI", configured: status.openaiKey?.configured },
-                  { label: "Productboard", configured: status.productboardKey.configured },
-                  { label: "Attention", configured: status.attentionKey.configured },
-                  { label: "Pendo", configured: status.pendoKey?.configured },
-                  { label: "Amplitude", configured: status.amplitudeKey?.configured },
-                  { label: "PostHog", configured: status.posthogKey?.configured },
-                  { label: "Atlassian", configured: status.atlassianKey?.configured },
-                  { label: "Linear", configured: status.linearKey?.configured },
-                ].map((s) => (
-                  <span
-                    key={s.label}
-                    className={cn(
-                      "px-1.5 py-0.5 rounded",
-                      s.configured ? "bg-green-500/10 text-green-600" : "bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {s.label} {s.configured ? "\u2713" : "\u2014"}
-                  </span>
-                ))}
-              </div>
-            </div>
+            {(() => {
+              const callProvider = keys.callProvider || "attention";
+              const connectedChips = [
+                { label: "Gemini", configured: status.geminiKey.configured },
+                { label: "Anthropic", configured: status.anthropicKey?.configured },
+                { label: "OpenAI", configured: status.openaiKey?.configured },
+                { label: "Productboard", configured: status.productboardKey.configured },
+                { label: "Pendo", configured: status.pendoKey?.configured },
+                { label: "Amplitude", configured: status.amplitudeKey?.configured },
+                { label: "PostHog", configured: status.posthogKey?.configured },
+                { label: "Atlassian", configured: status.atlassianKey?.configured },
+                { label: "Linear", configured: status.linearKey?.configured },
+                { label: "Brave Search", configured: status.braveSearchKey?.configured },
+                ...(callProvider === "grain"
+                  ? [{ label: "Grain", configured: status.grainKey?.configured }]
+                  : [{ label: "Attention", configured: status.attentionKey?.configured }]),
+              ].filter((s) => s.configured);
+
+              return (
+                <div
+                  className="mt-3 p-3 rounded-xl border border-dashed border-border text-center cursor-pointer hover:bg-accent/30 transition-colors"
+                  onClick={onOpenSettings}
+                >
+                  <div className="flex items-center justify-center gap-2 mb-1">
+                    <Settings className="w-3 h-3 text-muted-foreground" />
+                    <p className="text-[10px] text-muted-foreground font-medium">
+                      {connectedChips.length > 0 ? "Manage API keys" : "Add API keys to connect live data"}
+                    </p>
+                  </div>
+                  {connectedChips.length > 0 && (
+                    <div className="flex items-center justify-center gap-2 text-[9px] flex-wrap">
+                      {connectedChips.map((s) => (
+                        <span key={s.label} className="px-1.5 py-0.5 rounded bg-green-500/10 text-green-600">
+                          {s.label} ✓
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 

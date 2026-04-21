@@ -51,6 +51,7 @@ const EMPTY_STATUS: ApiKeyStatus = {
   linearKey: { configured: false, source: null },
   posthogKey: { configured: false, source: null },
   grainKey: { configured: false, source: null },
+  braveSearchKey: { configured: false, source: null },
 };
 
 const DATA_SOURCE_KEY_NAMES: (keyof ApiKeyState)[] = [

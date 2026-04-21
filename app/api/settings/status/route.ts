@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   const linear = req.headers.get("x-linear-key") || process.env.LINEAR_API_KEY;
   const posthog = req.headers.get("x-posthog-key") || process.env.POSTHOG_API_KEY;
   const grain = req.headers.get("x-grain-key") || process.env.GRAIN_API_KEY;
+  const brave = req.headers.get("x-brave-search-key") || process.env.BRAVE_SEARCH_KEY;
 
   return NextResponse.json({
     status: {
@@ -61,6 +62,10 @@ export async function GET(req: NextRequest) {
       grainKey: {
         configured: !!grain,
         source: req.headers.get("x-grain-key") ? "app" : process.env.GRAIN_API_KEY ? "env" : null,
+      },
+      braveSearchKey: {
+        configured: !!brave,
+        source: req.headers.get("x-brave-search-key") ? "app" : process.env.BRAVE_SEARCH_KEY ? "env" : null,
       },
     },
   });
