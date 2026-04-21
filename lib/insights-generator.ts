@@ -1,31 +1,7 @@
 import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue, LinearIssue } from "./types";
 import { AgentData } from "./agent";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
-
-const NOISE_THEMES = new Set([
-  "5 stars", "4.5 stars", "4 stars", "3.5 stars", "3 stars", "2.5 stars",
-  "2 stars", "1.5 stars", "1 star", "0.5 stars", "0 stars",
-  "5/5", "4/5", "3/5", "2/5", "1/5",
-  "g2", "g2 crowd", "capterra", "trustpilot",
-  "review", "reviews", "rating", "ratings", "stars",
-  "n/a", "na", "none", "other", "misc", "general", "unknown",
-  "yes", "no", "true", "false",
-]);
-
-function isNoiseTheme(theme: string): boolean {
-  const lower = theme.toLowerCase().trim();
-  if (NOISE_THEMES.has(lower)) return true;
-  if (/^\d+(\.\d+)?\s*stars?$/i.test(lower)) return true;
-  if (/^\d+\/\d+$/i.test(lower)) return true;
-  if (/^\d+(\.\d+)?$/.test(lower)) return true;
-  if (lower.length <= 1) return true;
-  if (lower.length > 60) return true;
-  return false;
-}
-
-function cleanThemes(themes: string[]): string[] {
-  return themes.filter((t) => !isNoiseTheme(t));
-}
+import { isNoiseTheme, cleanThemes } from "./theme-utils";
 
 function normalizeTheme(theme: string): string {
   return theme.toLowerCase().replace(/\s+/g, " ").trim();
@@ -610,18 +586,22 @@ function trendInsights(feedback: FeedbackItem[], now: string): Insight[] {
     }
   }
 
+  // Minimum count scales with dataset size to avoid false positives on small datasets
+  const minEmergingCount = Math.max(2, Math.ceil(Math.log10(Math.max(feedback.length, 10)) * 1.5));
+  const minResolvingCount = Math.max(3, minEmergingCount + 1);
+
   const emerging: { theme: string; recent: number; prior: number; ids: string[] }[] = [];
   const resolving: { theme: string; recent: number; prior: number }[] = [];
 
   for (const [theme, { count: rCount, ids }] of Object.entries(recentCounts)) {
     const pCount = priorCounts[theme] || 0;
-    if (rCount >= 3 && pCount > 0 && rCount >= pCount * 2) {
+    if (rCount >= minEmergingCount && pCount > 0 && rCount >= pCount * 2) {
       emerging.push({ theme, recent: rCount, prior: pCount, ids });
     }
   }
   for (const [theme, pCount] of Object.entries(priorCounts)) {
     const rCount = recentCounts[theme]?.count || 0;
-    if (pCount >= 4 && rCount <= pCount * 0.25) {
+    if (pCount >= minResolvingCount && rCount <= pCount * 0.25) {
       resolving.push({ theme, recent: rCount, prior: pCount });
     }
   }

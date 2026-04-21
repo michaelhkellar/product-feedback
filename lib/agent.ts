@@ -93,7 +93,7 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   let enrichedData = data;
   const embeddingMap = new Map<string, number[]>();
 
-  if (keys && data.feedback.length > 0) {
+  if (keys) {
     // Pick best available embedder: primary provider > Gemini > OpenAI > none
     const embedCandidates: { provider: ReturnType<typeof getAIProvider>; key: string | undefined }[] = [];
     const primaryProvider = getAIProvider(aiProvider);
@@ -113,10 +113,26 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
     const embedder = embedCandidates[0];
     if (embedder) {
       try {
-        const texts = data.feedback.map((f) => `${f.title}. ${f.content.slice(0, 400)}`);
-        const vecs = await embedder.provider.embed!(texts, embedder.key);
-        if (vecs) {
-          data.feedback.forEach((f, i) => { if (vecs[i]?.length) embeddingMap.set(f.id, vecs[i]); });
+        // Embed all doc types so RRF fusion works across sources
+        const allItems: { id: string; text: string }[] = [
+          ...data.feedback.map((f) => ({ id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}` })),
+          ...data.features.map((f) => ({ id: f.id, text: `${f.name}. ${f.description.slice(0, 400)}` })),
+          ...data.calls.map((c) => ({ id: c.id, text: `${c.title}. ${c.summary.slice(0, 400)}` })),
+          ...data.jiraIssues.map((j) => ({ id: j.id, text: `${j.summary}. ${j.description.slice(0, 400)}` })),
+          ...data.linearIssues.map((l) => ({ id: l.id, text: `${l.title}. ${l.description.slice(0, 400)}` })),
+          ...data.confluencePages.map((p) => ({ id: p.id, text: `${p.title}. ${p.excerpt.slice(0, 400)}` })),
+        ];
+
+        const EMBED_BATCH = 64;
+        for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
+          const batch = allItems.slice(i, i + EMBED_BATCH);
+          const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
+          if (vecs) {
+            batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
+          }
+        }
+
+        if (data.feedback.length > 0 && embeddingMap.size > 0) {
           const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
           const annotated = annotateClusters(data.feedback, clusterMap, clusters);
           enrichedData = { ...data, feedback: annotated };

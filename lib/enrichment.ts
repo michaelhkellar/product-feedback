@@ -1,5 +1,6 @@
 import { FeedbackItem, Sentiment } from "./types";
 import { AIProviderType, getAIProvider, resolveAIKey } from "./ai-provider";
+import { isNoiseTheme } from "./theme-utils";
 import { createHash } from "crypto";
 
 interface EnrichmentResult {
@@ -30,8 +31,9 @@ const CHEAP_MODELS: Record<AIProviderType, string> = {
   gemini: "gemini-2.0-flash",
 };
 
-function cacheKey(ids: string[]): string {
-  return createHash("sha256").update([...ids].sort().join(",")).digest("hex").slice(0, 20);
+function cacheKey(ids: string[], modelId: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return createHash("sha256").update([...ids].sort().join(",") + "|" + modelId + "|" + today).digest("hex").slice(0, 20);
 }
 
 async function enrichBatch(
@@ -92,7 +94,7 @@ export async function enrichFeedback(
   );
   if (needsEnrichment.length === 0) return feedback;
 
-  const key = cacheKey(needsEnrichment.map((f) => f.id));
+  const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
   const cached = enrichmentCache.get(key);
   if (cached && Date.now() - cached.timestamp < ENRICHMENT_TTL_MS) {
     return applyEnrichment(feedback, cached.results);
@@ -121,10 +123,11 @@ function applyEnrichment(
   return feedback.map((f) => {
     const r = results.get(f.id);
     if (!r) return f;
+    const mergedThemes = Array.from(new Set([...f.themes, ...r.themes])).filter((t) => !isNoiseTheme(t));
     return {
       ...f,
       sentiment: r.sentiment,
-      themes: Array.from(new Set([...f.themes, ...r.themes])),
+      themes: mergedThemes,
     };
   });
 }

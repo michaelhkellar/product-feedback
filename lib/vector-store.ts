@@ -206,9 +206,9 @@ export class InMemoryVectorStore {
     options?: { limit?: number; type?: VectorDocument["type"]; themes?: string[]; queryEmbedding?: number[] }
   ): { document: VectorDocument; score: number }[] {
     const limit = options?.limit || 8;
-    const useEmbeddings = !!options?.queryEmbedding && this.embeddings.size > 0;
+    const K = 60; // RRF constant
 
-    // TF-IDF query vector (always built as fallback)
+    // Build TF-IDF query vector
     const queryTokens = tokenize(query);
     const queryTF = computeTF(queryTokens);
     const queryVec = new Map<string, number>();
@@ -216,33 +216,67 @@ export class InMemoryVectorStore {
       queryVec.set(token, tfVal * (this.idf.get(token) || 0));
     });
 
-    const results: { document: VectorDocument; score: number }[] = [];
-
-    for (const doc of this.documents) {
-      if (options?.type && doc.type !== options.type) continue;
+    // Filter candidates
+    const candidates = this.documents.filter((doc) => {
+      if (options?.type && doc.type !== options.type) return false;
       if (options?.themes?.length) {
-        const overlap = doc.themes.some((t) => options.themes!.includes(t));
-        if (!overlap) continue;
+        return doc.themes.some((t) => options.themes!.includes(t));
       }
+      return true;
+    });
 
-      let score = 0;
+    // TF-IDF pass: score all candidates
+    const tfidfScored: { id: string; score: number }[] = [];
+    const tfidfScoreMap = new Map<string, number>();
+    for (const doc of candidates) {
+      const docVec = this.tfidf.get(doc.id);
+      if (!docVec) continue;
+      const score = this._tfidfScore(queryVec, docVec);
+      if (score > 0.005) {
+        tfidfScored.push({ id: doc.id, score });
+        tfidfScoreMap.set(doc.id, score);
+      }
+    }
+    tfidfScored.sort((a, b) => b.score - a.score);
+    const tfidfRankMap = new Map<string, number>();
+    tfidfScored.forEach(({ id }, i) => tfidfRankMap.set(id, i));
 
-      if (useEmbeddings) {
-        const docEmb = this.embeddings.get(doc.id);
-        if (docEmb?.length) {
-          score = cosineSim(options!.queryEmbedding!, docEmb);
-        } else {
-          // Fall back to TF-IDF for docs without embeddings
-          const docVec = this.tfidf.get(doc.id);
-          if (docVec) score = this._tfidfScore(queryVec, docVec) * 0.7;
+    // Embedding pass: cosine score for docs that have embeddings
+    const useEmbeddings = !!options?.queryEmbedding && this.embeddings.size > 0;
+    const embRankMap = new Map<string, number>();
+    if (useEmbeddings) {
+      const embScored: { id: string; score: number }[] = [];
+      for (const doc of candidates) {
+        const emb = this.embeddings.get(doc.id);
+        if (emb?.length) {
+          const score = cosineSim(options!.queryEmbedding!, emb);
+          if (score > 0) embScored.push({ id: doc.id, score });
         }
+      }
+      embScored.sort((a, b) => b.score - a.score);
+      embScored.forEach(({ id }, i) => embRankMap.set(id, i));
+    }
+
+    // RRF fusion: union of TF-IDF and embedding result sets
+    const allIds = new Set<string>([...Array.from(tfidfRankMap.keys()), ...Array.from(embRankMap.keys())]);
+    const worstTfidf = tfidfScored.length;
+    const worstEmb = embRankMap.size;
+
+    const results: { document: VectorDocument; score: number }[] = [];
+    for (const id of Array.from(allIds)) {
+      const doc = this.docById.get(id);
+      if (!doc) continue;
+
+      let score: number;
+      if (useEmbeddings && embRankMap.size > 0) {
+        const tr = tfidfRankMap.has(id) ? tfidfRankMap.get(id)! : worstTfidf;
+        const er = embRankMap.has(id) ? embRankMap.get(id)! : worstEmb;
+        score = 1 / (K + tr) + 1 / (K + er);
       } else {
-        const docVec = this.tfidf.get(doc.id);
-        if (!docVec) continue;
-        score = this._tfidfScore(queryVec, docVec);
+        score = tfidfScoreMap.get(id) || 0;
       }
 
-      if (score > 0.01) results.push({ document: doc, score });
+      results.push({ document: doc, score });
     }
 
     results.sort((a, b) => b.score - a.score);
