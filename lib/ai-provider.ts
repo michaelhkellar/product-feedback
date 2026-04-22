@@ -2,6 +2,18 @@ import { generateWithGemini, isGeminiConfigured, getResolvedModel } from "./gemi
 
 export type AIProviderType = "gemini" | "anthropic" | "openai";
 
+/** Caller-supplied generation options threaded through all provider adapters. */
+export interface GenerateOpts {
+  /** Request JSON-mode output (provider-specific mechanism). */
+  json?: boolean;
+  /** Sampling temperature (0 = deterministic). */
+  temperature?: number;
+  /** Hard cap on generated tokens. */
+  maxOutputTokens?: number;
+  /** AbortSignal to cancel the underlying request. */
+  signal?: AbortSignal;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -15,7 +27,7 @@ export interface ToolCall {
 }
 
 export interface AIProvider {
-  generate(systemPrompt: string, userPrompt: string, key?: string, model?: string): Promise<string | null>;
+  generate(systemPrompt: string, userPrompt: string, key?: string, model?: string, opts?: GenerateOpts): Promise<string | null>;
   generateStream?(systemPrompt: string, userPrompt: string, key?: string, model?: string): AsyncGenerator<string>;
   generateWithTools?(
     systemPrompt: string,
@@ -34,13 +46,13 @@ const PROVIDER_TIMEOUT_MS = 30_000;
 
 // --- Simple LRU map (insertion-order eviction) ---
 function lruSet<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): void {
-  map.delete(key); // remove so re-insert goes to end
+  map.delete(key);
   map.set(key, value);
   if (map.size > maxSize) map.delete(map.keys().next().value as K);
 }
 function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
   const v = map.get(key);
-  if (v !== undefined) { map.delete(key); map.set(key, v); } // bump to end
+  if (v !== undefined) { map.delete(key); map.set(key, v); }
   return v;
 }
 
@@ -51,7 +63,7 @@ function embCacheKey(text: string, model: string): string {
   return `${model}:${text.length}:${text.slice(0, 64)}`;
 }
 
-// --- Gemini adapter (wraps existing lib/gemini.ts) ---
+// --- Gemini adapter ---
 
 const FALLBACK_GEMINI_MODELS = [
   "gemini-2.5-pro",
@@ -59,9 +71,19 @@ const FALLBACK_GEMINI_MODELS = [
   "gemini-2.5-flash-lite",
 ];
 
+/** Returns generationConfig fields for the REST/stream path (no SDK types needed). */
+function geminiRestGenConfig(modelId: string, opts?: GenerateOpts): Record<string, unknown> {
+  const cfg: Record<string, unknown> = {};
+  if (/gemini-2\.5-flash/.test(modelId)) cfg.thinkingConfig = { thinkingBudget: 0 };
+  if (opts?.json) cfg.responseMimeType = "application/json";
+  if (opts?.temperature !== undefined) cfg.temperature = opts.temperature;
+  if (opts?.maxOutputTokens !== undefined) cfg.maxOutputTokens = opts.maxOutputTokens;
+  return cfg;
+}
+
 const geminiProvider: AIProvider = {
-  async generate(systemPrompt, userPrompt, key, model) {
-    return generateWithGemini(systemPrompt, userPrompt, key, model || undefined);
+  async generate(systemPrompt, userPrompt, key, model, opts) {
+    return generateWithGemini(systemPrompt, userPrompt, key, model || undefined, opts);
   },
 
   async *generateStream(systemPrompt, userPrompt, key, model) {
@@ -69,12 +91,14 @@ const geminiProvider: AIProvider = {
     if (!apiKey) return;
     const modelId = model || "gemini-2.5-flash";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?key=${apiKey}&alt=sse`;
+    const genConfig = geminiRestGenConfig(modelId);
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+        ...(Object.keys(genConfig).length > 0 ? { generationConfig: genConfig } : {}),
       }),
       signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
@@ -106,7 +130,6 @@ const geminiProvider: AIProvider = {
     if (!apiKey || texts.length === 0) return null;
     const model = "text-embedding-004";
 
-    // Separate cached from uncached
     const results: (number[] | null)[] = new Array(texts.length).fill(null);
     const uncached: { idx: number; text: string }[] = [];
     texts.forEach((text, i) => {
@@ -115,7 +138,6 @@ const geminiProvider: AIProvider = {
       else uncached.push({ idx: i, text });
     });
 
-    // Batch uncached via batchEmbedContents (100 per call)
     const BATCH = 100;
     for (let b = 0; b < uncached.length; b += BATCH) {
       const slice = uncached.slice(b, b + BATCH);
@@ -140,6 +162,7 @@ const geminiProvider: AIProvider = {
     const filled = results.map((r) => r ?? []);
     return filled.some((v) => v.length > 0) ? filled : null;
   },
+
   async listModels(key) {
     const apiKey = key || process.env.GEMINI_API_KEY;
     if (!apiKey) return [];
@@ -173,28 +196,37 @@ const geminiProvider: AIProvider = {
 // --- Anthropic adapter ---
 
 const anthropicProvider: AIProvider = {
-  async generate(systemPrompt, userPrompt, key, model) {
-
+  async generate(systemPrompt, userPrompt, key, model, opts) {
     const apiKey = key || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return null;
 
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
 
+    // For JSON mode, prefill the assistant turn with "[" or "{" so the model continues in JSON.
+    // Also enforce tight token budget and zero temperature for classification calls.
+    const isJson = opts?.json ?? false;
+    const messages: { role: "user" | "assistant"; content: string }[] = [
+      { role: "user", content: userPrompt },
+    ];
+    if (isJson) messages.push({ role: "assistant", content: "[" });
+
     try {
-      const message = await Promise.race([
-        client.messages.create({
+      const signal = opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+      const message = await client.messages.create(
+        {
           model: model || "claude-sonnet-4-20250514",
-          max_tokens: 4096,
+          max_tokens: opts?.maxOutputTokens ?? 4096,
+          temperature: opts?.temperature,
           system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Anthropic generate timeout")), PROVIDER_TIMEOUT_MS)
-        ),
-      ]);
+          messages,
+        },
+        { signal }
+      );
       const block = message.content[0];
-      return block.type === "text" ? block.text : null;
+      const text = block.type === "text" ? block.text : null;
+      // Re-attach the prefill so callers get complete JSON
+      return isJson && text ? "[" + text : text;
     } catch (err) {
       console.error("Anthropic API error:", err);
       return null;
@@ -282,7 +314,7 @@ const anthropicProvider: AIProvider = {
 // --- OpenAI adapter ---
 
 const openaiProvider: AIProvider = {
-  async generate(systemPrompt, userPrompt, key, model) {
+  async generate(systemPrompt, userPrompt, key, model, opts) {
     const apiKey = key || process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
 
@@ -290,19 +322,19 @@ const openaiProvider: AIProvider = {
     const client = new OpenAI({ apiKey });
 
     try {
-      const completion = await Promise.race([
-        client.chat.completions.create({
+      const completion = await client.chat.completions.create(
+        {
           model: model || "gpt-4o",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          max_tokens: 4096,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("OpenAI generate timeout")), PROVIDER_TIMEOUT_MS)
-        ),
-      ]);
+          max_tokens: opts?.maxOutputTokens ?? 4096,
+          temperature: opts?.temperature,
+          ...(opts?.json ? { response_format: { type: "json_object" as const } } : {}),
+        },
+        { signal: opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
+      );
       return completion.choices[0]?.message?.content || null;
     } catch (err) {
       console.error("OpenAI API error:", err);

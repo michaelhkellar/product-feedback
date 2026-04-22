@@ -1,6 +1,7 @@
 import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue, LinearIssue } from "./types";
 import { AgentData } from "./agent";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
+import { INSIGHTS } from "./ai-presets";
 import { isNoiseTheme, cleanThemes } from "./theme-utils";
 
 function normalizeTheme(theme: string): string {
@@ -774,13 +775,14 @@ ${summaryParts.join("\n")}`;
     "You are a product analytics expert. Respond with valid JSON only. Focus on actionable product insights, not review metrics.",
     prompt,
     key,
-    model
+    model,
+    INSIGHTS
   );
 
   if (!response) return [];
 
   try {
-    const cleaned = response.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const cleaned = response.trim().replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
     const parsed = JSON.parse(cleaned);
     if (!Array.isArray(parsed)) return [];
 

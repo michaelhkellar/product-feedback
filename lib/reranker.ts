@@ -1,10 +1,11 @@
 import { VectorDocument } from "./vector-store";
 import { AIProviderType, getAIProvider } from "./ai-provider";
+import { RERANK } from "./ai-presets";
 
 const CHEAP_RERANK_MODELS: Record<AIProviderType, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-2.5-flash-lite",
 };
 
 export interface RerankCandidate {
@@ -61,16 +62,14 @@ Return the indices of the most relevant candidates, most-relevant first, max ${m
 
   try {
     const response = await Promise.race([
-      provider.generate(system, prompt, aiKey, model),
+      provider.generate(system, prompt, aiKey, model, RERANK),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
     ]);
 
     if (!response) return candidates;
 
-    const match = response.match(/\{[\s\S]*?\}/);
-    if (!match) return candidates;
-
-    const parsed = JSON.parse(match[0]) as { order?: unknown };
+    const cleaned = response.trim().replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+    const parsed = JSON.parse(cleaned) as { order?: unknown };
     if (!Array.isArray(parsed.order)) return candidates;
 
     const order = parsed.order

@@ -1,5 +1,6 @@
 import { FeedbackItem, Sentiment } from "./types";
 import { AIProviderType, getAIProvider, resolveAIKey } from "./ai-provider";
+import { CLASSIFICATION } from "./ai-presets";
 import { isNoiseTheme } from "./theme-utils";
 import { createHash } from "crypto";
 
@@ -35,7 +36,8 @@ function enrichCacheSet(k: string, v: CachedEnrichment): void {
 const CHEAP_MODELS: Record<AIProviderType, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
-  gemini: "gemini-2.5-flash",
+  // flash-lite is purpose-built for classification and faster than flash with thinking off
+  gemini: "gemini-2.5-flash-lite",
 };
 
 const ENRICHMENT_SCHEMA_VERSION = "v2";
@@ -69,13 +71,12 @@ ${items.map((f) => `ID: ${f.id}\n${f.title}. ${f.content.slice(0, 300)}`).join("
 
 JSON array:`;
 
-  const response = await provider.generate(system, prompt, aiKey, model);
+  const response = await provider.generate(system, prompt, aiKey, model, CLASSIFICATION);
   if (!response) return [];
 
   try {
-    const jsonMatch = response.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
-    const parsed = JSON.parse(jsonMatch[0]) as {
+    const cleaned = response.trim().replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+    const parsed = JSON.parse(cleaned) as {
       id: string; sentiment: string; themes: unknown;
       urgency?: string; actionability?: string; topic_area?: string; confidence?: unknown;
     }[];

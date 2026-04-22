@@ -11,6 +11,30 @@ let resolvedModel: string | null = null;
 
 const GENERATE_TIMEOUT_MS = 30_000;
 
+export interface GeminiGenOpts {
+  json?: boolean;
+  temperature?: number;
+  maxOutputTokens?: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Builds a generationConfig for the given model + caller options.
+ * Flash models default to "thinking" mode which adds 5-30s latency on simple tasks.
+ * thinkingBudget:0 disables reasoning; @google/generative-ai@0.21.0 types don't expose
+ * thinkingConfig or responseMimeType yet — callers cast the result as `never`.
+ */
+function buildGenerationConfig(modelName: string, opts?: GeminiGenOpts): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  if (/gemini-2\.5-flash/.test(modelName)) {
+    config.thinkingConfig = { thinkingBudget: 0 };
+  }
+  if (opts?.json) config.responseMimeType = "application/json";
+  if (opts?.temperature !== undefined) config.temperature = opts.temperature;
+  if (opts?.maxOutputTokens !== undefined) config.maxOutputTokens = opts.maxOutputTokens;
+  return config;
+}
+
 function getClient(overrideKey?: string): GoogleGenerativeAI | null {
   const key = overrideKey || process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -37,34 +61,64 @@ async function tryGenerate(
   client: GoogleGenerativeAI,
   modelName: string,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  opts?: GeminiGenOpts
 ): Promise<string> {
+  const generationConfig = buildGenerationConfig(modelName, opts);
   const model = client.getGenerativeModel({
     model: modelName,
     systemInstruction: systemPrompt,
+    // Cast required: @google/generative-ai@0.21.0 types don't include thinkingConfig / responseMimeType
+    generationConfig: generationConfig as never,
   });
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Gemini timeout after ${GENERATE_TIMEOUT_MS}ms`)), GENERATE_TIMEOUT_MS)
+
+  // AbortController lets the underlying HTTP request be cancelled on timeout,
+  // preventing the SDK call from leaking quota/tokens after we give up.
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`Gemini timeout after ${GENERATE_TIMEOUT_MS}ms`)),
+    GENERATE_TIMEOUT_MS
   );
-  const result = await Promise.race([
-    model.generateContent(userPrompt),
-    timeoutPromise,
-  ]);
-  return result.response.text();
+  if (opts?.signal) {
+    if (opts.signal.aborted) {
+      clearTimeout(timer);
+      controller.abort(opts.signal.reason);
+    } else {
+      opts.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        controller.abort((opts.signal as AbortSignal).reason);
+      }, { once: true });
+    }
+  }
+
+  try {
+    // requestOptions.signal is supported by the underlying REST client (cast for old types)
+    const result = await model.generateContent(userPrompt, { signal: controller.signal } as never);
+    const usage = result.response.usageMetadata as { thoughtsTokenCount?: number } | undefined;
+    if (usage?.thoughtsTokenCount) {
+      console.warn(
+        `[gemini] ${modelName} used ${usage.thoughtsTokenCount} thinking tokens — thinkingConfig may have regressed`
+      );
+    }
+    return result.response.text();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function generateWithGemini(
   systemPrompt: string,
   userPrompt: string,
   overrideKey?: string,
-  overrideModel?: string
+  overrideModel?: string,
+  opts?: GeminiGenOpts
 ): Promise<string | null> {
   const client = getClient(overrideKey);
   if (!client) return null;
 
   if (overrideModel) {
     try {
-      return await tryGenerate(client, overrideModel, systemPrompt, userPrompt);
+      return await tryGenerate(client, overrideModel, systemPrompt, userPrompt, opts);
     } catch (err) {
       console.error(`Gemini API error (${overrideModel}):`, err);
       return null;
@@ -73,7 +127,7 @@ export async function generateWithGemini(
 
   if (resolvedModel) {
     try {
-      return await tryGenerate(client, resolvedModel, systemPrompt, userPrompt);
+      return await tryGenerate(client, resolvedModel, systemPrompt, userPrompt, opts);
     } catch (err) {
       if (!isModelNotFoundError(err)) {
         console.error(`Gemini API error (${resolvedModel}):`, err);
@@ -85,7 +139,7 @@ export async function generateWithGemini(
 
   for (const candidate of MODEL_CANDIDATES) {
     try {
-      const text = await tryGenerate(client, candidate, systemPrompt, userPrompt);
+      const text = await tryGenerate(client, candidate, systemPrompt, userPrompt, opts);
       resolvedModel = candidate;
       console.log(`Gemini: resolved working model → ${candidate}`);
       return text;
@@ -109,8 +163,11 @@ export async function findWorkingModel(overrideKey?: string): Promise<string | n
 
   for (const candidate of MODEL_CANDIDATES) {
     try {
-      const model = client.getGenerativeModel({ model: candidate });
-      await model.generateContent("Say OK");
+      const model = client.getGenerativeModel({
+        model: candidate,
+        generationConfig: buildGenerationConfig(candidate) as never,
+      });
+      await model.generateContent("Say OK", { signal: AbortSignal.timeout(10_000) } as never);
       resolvedModel = candidate;
       return candidate;
     } catch (err) {
