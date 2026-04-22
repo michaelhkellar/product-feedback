@@ -240,7 +240,7 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
     const feat = data.features.find((f) => f.id === id);
     if (feat) {
       const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
-      details.push(`[Source: productboard feature] "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
+      details.push(`[Roadmap feature (internal, not customer feedback)] "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
       continue;
     }
     const call = data.calls.find((c) => c.id === id);
@@ -588,7 +588,7 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard note title — NEVER a bare number or [n] citation marker. What = actual request/issue (with inline [n] citation if applicable). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates like 1/23/26). Skip if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard NOTE title — NEVER a bare number, [n] citation marker, feature name, or roadmap item. What = actual request/issue (with inline [n] citation if applicable). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates like 1/23/26). Skip if 0-1 sources.]
 
 ## [Heading]
 
@@ -610,7 +610,7 @@ const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard link — NEVER a bare number or [n] citation marker (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard NOTE link — NEVER a bare number, [n] citation marker, feature name, or roadmap item (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-2 sentence pattern or theme across the items above. Skip if self-evident from the table.]
 
@@ -622,7 +622,7 @@ ALWAYS include the following table (on its own lines, preceded by a blank line) 
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. Source = Jira key, customer name/email, or Productboard note title — NEVER a bare number or [n] citation marker. What = specific request/issue, may include [n] citation. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates like 1/23/26.]
+[up to 5 rows. Source = Jira key, customer name/email, or Productboard NOTE title — NEVER a bare number, [n] citation marker, feature name, or roadmap item. What = specific request/issue, may include [n] citation. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates like 1/23/26.]
 
 Skip the table only when the answer is a pure opinion/recommendation with fewer than 3 concrete sources.`;
 
@@ -1920,7 +1920,7 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard note title (plus link when available) — NEVER a bare number or [n] citation marker. Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard NOTE title (plus link when available) — NEVER a bare number, [n] citation marker, feature name, or roadmap item. Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Next Steps
 

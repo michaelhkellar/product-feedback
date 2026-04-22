@@ -105,6 +105,7 @@
 
 .prose table {
   width: 100%;
+  table-layout: auto;
   border-collapse: collapse;
   margin: 0.75rem 0;
   font-size: 0.8rem;
@@ -119,6 +120,22 @@
   color: hsl(var(--muted-foreground));
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+/* Source (1st) and When (last) columns shrink-to-fit; What (middle) expands */
+.prose thead th:first-child,
+.prose tbody td:first-child,
+.prose thead th:last-child,
+.prose tbody td:last-child {
+  white-space: nowrap;
+  width: 1%;
+}
+
+.prose tbody td:nth-child(2),
+.prose thead th:nth-child(2) {
+  min-width: 16ch;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 .prose tbody td {

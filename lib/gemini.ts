@@ -2,9 +2,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const MODEL_CANDIDATES = [
   "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
   "gemini-2.5-pro",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
 ];
 
 const clients = new Map<string, GoogleGenerativeAI>();
