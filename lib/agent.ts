@@ -606,7 +606,7 @@ const DETAILED_FORMAT = `Use this format as a guide. Include sections the eviden
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (short, ≤60 chars). BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", any analytics label, a bare number, an [n] citation marker, a theme name, or any sentence/phrase longer than 60 chars. If no valid source token exists, omit that row. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix). When in doubt, prefer the short handle over nothing. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", any analytics label, a bare number, an [n] citation marker, or a theme name. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
 
 ## [Heading]
 
@@ -638,7 +638,7 @@ const LIST_FORMAT = `Use this format for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, or any text over 60 chars. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix). Prefer a mix of source types over Jira-only. BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
@@ -652,7 +652,7 @@ If your answer enumerates 3 or more specific feedback items, accounts, tickets, 
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or Productboard NOTE title (≤60 chars). BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, or text >60 chars. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon). Prefer a mix of source types. BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
@@ -1764,8 +1764,13 @@ export async function chat(
   const formatInstructions = getFormatInstructions(mode, userMessage, conversationHistory, hasComparison);
 
   const evidencePack = sources.length > 0
-    ? "\n---\nAvailable Evidence (cite by ID only — do not reference sources not in this list):\n" +
-      sources.map((s, i) => `[${i + 1}] ${s.id}: ${s.title} (${s.type})`).join("\n")
+    ? "\n---\nAvailable Evidence (cite by [n] citation marker; for Source cells use the short handle shown before the colon):\n" +
+      sources.map((s, i) => {
+        // Short handle = title up to first " — " or " (" (strips contact/company suffixes we added server-side).
+        // This is the string the model should put in the Source column for non-Jira items.
+        const shortTitle = s.title.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
+        return `[${i + 1}] ${shortTitle}: ${s.title} (${s.type})`;
+      }).join("\n")
     : "";
 
   const pivotAddendum = pivot.isPivot && pivot.excluded.length > 0
@@ -2107,7 +2112,7 @@ const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evide
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = customer email (use in quote attribution only), analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names, or text >60 chars. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon). Prefer a mix of source types over Jira-only. BANNED = customer email (use in quote attribution only), analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Segmentation
 [OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]

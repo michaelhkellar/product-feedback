@@ -41,12 +41,22 @@ function isValidSourceCell(cell: string, knownSources: SourceRef[]): boolean {
 
   // If it matches the title or id of a known source, it's valid
   const lower = c.toLowerCase();
-  if (knownSources.some((s) =>
-    lower === s.id.toLowerCase() ||
-    lower === s.title.toLowerCase().slice(0, MAX_SOURCE_LEN) ||
-    s.id.toLowerCase().includes(lower) ||
-    lower.includes(s.id.toLowerCase())
-  )) return true;
+  if (knownSources.some((s) => {
+    const sid = s.id.toLowerCase();
+    const fullTitle = s.title.toLowerCase();
+    // Extract the "short title" — the clean prefix before any " — contact"
+    // or " (1 of N from Company)" suffix we add server-side
+    const shortTitle = fullTitle.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
+    return (
+      lower === sid ||
+      lower === fullTitle.slice(0, MAX_SOURCE_LEN) ||
+      lower === shortTitle ||
+      shortTitle.startsWith(lower) ||
+      lower.startsWith(shortTitle) ||
+      sid.includes(lower) ||
+      lower.includes(sid)
+    );
+  })) return true;
 
   // Phrases that signal a hallucinated theme label or internal roadmap item
   const BANNED_PHRASES = [
@@ -76,7 +86,15 @@ function extractCitationIndices(what: string): number[] {
 function recoverSourceFromCitations(indices: number[], sources: SourceRef[]): string | null {
   for (const idx of indices) {
     const s = sources[idx];
-    if (s) return s.id;
+    if (!s) continue;
+    // For Jira/Linear-like types, prefer the ticket key embedded in the title
+    // (e.g. title "CX-1234: Refactor detection" → "CX-1234").
+    const keyMatch = s.title.match(/^([A-Z]{2,10}-\d+)/);
+    if (keyMatch) return keyMatch[1];
+    // Otherwise use the short handle (title prefix before " — " or " (")
+    const shortTitle = s.title.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
+    if (shortTitle && shortTitle.length <= MAX_SOURCE_LEN) return shortTitle;
+    return s.id;
   }
   return null;
 }
