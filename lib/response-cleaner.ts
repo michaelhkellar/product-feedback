@@ -211,6 +211,51 @@ function splitJoinedRows(line: string, columnCount: number): string[] {
 }
 
 /**
+ * Pre-pass: the model sometimes glues section headings onto the end of the
+ * previous prose line, e.g. `...alert processing. ## Usage Signals`. GFM
+ * requires `##` to start a fresh line (ideally with a blank line above), so
+ * we split `<sentence-end> ## Heading` into two lines with a blank gap, and
+ * ensure there's a blank line between a heading and any immediately-following
+ * pipe-table row.
+ */
+function normalizeHeadingPlacement(text: string): string {
+  // Split inline headings like "text. ## Heading more" into their own lines
+  const INLINE_HEADING_RE = /^(.+?[.!?])\s+(#{1,6}\s+.+)$/;
+  const split: string[] = [];
+  for (const line of text.split("\n")) {
+    const m = line.match(INLINE_HEADING_RE);
+    if (m) {
+      split.push(m[1]);
+      split.push("");
+      split.push(m[2]);
+    } else {
+      split.push(line);
+    }
+  }
+  // Guarantee a blank line before and after a heading when surrounded by
+  // content (so headings don't get absorbed into adjacent paragraphs/tables).
+  const out: string[] = [];
+  for (let i = 0; i < split.length; i++) {
+    const line = split[i];
+    const isHeading = /^#{1,6}\s+\S/.test(line);
+    if (isHeading) {
+      // Prepend blank line if previous line has content
+      if (out.length > 0 && out[out.length - 1].trim() !== "") {
+        out.push("");
+      }
+      out.push(line);
+      // Append blank line if next line has content
+      if (i + 1 < split.length && split[i + 1].trim() !== "") {
+        out.push("");
+      }
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\n");
+}
+
+/**
  * Pre-pass: when the model emits a Source|What|When table inline with prose
  * (no leading newline before `| Source | ...`), GFM renderers fail to parse
  * it and the entire table renders as inline pipe text. We:
@@ -306,6 +351,11 @@ function fixPipeOverflowInAllTables(text: string): string {
  * found in `text`. Non-matching tables are left untouched.
  */
 export function cleanResponseTables(text: string, sources: SourceRef[]): string {
+  // Always normalize heading placement — applies to ALL responses, not just
+  // ones containing tables, because inline `## Heading` glued to prose is
+  // itself a rendering bug regardless of whether tables follow.
+  text = normalizeHeadingPlacement(text);
+
   if (!text.includes("|")) return text;
 
   // Normalize table placement first so that inline-with-prose tables become

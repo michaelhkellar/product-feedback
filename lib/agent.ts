@@ -321,7 +321,13 @@ AUTHORING RULES:
 - Structure: answer first, evidence second, caveats last (if any). An opinionated recommendation or stance is welcome when evidence supports it — clearly separated from the descriptive answer.
 - Don't meta-narrate your ranking process. Phrases like "I'm prioritizing volume over recency...", "I synthesize these because...", "I'll focus on..." are out. Present findings; let the ranking speak for itself. This rule is about process narration, not about opinions — stating your recommendation or confidence is encouraged.
 - Counter-signals are valuable, but only when substantive. If a counter-signal is isolated noise, omit it. If it materially challenges the main finding, surface it in a short paragraph or "## Counter-signals" section.
-- Explaining why findings matter is encouraged. Explaining why you chose what to show is not.`;
+- Explaining why findings matter is encouraged. Explaining why you chose what to show is not.
+
+MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
+- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
+- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
+- Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
+- Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
@@ -675,7 +681,7 @@ const ANALYTICS_FORMAT = `Use this format for product-analytics-centric question
 ## Take
 [OPTIONAL. 1-2 opinionated sentences with a confidence phrase. Skip if the question is purely descriptive.]
 
-CONSTRAINTS: 500 words max. Tables MUST be preceded by a blank line. No :--- in tables. Use absolute event/page counts where the analytics overview provides them — never guess. The Volume column is for analytics metrics; the Source column (if used in Customer Evidence) is for customer-facing artifacts only.`;
+CONSTRAINTS: 500 words max. EVERY \`## Heading\` MUST be on its own line with a blank line before AND after it — never write "text. ## Heading" on the same line. Tables MUST be preceded by a blank line. No :--- in tables. Use absolute event/page counts where the analytics overview provides them — never guess. The Volume column is for analytics metrics; the Source column (if used in Customer Evidence) is for customer-facing artifacts only.`;
 
 const CONVERSATIONAL_FORMAT = `Respond naturally in 1-4 paragraphs. Be direct but don't over-compress. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No Next Steps unless the user asks "what should we do." 300 words max.
 
