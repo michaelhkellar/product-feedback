@@ -242,6 +242,8 @@ export class InMemoryVectorStore {
     tfidfScored.forEach(({ id }, i) => tfidfRankMap.set(id, i));
 
     // Embedding pass: cosine score for docs that have embeddings
+    // Threshold at 0.2 to avoid dragging in weak semantic matches (cosine on 768-dim text embeddings
+    // typically lands 0.3+ for meaningful matches, <0.2 is near-random).
     const useEmbeddings = !!options?.queryEmbedding && this.embeddings.size > 0;
     const embRankMap = new Map<string, number>();
     if (useEmbeddings) {
@@ -250,7 +252,7 @@ export class InMemoryVectorStore {
         const emb = this.embeddings.get(doc.id);
         if (emb?.length) {
           const score = cosineSim(options!.queryEmbedding!, emb);
-          if (score > 0) embScored.push({ id: doc.id, score });
+          if (score > 0.2) embScored.push({ id: doc.id, score });
         }
       }
       embScored.sort((a, b) => b.score - a.score);
