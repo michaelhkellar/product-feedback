@@ -273,6 +273,18 @@ function fixMarkdown(text: string): string {
 
   let result = withPlaceholders;
 
+  // Fix prose text ending in a pipe-header on the same line: "Some text. | A | B |" → two separate lines
+  result = result.replace(/([^|\n]+?)\s*(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*$/gm, (_, prose, header) => {
+    const trimmedProse = prose.trim();
+    return trimmedProse ? `${trimmedProse}\n\n${header}` : header;
+  });
+
+  // Fix tab-delimited dash rows after a pipe-header: "---\t---\t---" → "| --- | --- | --- |"
+  result = result.replace(/((?:\|[^|\n]+)+\|)\n(\s*-{2,}(?:[\t ]-{2,})+\s*)/gm, (_, header, _dashRow) => {
+    const cols = header.split("|").filter((s: string) => s.trim()).length;
+    return `${header}\n| ${Array(cols).fill("---").join(" | ")} |`;
+  });
+
   const tablePattern = /(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*(\|\s*-{2,}\s*(?:\|\s*-{2,}\s*)+\|)\s*((?:\|[^|\n]+(?:\|[^|\n]+)+\|\s*)+)/g;
 
   result = result.replace(tablePattern, (match) => {
@@ -323,6 +335,12 @@ function fixMarkdown(text: string): string {
   }
 
   result = lines.join("\n");
+
+  // Drop table rows where the Source cell (first pipe-delimited cell) is a bare citation number.
+  // These are [n] markers that leaked into the Source column; they're never valid source identifiers.
+  result = result.replace(/^\|(\s*\[?\d+\]?\s*)\|(.+)$/gm, (match, sourceCell) => {
+    return /^\s*\[?\d+\]?\s*$/.test(sourceCell) ? "" : match;
+  });
 
   // Restore code blocks
   if (codeBlocks.length > 0) {

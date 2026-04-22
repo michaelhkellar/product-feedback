@@ -249,7 +249,23 @@ export async function getRelevantAmplitudeContext(
     }
 
     if (lines.length === 1 && sources.length === 0) {
-      lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+      if (/\b(trends?|overview|analytics|usage|adoption|engagement|amplitude)\b/i.test(query)) {
+        const overview = await getAmplitudeOverview(compositeKey, effectiveDays).catch(() => null);
+        if (overview) {
+          lines[0] = "Amplitude product analytics overview:";
+          if (overview.topEvents.length > 0)
+            lines.push(`Top events: ${overview.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ")}`);
+          if (overview.topFeatures.length > 0)
+            lines.push(`Top features: ${overview.topFeatures.slice(0, 5).map((f) => `${f.name} (${f.count} events)`).join(", ")}`);
+          if (overview.topAccounts.length > 0)
+            lines.push(`Top accounts by activity: ${overview.topAccounts.slice(0, 3).map((a) => a.id).join(", ")}`);
+          sources.push({ type: "amplitude", id: "amplitude-overview", title: "Amplitude analytics overview" });
+        } else {
+          lines.push("No matching events or users could be identified from the question.");
+        }
+      } else {
+        lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+      }
     }
 
     return { context: lines.join("\n"), sources };
