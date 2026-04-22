@@ -202,10 +202,20 @@ function snippetFromContent(content: string, max = 80): string {
   return firstSentence.length > max ? `${firstSentence.slice(0, max - 1)}…` : firstSentence;
 }
 
+/**
+ * Replace `|` with `›` in titles so they don't break markdown tables when
+ * the model copies them into a Source cell. Pendo/Amplitude page names often
+ * use `|` as a path separator (e.g. "Findings | Finding Detail Page"), which
+ * GFM interprets as a cell boundary.
+ */
+function sanitizeTitleForTable(title: string): string {
+  return title.replace(/\s*\|\s*/g, " › ").replace(/\s+/g, " ").trim();
+}
+
 function cleanFeedbackTitle(fb: FeedbackItem): string {
   const raw = (fb.title || "").replace(/\s+/g, " ").trim();
-  if (!raw || looksLikeOpaqueId(raw)) return snippetFromContent(fb.content);
-  return raw;
+  const base = !raw || looksLikeOpaqueId(raw) ? snippetFromContent(fb.content) : raw;
+  return sanitizeTitleForTable(base);
 }
 
 function feedbackContactRef(fb: FeedbackItem): string {
@@ -1175,23 +1185,28 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
   if (analyticsOverview) {
     const ao = analyticsOverview;
-    const pageSummary = ao.topPages.slice(0, 5).map((p) => `${p.name} (${p.count})`).join(", ");
-    const featureSummary = ao.topFeatures.slice(0, 5).map((f) => `${f.name} (${f.count})`).join(", ");
-    const eventSummary = ao.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ");
-    const accountSummary = ao.topAccounts.slice(0, 3).map((a) => `${a.id} (${a.count})`).join(", ");
+    // Pendo/Amplitude/PostHog often use `|` as a hierarchy separator inside
+    // page/feature/event names (e.g. "Findings | Finding Detail Page"). Left
+    // alone, those pipes break markdown tables when the model copies the name
+    // into a cell. Replace with `›` for display and citation.
+    const sp = sanitizeTitleForTable;
+    const pageSummary = ao.topPages.slice(0, 5).map((p) => `${sp(p.name)} (${p.count})`).join(", ");
+    const featureSummary = ao.topFeatures.slice(0, 5).map((f) => `${sp(f.name)} (${f.count})`).join(", ");
+    const eventSummary = ao.topEvents.slice(0, 5).map((e) => `${sp(e.name)} (${e.count})`).join(", ");
+    const accountSummary = ao.topAccounts.slice(0, 3).map((a) => `${sp(a.id)} (${a.count})`).join(", ");
     parts.push(`${analyticsLabel}: ${ao.totalTrackedPages} tracked pages, ${ao.totalTrackedFeatures} tracked features.`);
     if (pageSummary) parts.push(`${analyticsLabel} top pages: ${pageSummary}`);
     if (featureSummary) parts.push(`${analyticsLabel} top features: ${featureSummary}`);
     if (eventSummary) parts.push(`${analyticsLabel} top events: ${eventSummary}`);
     if (accountSummary) parts.push(`${analyticsLabel} top accounts: ${accountSummary}`);
     if (ao.allPageNames && ao.allPageNames.length > ao.topPages.length) {
-      parts.push(`${analyticsLabel} tracked page names in analytics (${ao.allPageNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allPageNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked page names (${ao.allPageNames.length} — use these ONLY as "<Name> (${analyticsLabel} page)" in Source cells, never the bare platform name): ${ao.allPageNames.map(sp).join(", ")}`);
     }
     if (ao.allFeatureNames && ao.allFeatureNames.length > ao.topFeatures.length) {
-      parts.push(`${analyticsLabel} tracked feature names in analytics (${ao.allFeatureNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allFeatureNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked feature names (${ao.allFeatureNames.length} — use these ONLY as "<Name> (${analyticsLabel} feature)" in Source cells, never the bare platform name): ${ao.allFeatureNames.map(sp).join(", ")}`);
     }
     if (ao.allEventNames && ao.allEventNames.length > ao.topEvents.length) {
-      parts.push(`${analyticsLabel} tracked event names in analytics (${ao.allEventNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allEventNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked event names (${ao.allEventNames.length} — use these ONLY as "<Name> (${analyticsLabel} event)" in Source cells, never the bare platform name): ${ao.allEventNames.map(sp).join(", ")}`);
     }
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
   }
@@ -1679,11 +1694,13 @@ export async function chat(
       };
       title = `Untitled (${typeLabel[doc.type] || doc.type})`;
     }
-    sources.push({ type: doc.type, id: doc.id, title, url });
+    sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url });
   }
 
   if (analyticsLookup?.sources.length) {
-    for (const source of analyticsLookup.sources) sources.push(source);
+    for (const source of analyticsLookup.sources) {
+      sources.push({ ...source, title: sanitizeTitleForTable(source.title) });
+    }
   }
 
   const matchedInsightIds = results.filter((r) => r.document.type === "insight").map((r) => r.document.id);

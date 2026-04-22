@@ -266,6 +266,42 @@ function normalizeTableSplits(text: string): string {
 }
 
 /**
+ * Collapse body-row overflow into the first cell for any markdown table.
+ * Applied as a pre-pass so ALL tables (Source|What|When and analytics-shape
+ * alike) survive unescaped `|` chars in cell values.
+ */
+function fixPipeOverflowInAllTables(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!isPipeRow(line) || !(i + 1 < lines.length && isSeparatorRow(lines[i + 1]))) {
+      out.push(line);
+      i++;
+      continue;
+    }
+    // Found a header + separator pair
+    const expected = parsePipeRow(line).length;
+    out.push(line);
+    out.push(lines[i + 1]);
+    i += 2;
+    while (i < lines.length && isPipeRow(lines[i])) {
+      const rowCells = parsePipeRow(lines[i]);
+      if (rowCells.length > expected && expected >= 2) {
+        const overflow = rowCells.length - expected;
+        const merged = [rowCells.slice(0, overflow + 1).join(" › "), ...rowCells.slice(overflow + 1)];
+        out.push(buildPipeRow(merged));
+      } else {
+        out.push(lines[i]);
+      }
+      i++;
+    }
+  }
+  return out.join("\n");
+}
+
+/**
  * Main entry point. Cleans Source cells in the Source|What|When table(s)
  * found in `text`. Non-matching tables are left untouched.
  */
@@ -276,6 +312,8 @@ export function cleanResponseTables(text: string, sources: SourceRef[]): string 
   // properly delimited, line-based tables that the rest of the cleaner can
   // process and that GFM renderers can parse downstream.
   text = normalizeTableSplits(text);
+  // Repair any table where body rows have more cells than the header.
+  text = fixPipeOverflowInAllTables(text);
 
   const lines = text.split("\n");
   const output: string[] = [];
@@ -300,7 +338,9 @@ export function cleanResponseTables(text: string, sources: SourceRef[]): string 
           i++;
         }
 
-        // Process body rows
+        // Process body rows. Cell counts are already normalized by
+        // fixPipeOverflowInAllTables above, so any remaining invalid Source
+        // cells are actual content problems, not pipe-escape artifacts.
         while (i < lines.length && isPipeRow(lines[i])) {
           const row = lines[i];
           const rowCells = parsePipeRow(row);

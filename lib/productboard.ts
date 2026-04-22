@@ -157,7 +157,22 @@ function mapNotePriority(n: Record<string, unknown>): FeedbackItem["priority"] {
 
 function buildNoteMetadata(n: Record<string, unknown>): Record<string, string> {
   const meta: Record<string, string> = {};
-  if (n.source_url) meta.sourceUrl = n.source_url as string;
+  // Prefer a direct link to the note INSIDE Productboard so users can jump to
+  // the source. The Productboard API exposes this under several field names
+  // depending on version/response shape:
+  //   - links.html  (common in v1 responses)
+  //   - display_url (alternative)
+  //   - url         (bare field some endpoints return)
+  // Fall back to source_url (external origin like Zendesk) only if no internal
+  // Productboard link is available.
+  const links = n.links as Record<string, unknown> | undefined;
+  const pbDisplayUrl =
+    (typeof links?.html === "string" && links.html) ||
+    (typeof n.display_url === "string" && n.display_url) ||
+    (typeof n.url === "string" && n.url) ||
+    (typeof n.source_url === "string" && n.source_url) ||
+    "";
+  if (pbDisplayUrl) meta.sourceUrl = pbDisplayUrl;
   if (n.source_id) meta.sourceId = n.source_id as string;
   if (n.state) meta.state = n.state as string;
   if (n.company_domain) meta.companyDomain = n.company_domain as string;
