@@ -287,9 +287,15 @@ DATA SOURCE RULES:
 - Source is shown in brackets like [Source: productboard] or [Jira CX-1234]. A note titled "Integration Request (Salesforce)" = customer wants Salesforce integration, NOT feedback about Salesforce as a tool.
 - Prefer source citations that are directly actionable: Jira key/link, Productboard note link, and customer name/email from the note.
 - If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.
-- Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.`;
+- Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.
 
-const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report"];
+AUTHORING RULES:
+- Structure: answer first, evidence second, caveats last (if any).
+- Do not narrate your own selection or prioritization decisions. Phrases like "I prioritize volume over...", "I synthesize these because...", "I'll focus on..." are out. Just present the findings; the ranking speaks for itself.
+- Do not mention items only to dismiss them. If something is off-theme or isolated, omit it silently. Do not write "X and Y exist but are isolated signals" — just leave X and Y out.
+- Explaining why findings matter is fine and encouraged. Explaining why you chose what to show is not.`;
+
+const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
 const ENG_KEYWORDS = ["engineering", "eng ticket", "eng-", "development", "sprint", "what's being built", "implementation", "technical"];
 const COUNT_KEYWORDS = ["how many", "number of", "count", "total", "how much"];
@@ -301,6 +307,7 @@ const LIST_KEYWORDS = [
   "what feedback", "what requests", "feedback from", "feedback about", "any feedback", "any requests",
   "who's", "who is", "what's happening with", "tell me about", "anything about", "what about",
   "details on", "breakdown", "any churn", "any risks", "customers asking", "accounts asking", "tickets related",
+  "trends", "patterns", "emerging", "shifts", "what's new", "what changed",
 ];
 const PLURAL_ITEM_NOUNS = ["accounts", "customers", "tickets", "issues", "items", "feedback", "requests", "themes", "companies", "notes", "complaints", "feature requests"];
 const INSIGHT_DRILLDOWN_KEYWORDS = ["tell me more about", "tell me more", "deep dive", "drill down", "more detail", "more context"];
@@ -581,7 +588,7 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard note title. What = actual request/issue (with inline [n] citation if applicable). When = relative date. Skip if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard note title — NEVER a bare number or [n] citation marker. What = actual request/issue (with inline [n] citation if applicable). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates like 1/23/26). Skip if 0-1 sources.]
 
 ## [Heading]
 
@@ -595,7 +602,7 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 Include Next Steps only if the answer implies actionable follow-up. Skip if the question is purely informational.
 
-CONSTRAINTS: 300 words max. No :--- in tables. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
+CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
 
 const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
 
@@ -603,13 +610,21 @@ const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard link. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (e.g. "3d ago", "1w ago"). Add inline [n] citation markers in the What column where evidence is numbered.]
+[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard link — NEVER a bare number or [n] citation marker (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-2 sentence pattern or theme across the items above. Skip if self-evident from the table.]
 
-CONSTRAINTS: Table is mandatory — do not omit it. No :--- in tables. No Next Steps unless explicitly asked. 200 words max total. Use actual customer/source names, not placeholders.`;
+CONSTRAINTS: Table is mandatory — do not omit it. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No :--- in tables. No Next Steps unless explicitly asked. 200 words max total. Use actual customer/source names, not placeholders.`;
 
-const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. ALWAYS include a compact "| Source | What | When |" table (up to 5 rows) whenever your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes — even if the user did not explicitly ask for a list. Skip the table only when the answer is a pure opinion/recommendation with fewer than 3 concrete sources. No Next Steps unless the user asks "what should we do." 150 words max.`;
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No Next Steps unless the user asks "what should we do." 150 words max.
+
+ALWAYS include the following table (on its own lines, preceded by a blank line) whenever your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes:
+
+| Source | What | When |
+| --- | --- | --- |
+[up to 5 rows. Source = Jira key, customer name/email, or Productboard note title — NEVER a bare number or [n] citation marker. What = specific request/issue, may include [n] citation. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates like 1/23/26.]
+
+Skip the table only when the answer is a pure opinion/recommendation with fewer than 3 concrete sources.`;
 
 const COMPARISON_FORMAT = `Structure the response as a comparison:
 
@@ -1329,7 +1344,7 @@ export async function chat(
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
-  const wideQuery = countQuery || drilldownQuery || deepDiveEarly.analytics || deepDiveEarly.data;
+  const wideQuery = countQuery || drilldownQuery || isBroadQuery(userMessage) || deepDiveEarly.analytics || deepDiveEarly.data;
   const pivot = detectPivot(userMessage);
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
   // Use a wider search limit for pivot queries so we get enough non-excluded results
@@ -1477,6 +1492,15 @@ export async function chat(
   const matchedInsightIds = results.filter((r) => r.document.type === "insight").map((r) => r.document.id);
   const drilldownContext = buildInsightDrilldownContext(userMessage, scopedData, matchedInsightIds, keys);
 
+  // For broad/trends queries, inject pre-computed trend insights directly into context
+  let broadTrendContext = "";
+  if (isBroadQuery(userMessage) || isListQuery(userMessage)) {
+    const trendIns = scopedData.insights.filter((i) => i.type === "trend").slice(0, 3);
+    if (trendIns.length > 0) {
+      broadTrendContext = "Trend insights (recent):\n" + trendIns.map((i) => `- ${i.title}: ${i.description}`).join("\n");
+    }
+  }
+
   const isPrdOrTicket = mode === "prd" || mode === "ticket";
 
   if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
@@ -1511,7 +1535,7 @@ export async function chat(
     expandedDataBlock = buildExpandedDataContext(scopedData);
   }
 
-  const searchContext = [searchParts.join("\n"), drilldownContext, analyticsLookup?.context || "", fullAnalyticsBlock, expandedDataBlock].filter(Boolean).join("\n");
+  const searchContext = [searchParts.join("\n"), drilldownContext, broadTrendContext, analyticsLookup?.context || "", fullAnalyticsBlock, expandedDataBlock].filter(Boolean).join("\n");
 
   const analyticsLabel = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
 
@@ -1896,7 +1920,7 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard note title (plus link when available). Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date.]
+[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard note title (plus link when available) — NEVER a bare number or [n] citation marker. Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Next Steps
 
@@ -1904,7 +1928,7 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 2. [owner] [action] [by when]
 3. [owner] [action] [by when]
 
-CONSTRAINTS: 300 words max. No :--- in tables. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
+CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
 const PRD_FORMAT = `Generate a product pitch in markdown using this structure:
 

@@ -295,7 +295,7 @@ export function SourcePanel({
           sources.push({ name: "Confluence", source: "confluence", connected: atlConnected && !atlRes.confluenceError, lastSync: confStatus, itemCount: newConfluence.length, icon: "clipboard-list" });
         }
       }
-      if (docProvider === "slite" && (status.sliteKey?.configured || sliteConnected)) {
+      if (docProvider === "slite" && sliteConnected) {
         sources.push({ name: "Slite", source: "confluence", connected: sliteConnected, lastSync: sliteConnected ? "just now" : undefined, itemCount: newConfluence.length, icon: "clipboard-list" });
       }
 

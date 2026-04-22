@@ -622,6 +622,24 @@ export async function getRelevantPendoContext(
   const hasIdentityCandidates = visitorCandidates.length > 0 || accountCandidates.length > 0;
 
   if (!hasIdentityCandidates && !hasNameMatches) {
+    if (/\b(trends?|overview|analytics|usage|adoption|engagement|pendo)\b/i.test(query)) {
+      const overview = await getPendoOverview(overrideKey, effectiveLookupDays).catch(() => null);
+      if (overview) {
+        const lines = ["Pendo product analytics overview:"];
+        if (overview.topPages.length > 0)
+          lines.push(`Top pages: ${overview.topPages.slice(0, 5).map((p) => `${p.name} (${p.count} events)`).join(", ")}`);
+        if (overview.topFeatures.length > 0)
+          lines.push(`Top features: ${overview.topFeatures.slice(0, 5).map((f) => `${f.name} (${f.count} events)`).join(", ")}`);
+        if (overview.topEvents.length > 0)
+          lines.push(`Top events: ${overview.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ")}`);
+        if (overview.topAccounts.length > 0)
+          lines.push(`Top accounts by activity: ${overview.topAccounts.slice(0, 3).map((a) => a.id).join(", ")}`);
+        return {
+          context: lines.join("\n"),
+          sources: [{ type: "pendo", id: "pendo-overview", title: "Pendo analytics overview" }],
+        };
+      }
+    }
     return {
       context: "Pendo lookup: no matching page, feature, visitor, or account could be inferred from the question. Ask about a specific page/feature name, or include an email or account ID.",
       sources: [],
