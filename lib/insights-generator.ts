@@ -755,16 +755,34 @@ async function generateAIInsights(data: AgentData, providerType: AIProviderType 
     summaryParts.push(parts.join("\n"));
   }
 
-  const prompt = `Analyze this customer feedback data and generate 3-5 actionable insights. Focus on real product trends, risks, and opportunities — NOT ratings/stars/review scores.
+  const prompt = `Analyze this customer feedback data and generate 6-10 meaningful insights for a product manager. Focus on real product signals — NOT ratings/stars/review scores. Span the list across several distinct themes; do not cluster 5 insights on the same topic.
 
-For each insight, provide a JSON object:
+Each insight should land in one of these categories. Aim for variety across the list:
+- trend: a direction or shift observable in the data (growing, declining, accelerating)
+- risk: something that could hurt adoption, retention, or trust if ignored
+- theme: a recurring customer need, job-to-be-done, or complaint pattern
+- anomaly: an unexpected spike, drop, or divergence that deserves a closer look
+- recommendation: a specific, opinionated call — what you'd do next and why
+- opportunity: an unmet or under-served job, adjacency, or expansion angle worth exploring
+- segment: a signal specific to one account tier, industry, role, or cohort
+
+For each insight, return a JSON object with:
 - id: unique string starting with "ai-"
-- type: "trend" | "risk" | "recommendation" | "theme" | "anomaly"
-- title: concise title (under 80 chars)
-- description: 2-3 sentence analysis with specifics
-- confidence: 0.0-1.0
-- themes: array of topic-level theme strings (NOT star ratings)
+- type: one of the categories above
+- title: concise but informative (80-120 chars). Write it like a headline a PM would scan, not a cryptic label.
+- description: 3-6 sentences. Start with the finding, then supporting specifics (how many accounts, how recent, representative example/quote if available), then what it implies. Name customers by name/email when the evidence supports it. Be concrete — avoid generic phrases like "users want better UX."
+- confidence: 0.0-1.0. Be honest. A single-account signal is not high confidence.
+- themes: 1-3 topic-level theme strings (NOT star ratings)
 - impact: "high" | "medium" | "low"
+- segment: OPTIONAL string — the specific cohort this applies to (e.g., "enterprise", "self-serve trials", "field technicians") when the insight is segment-specific
+- counterSignal: OPTIONAL string — a sentence on disconfirming evidence or a caveat, when meaningful
+- suggestedAction: OPTIONAL string — a single-sentence "what to do next" for recommendation / opportunity / risk insights
+
+Quality bar:
+- Prefer cross-source patterns (e.g., same pain showing up in Jira CX AND Productboard AND calls) over single-item observations.
+- If a signal is segment-specific, say so explicitly.
+- If you are proposing an opportunity or recommendation, link it to jobs the customer is trying to get done, not just features to build.
+- Don't pad. Fewer, sharper insights beat more, vaguer ones — but the floor is 6 when the data supports it.
 
 Return ONLY a JSON array, no markdown or explanation.
 
@@ -786,17 +804,27 @@ ${summaryParts.join("\n")}`;
     const parsed = JSON.parse(cleaned);
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.map((item: Record<string, unknown>) => ({
-      id: (item.id as string) || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      type: (item.type as string) || "theme",
-      title: (item.title as string) || "AI-Generated Insight",
-      description: (item.description as string) || "",
-      confidence: typeof item.confidence === "number" ? item.confidence : 0.7,
-      relatedFeedbackIds: [],
-      themes: Array.isArray(item.themes) ? item.themes.filter((t: string) => !isNoiseTheme(t)) : [],
-      impact: (item.impact as string) || "medium",
-      createdAt: new Date().toISOString(),
-    })) as Insight[];
+    const ALLOWED_TYPES = new Set([
+      "trend", "risk", "recommendation", "theme", "anomaly", "opportunity", "segment",
+    ]);
+    return parsed.map((item: Record<string, unknown>) => {
+      const rawType = typeof item.type === "string" ? item.type.toLowerCase() : "theme";
+      const type = ALLOWED_TYPES.has(rawType) ? rawType : "theme";
+      return {
+        id: (item.id as string) || `ai-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type,
+        title: (item.title as string) || "AI-Generated Insight",
+        description: (item.description as string) || "",
+        confidence: typeof item.confidence === "number" ? item.confidence : 0.7,
+        relatedFeedbackIds: [],
+        themes: Array.isArray(item.themes) ? item.themes.filter((t: string) => !isNoiseTheme(t)) : [],
+        impact: (item.impact as string) || "medium",
+        createdAt: new Date().toISOString(),
+        ...(typeof item.segment === "string" && item.segment ? { segment: item.segment } : {}),
+        ...(typeof item.counterSignal === "string" && item.counterSignal ? { counterSignal: item.counterSignal } : {}),
+        ...(typeof item.suggestedAction === "string" && item.suggestedAction ? { suggestedAction: item.suggestedAction } : {}),
+      };
+    }) as Insight[];
   } catch {
     console.error("Failed to parse AI insights response");
     return [];

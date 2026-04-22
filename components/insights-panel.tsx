@@ -22,6 +22,8 @@ import {
   Loader2,
   Pin,
   PinOff,
+  Rocket,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +40,8 @@ const INSIGHT_CONFIG: Record<
   },
   theme: { icon: Target, color: "text-green-500", bg: "bg-green-500/10" },
   anomaly: { icon: Zap, color: "text-purple-500", bg: "bg-purple-500/10" },
+  opportunity: { icon: Rocket, color: "text-cyan-500", bg: "bg-cyan-500/10" },
+  segment: { icon: Users, color: "text-indigo-500", bg: "bg-indigo-500/10" },
 };
 
 interface InsightsPanelProps {
@@ -330,6 +334,27 @@ export function InsightsPanel({
                 {selectedInsight.description}
               </p>
             </div>
+
+            {selectedInsight.segment && (
+              <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
+                <div className="text-[9px] text-indigo-400 uppercase tracking-wider font-semibold mb-1">Segment focus</div>
+                <p className="text-xs text-foreground/85 leading-relaxed">{selectedInsight.segment}</p>
+              </div>
+            )}
+
+            {selectedInsight.counterSignal && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <div className="text-[9px] text-amber-400 uppercase tracking-wider font-semibold mb-1">Counter-signal</div>
+                <p className="text-xs text-foreground/85 leading-relaxed">{selectedInsight.counterSignal}</p>
+              </div>
+            )}
+
+            {selectedInsight.suggestedAction && (
+              <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3">
+                <div className="text-[9px] text-cyan-400 uppercase tracking-wider font-semibold mb-1">Suggested action</div>
+                <p className="text-xs text-foreground/85 leading-relaxed">{selectedInsight.suggestedAction}</p>
+              </div>
+            )}
 
             {selectedInsight.themes.length > 0 && (
               <div>

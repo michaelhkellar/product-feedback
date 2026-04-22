@@ -1,7 +1,14 @@
 export type FeedbackSource = "productboard" | "attention" | "pendo" | "zendesk" | "slack" | "intercom" | "jira" | "confluence" | "manual";
 export type Sentiment = "positive" | "negative" | "neutral" | "mixed";
 export type Priority = "critical" | "high" | "medium" | "low";
-export type InsightType = "trend" | "theme" | "anomaly" | "recommendation" | "risk";
+export type InsightType =
+  | "trend"
+  | "theme"
+  | "anomaly"
+  | "recommendation"
+  | "risk"
+  | "opportunity"
+  | "segment";
 
 export interface FeedbackItem {
   id: string;
@@ -81,6 +88,11 @@ export interface Insight {
   themes: string[];
   impact: "high" | "medium" | "low";
   createdAt: string;
+  // Optional richer fields populated by AI insight generation for better depth.
+  segment?: string;
+  evidence?: { type: "feedback" | "jira" | "call" | "analytics"; id: string; label: string }[];
+  counterSignal?: string;
+  suggestedAction?: string;
 }
 
 export interface AnalyticsOverviewItem {

@@ -967,8 +967,12 @@ Try one of the suggested queries below to get started.`;
 
         // Stream ended without a done event (unexpected close)
         if (!streamCompleted) {
+          if (rafPendingRef.current) { cancelAnimationFrame(rafPendingRef.current); rafPendingRef.current = null; }
+          const tail = deltaBufferRef.current;
+          deltaBufferRef.current = "";
+          streamingIdRef.current = null;
           setMessages((prev) => prev.map((m) =>
-            m.id === streamingId ? { ...m, isStreaming: false, content: m.content || "No response generated. Please try again." } : m
+            m.id === streamingId ? { ...m, isStreaming: false, content: (m.content + tail) || "No response generated. Please try again." } : m
           ));
         }
       } else {

@@ -12,7 +12,7 @@ import {
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
-  AnalyticsOverview, FullAnalyticsResult, LinearIssue,
+  AnalyticsOverview, FullAnalyticsResult, LinearIssue, FollowupSuggestion,
 } from "./types";
 import { ContextMode } from "./api-keys";
 import { searchWeb } from "./web-search";
@@ -70,7 +70,7 @@ export interface ChatResult {
   sources: { type: string; id: string; title: string; url?: string }[];
   tokenEstimate: { input: number; output: number; total: number };
   trace?: ChatTrace;
-  followupSuggestions?: { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[];
+  followupSuggestions?: FollowupSuggestion[];
 }
 
 function estimateTokens(text: string): number {
@@ -277,7 +277,14 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
   return details;
 }
 
-const SYSTEM_PROMPT = `You are a concise product intelligence analyst. Synthesize data into brief, actionable insights. Focus on recent changes unless the user asks for historical totals/counts. Be opinionated. Include direct customer quotes when available.
+const SYSTEM_PROMPT = `You are a senior product intelligence analyst. Synthesize data into insightful, actionable analysis for product managers. Be concise but don't sacrifice depth when the evidence warrants it. Focus on recent changes unless the user asks for historical totals/counts. Be opinionated. Include direct customer quotes when available.
+
+DEPTH DIMENSIONS (consider each; surface the ones the evidence supports):
+- Jobs-to-be-done: what is the customer actually trying to get done? What job is the current workflow failing?
+- Segmentation: do signals differ by account tier, role, industry, use case, or adoption stage? Call out divergence explicitly.
+- Counter-signals: what evidence disagrees, is isolated, or challenges the dominant pattern? A skeptic's read of the same data.
+- Strategic stance: when the evidence supports it, state an opinionated recommendation — what would you do, with what confidence, and why. Differentiate "here's what the data says" from "here's what I'd do about it."
+- Unmet demand vs noise: distinguish repeat / cross-account signals from one-off requests, and say so.
 
 DATA SOURCE RULES:
 - Productboard notes/features = CUSTOMER FEEDBACK. This is the primary voice-of-customer source. Prioritize this.
@@ -293,10 +300,10 @@ DATA SOURCE RULES:
 - Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.
 
 AUTHORING RULES:
-- Structure: answer first, evidence second, caveats last (if any).
-- Do not narrate your own selection or prioritization decisions. Phrases like "I prioritize volume over...", "I synthesize these because...", "I'll focus on..." are out. Just present the findings; the ranking speaks for itself.
-- Do not mention items only to dismiss them. If something is off-theme or isolated, omit it silently. Do not write "X and Y exist but are isolated signals" — just leave X and Y out.
-- Explaining why findings matter is fine and encouraged. Explaining why you chose what to show is not.`;
+- Structure: answer first, evidence second, caveats last (if any). An opinionated recommendation or stance is welcome when evidence supports it — clearly separated from the descriptive answer.
+- Don't meta-narrate your ranking process. Phrases like "I'm prioritizing volume over recency...", "I synthesize these because...", "I'll focus on..." are out. Present findings; let the ranking speak for itself. This rule is about process narration, not about opinions — stating your recommendation or confidence is encouraged.
+- Counter-signals are valuable, but only when substantive. If a counter-signal is isolated noise, omit it. If it materially challenges the main finding, surface it in a short paragraph or "## Counter-signals" section.
+- Explaining why findings matter is encouraged. Explaining why you chose what to show is not.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
@@ -585,7 +592,7 @@ function classifyQueryType(
 
 // --- Adaptive format variants ---
 
-const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or forced):
+const DETAILED_FORMAT = `Use this format as a guide. Include sections the evidence actually supports; omit any section that would be empty or forced. The order below is recommended, not mandatory — adapt if the question needs a different shape.
 
 [1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
 
@@ -595,42 +602,51 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 ## [Heading]
 
-[1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
+[1-3 paragraphs. What's new, what changed, what matters. Reference dates. If there are distinct sub-themes, call them out.]
 
 > "[direct customer quote if available]" — Customer Name or Email. Source: [Jira CX-123](link) or [Productboard note title](link if available)
 
+## Segmentation
+[OPTIONAL. Include when signals differ meaningfully by account tier, industry, role, or use case. 1-3 sentences or a short sub-table. Skip when the data is uniform or there are too few distinct segments.]
+
+## Counter-signals
+[OPTIONAL. Include when a non-trivial portion of the evidence disagrees with, complicates, or challenges the main finding. 1-3 sentences. Skip entirely when there is no meaningful disconfirming signal — do not invent one.]
+
+## Take
+[OPTIONAL but encouraged when evidence supports an opinionated call. 1-3 sentences stating what you'd do and the confidence level. Example: "I'd prioritize SSO reliability for the next cycle — high confidence, three enterprise accounts, one at renewal."]
+
 ## Next Steps
-
 1. [owner] [action] [by when]
-
-Include Next Steps only if the answer implies actionable follow-up. Skip if the question is purely informational.
+[1-5 action items scaled to the answer's scope. Include only when the answer implies actionable follow-up. Skip entirely for purely informational questions.]
 
 ## Confidence
 [Only include when EVIDENCE FACTS are present in context. Format: "Sample: N items from M accounts, newest Xd ago. Skew: [one phrase]. Confidence: High / Medium / Low — [one phrase reason]." Omit entirely if EVIDENCE FACTS are not in context.]
 
-CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
+CONSTRAINTS: 600 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics, wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
 
-const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
+const LIST_FORMAT = `Use this format for list/show-me queries:
 
 [1 sentence naming what you found and how many items. Plain prose — do not wrap in ** or bold.]
 
 | Source | What | When |
 | --- | --- | --- |
-[3-8 rows. Always include this table. Source = customer name/email OR Jira key/Productboard NOTE link — NEVER a bare number, [n] citation marker, feature name, or roadmap item (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. Source = customer name/email OR Jira key/Productboard NOTE link — NEVER a bare number, [n] citation marker, feature name, or roadmap item (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
-[Optional: 1-2 sentence pattern or theme across the items above. Skip if self-evident from the table.]
+[Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
-CONSTRAINTS: Table is mandatory — do not omit it. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No :--- in tables. No Next Steps unless explicitly asked. 200 words max total. Use actual customer/source names, not placeholders.`;
+[Optional: a short "Take" — a single opinionated sentence about what this list suggests, if evidence supports one.]
 
-const CONVERSATIONAL_FORMAT = `Respond naturally in 1-3 paragraphs. Be direct and concise. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No Next Steps unless the user asks "what should we do." 150 words max.
+CONSTRAINTS: Table is mandatory — do not omit it. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No :--- in tables. No Next Steps unless explicitly asked. 400 words max total. Use actual customer/source names, not placeholders.`;
 
-ALWAYS include the following table (on its own lines, preceded by a blank line) whenever your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes:
+const CONVERSATIONAL_FORMAT = `Respond naturally in 1-4 paragraphs. Be direct but don't over-compress. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No Next Steps unless the user asks "what should we do." 300 words max.
+
+If your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes, include the following table (on its own lines, preceded by a blank line) — otherwise omit it:
 
 | Source | What | When |
 | --- | --- | --- |
 [up to 5 rows. Source = Jira key, customer name/email, or Productboard NOTE title — NEVER a bare number, [n] citation marker, feature name, or roadmap item. What = specific request/issue, may include [n] citation. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates like 1/23/26.]
 
-Skip the table only when the answer is a pure opinion/recommendation with fewer than 3 concrete sources.`;
+A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
 const COMPARISON_FORMAT = `Structure the response as a comparison:
 
@@ -638,12 +654,15 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 
 | Dimension | [A label] | [B label] |
 | --- | --- | --- |
-[rows for volume, top themes, sentiment, key items]
+[rows for volume, top themes, sentiment, key items, notable new accounts or issues]
 
 ### Key Changes
-[2-3 bullet points highlighting what shifted and why it matters]
+[3-5 bullet points highlighting what shifted, including at least one counter-movement (something that went the other way or stayed stubbornly flat when you'd expect movement). Explain why it matters.]
 
-CONSTRAINTS: Focus on what changed, not what stayed the same. 250 words max. No :--- in tables.`;
+### Take (optional)
+[1-2 sentences on what you'd do with this comparison — an opinionated read, not just description. Skip if the evidence doesn't support a clear call.]
+
+CONSTRAINTS: Focus on what changed, not what stayed the same — unless the thing that stayed the same is itself surprising. 400 words max. No :--- in tables.`;
 
 const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** only for 1-3 short data spans in the body (numbers, names, dates): e.g. "**7 accounts**", "**churn risk at Acme**", "**Q4 renewal**". Do NOT bold entire sentences. Bad: "**The main issue is SSO failures across seven accounts.**" Good: "The main issue is **SSO failures** across **seven accounts**." Max 3 bolded spans; never an entire clause or opening sentence.`;
 
@@ -1386,11 +1405,11 @@ function buildFollowupSuggestions(
   qType: string,
   sourcesCount: number,
   relatedFeedback: FeedbackItem[]
-): { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[] {
+): FollowupSuggestion[] {
   if (mode === "prd" || mode === "ticket") return [];
   if (/^10x thinking:/i.test(userMessage.trimStart())) return [];
 
-  const suggestions: { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[] = [];
+  const suggestions: FollowupSuggestion[] = [];
 
   if ((qType === "detailed" || qType === "list") && sourcesCount >= 5) {
     suggestions.push({
@@ -2026,13 +2045,13 @@ const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concis
 
 Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Be precise and avoid ambiguity.`;
 
-const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
+const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 
 [1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
 
 ## [Heading]
 
-[1-2 paragraphs. What's new, what changed, what matters. Reference dates.]
+[1-3 paragraphs. What's new, what changed, what matters. Reference dates. Name distinct sub-themes if they exist.]
 
 > "[direct customer quote if available]" — Customer Name or Email. Source: [Jira CX-123](link) or [Productboard note title](link if available)
 
@@ -2040,16 +2059,23 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 | --- | --- | --- |
 [max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard NOTE title (plus link when available) — NEVER a bare number, [n] citation marker, feature name, or roadmap item. Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
-## Next Steps
+## Segmentation
+[OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]
 
+## Counter-signals
+[OPTIONAL. Include when non-trivial evidence complicates the main finding (e.g., a subset of accounts experience the opposite, or a recent shift pushes the other way). 1-3 sentences. Skip if no meaningful disconfirming evidence exists.]
+
+## Take
+[OPTIONAL but encouraged. 1-3 sentences stating an opinionated recommendation or call, including a confidence phrase (e.g. "high confidence", "weak signal, high upside"). Differentiate from the descriptive answer above. Skip if the question is purely factual or evidence is too thin for a call.]
+
+## Next Steps
 1. [owner] [action] [by when]
-2. [owner] [action] [by when]
-3. [owner] [action] [by when]
+[1-5 action items scaled to the answer's scope. Each on one line, single sentence. Skip this section entirely for purely informational questions.]
 
 ## Confidence
 [Only include when EVIDENCE FACTS are present in context. Format: "Sample: N items from M accounts, newest Xd ago. Skew: [one phrase — e.g. "enterprise-heavy", "spread across segments", "mostly support tickets"]. Confidence: High / Medium / Low — [one phrase reason]." Example: "Sample: 9 items from 5 accounts, newest 2d ago. Skew: 60% enterprise. Confidence: Medium — fresh but skewed toward one segment." Omit entirely if EVIDENCE FACTS are not in context.]
 
-CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
+CONSTRAINTS: 500 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
 const PRD_FORMAT = `Generate a product pitch in markdown using this structure:
 
