@@ -15,6 +15,7 @@ import {
 } from "./types";
 import { ContextMode } from "./api-keys";
 import { searchWeb } from "./web-search";
+import { enrichSubset } from "./enrichment";
 
 export type InteractionMode = "summarize" | "prd" | "ticket";
 
@@ -1415,10 +1416,22 @@ export async function chat(
     return true;
   });
 
-  const relatedFeedback = results
+  let relatedFeedback = results
     .filter((r) => r.document.type === "feedback")
     .map((r) => scopedData.feedback.find((f) => f.id === r.document.id))
     .filter((item): item is FeedbackItem => !!item);
+
+  // Opportunistically enrich retrieved feedback that slipped through the first-load cap.
+  // This ensures query-relevant items always have sentiment/themes, non-blocking on failure.
+  if (relatedFeedback.length > 0) {
+    relatedFeedback = await enrichSubset(
+      relatedFeedback,
+      keys.aiProvider,
+      keys.geminiKey,
+      keys.anthropicKey,
+      keys.openaiKey
+    ).catch(() => relatedFeedback);
+  }
 
   const analyticsProvider = keys.analyticsProvider || "pendo";
   let analyticsLookup: { context: string; sources: { type: string; id: string; title: string }[] } | null = null;

@@ -21,11 +21,11 @@ interface CachedEnrichment {
 const enrichmentCache = new Map<string, CachedEnrichment>();
 const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
 const ENRICHMENT_CACHE_MAX = 200;
-const BATCH_SIZE = 40;
+const BATCH_SIZE = 25;
 const MAX_CONCURRENT_BATCHES = 3;
-const MAX_ENRICH_ITEMS = 400;
-const BATCH_TIMEOUT_MS = 30_000;
-const TOTAL_ENRICH_TIMEOUT_MS = 60_000;
+const MAX_ENRICH_ITEMS = 75;
+const BATCH_TIMEOUT_MS = 20_000;
+const TOTAL_ENRICH_TIMEOUT_MS = 30_000;
 
 function enrichCacheSet(k: string, v: CachedEnrichment): void {
   enrichmentCache.delete(k);
@@ -116,6 +116,13 @@ export async function enrichFeedback(
   );
   if (needsEnrichment.length === 0) return stripNoiseThemes(feedback);
 
+  // Prioritize most recent items so the first-load cap enriches what users will see first.
+  needsEnrichment.sort((a, b) => {
+    const da = a.date ? new Date(a.date).getTime() : 0;
+    const db = b.date ? new Date(b.date).getTime() : 0;
+    return db - da;
+  });
+
   // Cap first-load enrichment so a cold cache can't block the UI indefinitely.
   // Unenriched items keep their existing sentiment/themes — the same fallback used on batch error.
   if (needsEnrichment.length > MAX_ENRICH_ITEMS) {
@@ -125,54 +132,16 @@ export async function enrichFeedback(
     needsEnrichment = needsEnrichment.slice(0, MAX_ENRICH_ITEMS);
   }
 
-  const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
-  const cached = enrichmentCache.get(key);
-  if (cached && Date.now() - cached.timestamp < ENRICHMENT_TTL_MS) {
-    return applyEnrichment(feedback, cached.results);
-  }
-
-  const results = new Map<string, EnrichmentResult>();
-
-  // Build all batches upfront then run them with bounded concurrency.
-  const batches: (typeof needsEnrichment)[] = [];
-  for (let i = 0; i < needsEnrichment.length; i += BATCH_SIZE) {
-    batches.push(needsEnrichment.slice(i, i + BATCH_SIZE));
-  }
-
-  console.log(`[enrichment] ${batches.length} batches × ${BATCH_SIZE} items (${needsEnrichment.length} total)`);
-  const enrichStart = Date.now();
-  const enrichDeadline = enrichStart + TOTAL_ENRICH_TIMEOUT_MS;
-
-  for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
-    if (Date.now() >= enrichDeadline) {
-      console.warn(`[enrichment] total deadline reached after ${i} batches — skipping remaining`);
-      break;
-    }
-    const chunk = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
-    const batchTimeout = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), BATCH_TIMEOUT_MS)
-    );
-    const settled = await Promise.allSettled(
-      chunk.map((batch) =>
-        Promise.race([
-          enrichBatch(batch, provider, aiKey),
-          batchTimeout.then(() => { throw new Error("batch timeout"); }),
-        ])
-      )
-    );
-    settled.forEach((res, j) => {
-      if (res.status === "fulfilled") {
-        for (const r of res.value) results.set(r.id, r);
-      } else {
-        console.warn(`[enrichment] batch ${i + j + 1} failed:`, res.reason);
-      }
-    });
-  }
-
-  console.log(`[enrichment] done in ${((Date.now() - enrichStart) / 1000).toFixed(1)}s`);
-
-  enrichCacheSet(key, { results, timestamp: Date.now() });
-  return applyEnrichment(feedback, results);
+  return runEnrichmentBatches(
+    needsEnrichment,
+    feedback,
+    provider,
+    aiKey,
+    BATCH_SIZE,
+    MAX_CONCURRENT_BATCHES,
+    BATCH_TIMEOUT_MS,
+    TOTAL_ENRICH_TIMEOUT_MS
+  );
 }
 
 function applyEnrichment(
@@ -203,4 +172,99 @@ function stripNoiseThemes(feedback: FeedbackItem[]): FeedbackItem[] {
     const cleaned = f.themes.filter((t) => !isNoiseTheme(t));
     return cleaned.length === f.themes.length ? f : { ...f, themes: cleaned };
   });
+}
+
+async function runEnrichmentBatches(
+  needsEnrichment: FeedbackItem[],
+  allFeedback: FeedbackItem[],
+  provider: AIProviderType,
+  aiKey: string | undefined,
+  batchSize: number,
+  maxConcurrent: number,
+  batchTimeoutMs: number,
+  totalTimeoutMs: number
+): Promise<FeedbackItem[]> {
+  const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
+  const cached = enrichmentCache.get(key);
+  if (cached && Date.now() - cached.timestamp < ENRICHMENT_TTL_MS) {
+    return applyEnrichment(allFeedback, cached.results);
+  }
+
+  const results = new Map<string, EnrichmentResult>();
+  const batches: (typeof needsEnrichment)[] = [];
+  for (let i = 0; i < needsEnrichment.length; i += batchSize) {
+    batches.push(needsEnrichment.slice(i, i + batchSize));
+  }
+
+  console.log(`[enrichment] ${batches.length} batches × ${batchSize} items (${needsEnrichment.length} total)`);
+  const enrichStart = Date.now();
+  const enrichDeadline = enrichStart + totalTimeoutMs;
+
+  for (let i = 0; i < batches.length; i += maxConcurrent) {
+    if (Date.now() >= enrichDeadline) {
+      console.warn(`[enrichment] total deadline reached after ${i} batches — skipping remaining`);
+      break;
+    }
+    const chunk = batches.slice(i, i + maxConcurrent);
+    const batchTimeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), batchTimeoutMs)
+    );
+    const settled = await Promise.allSettled(
+      chunk.map((batch) =>
+        Promise.race([
+          enrichBatch(batch, provider, aiKey),
+          batchTimeout.then(() => { throw new Error("batch timeout"); }),
+        ])
+      )
+    );
+    settled.forEach((res, j) => {
+      if (res.status === "fulfilled") {
+        for (const r of res.value) results.set(r.id, r);
+      } else {
+        console.warn(`[enrichment] batch ${i + j + 1} failed:`, res.reason);
+      }
+    });
+  }
+
+  console.log(`[enrichment] done in ${((Date.now() - enrichStart) / 1000).toFixed(1)}s`);
+  enrichCacheSet(key, { results, timestamp: Date.now() });
+  return applyEnrichment(allFeedback, results);
+}
+
+/**
+ * Lightweight enrichment for a small subset of feedback (e.g. retrieved items during a query).
+ * Uses the same cache as enrichFeedback so results are shared.
+ */
+export async function enrichSubset(
+  feedback: FeedbackItem[],
+  aiProvider: AIProviderType | undefined,
+  geminiKey: string | undefined,
+  anthropicKey: string | undefined,
+  openaiKey: string | undefined,
+  opts: { maxItems?: number; batchSize?: number; totalTimeoutMs?: number } = {}
+): Promise<FeedbackItem[]> {
+  const provider: AIProviderType = aiProvider || "gemini";
+  const aiKey = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
+  if (!getAIProvider(provider).isConfigured(aiKey)) return feedback;
+
+  const maxItems = opts.maxItems ?? 20;
+  const batchSize = opts.batchSize ?? 15;
+  const totalTimeoutMs = opts.totalTimeoutMs ?? 10_000;
+
+  let needsEnrichment = feedback.filter(
+    (f) => f.sentiment === "neutral" || f.themes.filter((t) => !isNoiseTheme(t)).length < 2
+  );
+  if (needsEnrichment.length === 0) return feedback;
+  if (needsEnrichment.length > maxItems) needsEnrichment = needsEnrichment.slice(0, maxItems);
+
+  return runEnrichmentBatches(
+    needsEnrichment,
+    feedback,
+    provider,
+    aiKey,
+    batchSize,
+    1,
+    totalTimeoutMs,
+    totalTimeoutMs
+  );
 }
