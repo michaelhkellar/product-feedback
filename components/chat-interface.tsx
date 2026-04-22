@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useRef, useEffect, KeyboardEvent, useCallback, forwardRef, useImperativeHandle, memo, useMemo } from "react";
+import React, { useState, useRef, useEffect, KeyboardEvent, useCallback, forwardRef, useImperativeHandle, memo, useMemo, useDeferredValue } from "react";
 import { useApiKeys } from "./api-key-provider";
-import { ChatMessage } from "@/lib/types";
+import { ChatMessage, FollowupSuggestion } from "@/lib/types";
 import { InteractionMode } from "@/lib/agent";
 import {
   Send,
@@ -211,16 +211,21 @@ function injectCitations(children: React.ReactNode, sources: MsgSource[]): React
 
 const MemoizedMarkdown = memo(function MemoizedMarkdown({
   content,
+  isStreaming,
   sources,
   entities,
   openEntity,
 }: {
   content: string;
+  isStreaming?: boolean;
   sources?: MsgSource[];
   entities?: KnownEntity[];
   openEntity?: (e: { name: string; kind: EntityKind }) => void;
 }) {
-  const processed = useMemo(() => fixMarkdown(content), [content]);
+  // During streaming, defer heavy re-parses so React can coalesce rapid token updates
+  const deferredContent = useDeferredValue(content);
+  const renderContent = isStreaming ? deferredContent : content;
+  const processed = useMemo(() => fixMarkdown(renderContent), [renderContent]);
   const srcs = sources || [];
   const ents = entities || [];
 
@@ -613,7 +618,12 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const deltaBufferRef = useRef<string>("");
+  const rafPendingRef = useRef<number | null>(null);
+  const streamingIdRef = useRef<string | null>(null);
+  const isNearBottomRef = useRef(true);
 
   const aiProviderLabel = (() => {
     const p = keys.aiProvider || "gemini";
@@ -668,8 +678,21 @@ Try one of the suggested queries below to get started.`;
   }, [status, useDemoData, hasAnyKey, aiProviderLabel, isAIConfigured]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!isNearBottomRef.current) return;
+    const hasStreaming = messages.some((m) => m.isStreaming);
+    messagesEndRef.current?.scrollIntoView({ behavior: hasStreaming ? "auto" : "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120;
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     if (inputRef.current) {
@@ -788,6 +811,7 @@ Try one of the suggested queries below to get started.`;
     setInput("");
     setIsLoading(true);
     setShowSuggestions(false);
+    isNearBottomRef.current = true;
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -839,6 +863,9 @@ Try one of the suggested queries below to get started.`;
 
       if (contentType.includes("text/event-stream") && res.body) {
         const streamingId = `streaming-${Date.now()}`;
+        streamingIdRef.current = streamingId;
+        deltaBufferRef.current = "";
+
         setMessages((prev) => [...prev, {
           id: streamingId,
           role: "assistant" as const,
@@ -871,13 +898,33 @@ Try one of the suggested queries below to get started.`;
                   sources?: ChatMessage["sources"];
                   trace?: ChatMessage["trace"];
                   tokenEstimate?: { input: number; output: number; total: number };
+                  followupSuggestions?: FollowupSuggestion[];
                 };
                 if (event.type === "delta" && event.text) {
-                  setMessages((prev) => prev.map((m) =>
-                    m.id === streamingId ? { ...m, content: m.content + event.text! } : m
-                  ));
+                  deltaBufferRef.current += event.text;
+                  if (!rafPendingRef.current) {
+                    rafPendingRef.current = requestAnimationFrame(() => {
+                      rafPendingRef.current = null;
+                      const buffered = deltaBufferRef.current;
+                      deltaBufferRef.current = "";
+                      if (buffered) {
+                        setMessages((prev) => prev.map((m) =>
+                          m.id === streamingIdRef.current ? { ...m, content: m.content + buffered } : m
+                        ));
+                      }
+                    });
+                  }
                 } else if (event.type === "done") {
                   streamCompleted = true;
+                  // Flush any pending rAF buffer before finalising
+                  if (rafPendingRef.current) {
+                    cancelAnimationFrame(rafPendingRef.current);
+                    rafPendingRef.current = null;
+                  }
+                  const buffered = deltaBufferRef.current;
+                  deltaBufferRef.current = "";
+                  streamingIdRef.current = null;
+
                   if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
                     setSessionTokens((prev) => prev + event.tokenEstimate!.total);
                   }
@@ -891,11 +938,12 @@ Try one of the suggested queries below to get started.`;
                   setMessages((prev) => prev.map((m) =>
                     m.id === streamingId ? {
                       ...m,
-                      id: `assistant-${Date.now()}`,
+                      // Keep id stable to avoid React remounting the subtree
                       isStreaming: false,
-                      content: event.response || m.content || "No response generated. Please try again.",
+                      content: event.response || (m.content + buffered) || "No response generated. Please try again.",
                       sources: event.sources,
                       trace: event.trace,
+                      followupSuggestions: event.followupSuggestions,
                     } : m
                   ));
                 }
@@ -904,6 +952,9 @@ Try one of the suggested queries below to get started.`;
           }
         } catch (err) {
           streamCompleted = true;
+          if (rafPendingRef.current) { cancelAnimationFrame(rafPendingRef.current); rafPendingRef.current = null; }
+          deltaBufferRef.current = "";
+          streamingIdRef.current = null;
           if ((err as { name?: string })?.name === "AbortError") {
             setMessages((prev) => prev.filter((m) => m.id !== streamingId));
             setIsLoading(false);
@@ -1034,7 +1085,7 @@ Try one of the suggested queries below to get started.`;
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -1073,6 +1124,7 @@ Try one of the suggested queries below to get started.`;
               >
                 <MemoizedMarkdown
                   content={msg.content}
+                  isStreaming={msg.isStreaming}
                   sources={msg.sources}
                   entities={[
                     ...(msg.trace?.themesDetected || []).map((t) => ({ name: t, kind: "theme" as EntityKind })),
@@ -1096,6 +1148,20 @@ Try one of the suggested queries below to get started.`;
                       Compare vs previous
                     </button>
                   )}
+                  {msg.followupSuggestions?.map((f) => {
+                    const Icon = f.kind === "tenx" ? Sparkles : f.kind === "cohort" ? BarChart3 : Search;
+                    return (
+                      <button
+                        key={f.kind}
+                        onClick={() => sendMessage(f.prompt, { skipFilterSuffix: true })}
+                        className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                        title={f.prompt}
+                      >
+                        <Icon className="w-3 h-3" />
+                        {f.label}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1162,7 +1228,7 @@ Try one of the suggested queries below to get started.`;
           </div>
         ))}
 
-        {isLoading && (
+        {isLoading && !messages.some((m) => m.isStreaming) && (
           <div className="flex gap-3 max-w-4xl">
             <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-gradient-to-br from-violet-500 to-purple-600 text-white">
               <Bot className="w-4 h-4" />

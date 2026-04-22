@@ -151,6 +151,12 @@ export interface ChatMessageTrace {
   toolCalls?: { name: string; query: string; resultCount: number }[];
 }
 
+export type FollowupSuggestion = {
+  label: string;
+  prompt: string;
+  kind: "tenx" | "counter" | "gaps" | "cohort" | "custom";
+};
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -159,6 +165,7 @@ export interface ChatMessage {
   sources?: { type: string; id: string; title: string; url?: string }[];
   trace?: ChatMessageTrace;
   isStreaming?: boolean;
+  followupSuggestions?: FollowupSuggestion[];
 }
 
 export interface DataSourceStatus {

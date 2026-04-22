@@ -70,6 +70,7 @@ export interface ChatResult {
   sources: { type: string; id: string; title: string; url?: string }[];
   tokenEstimate: { input: number; output: number; total: number };
   trace?: ChatTrace;
+  followupSuggestions?: { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[];
 }
 
 function estimateTokens(text: string): number {
@@ -586,7 +587,7 @@ function classifyQueryType(
 
 const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or forced):
 
-**[1-2 sentence answer to the question. Be specific.]**
+[1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
 
 | Source | What | When |
 | --- | --- | --- |
@@ -604,11 +605,14 @@ const DETAILED_FORMAT = `USE THIS FORMAT (skip sections that would be empty or f
 
 Include Next Steps only if the answer implies actionable follow-up. Skip if the question is purely informational.
 
+## Confidence
+[Only include when EVIDENCE FACTS are present in context. Format: "Sample: N items from M accounts, newest Xd ago. Skew: [one phrase]. Confidence: High / Medium / Low — [one phrase reason]." Omit entirely if EVIDENCE FACTS are not in context.]
+
 CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. Every quote MUST include a specific source. Skip quote section if none available. For count questions, start with the numeric count. Where evidence is available, add inline [n] citation markers (e.g. "SSO login failures affect 4 enterprise accounts [1][3]") matching the numbered evidence list. If the response covers 3 or more distinct sub-topics (e.g. different accounts, themes, or time periods), wrap each sub-topic in a <details><summary>Sub-topic title</summary>...content...</details> block to allow progressive disclosure.`;
 
 const LIST_FORMAT = `USE THIS FORMAT for list/show-me queries:
 
-**[1 sentence naming what you found and how many items.]**
+[1 sentence naming what you found and how many items. Plain prose — do not wrap in ** or bold.]
 
 | Source | What | When |
 | --- | --- | --- |
@@ -641,7 +645,7 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 
 CONSTRAINTS: Focus on what changed, not what stayed the same. 250 words max. No :--- in tables.`;
 
-const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** for the 1-3 most important facts in the body — critical numbers (e.g. "**7 accounts**"), named risks ("**churn risk at Acme**"), pivotal dates ("**Q4 renewal**"), or decisive outcomes. Do NOT bold entire sentences or more than 3 phrases. This is for scanability, not emphasis on everything.`;
+const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** only for 1-3 short data spans in the body (numbers, names, dates): e.g. "**7 accounts**", "**churn risk at Acme**", "**Q4 renewal**". Do NOT bold entire sentences. Bad: "**The main issue is SSO failures across seven accounts.**" Good: "The main issue is **SSO failures** across **seven accounts**." Max 3 bolded spans; never an entire clause or opening sentence.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -1326,6 +1330,96 @@ function buildDeepContext(data: AgentData, searchResults: string, includeEng = f
 
 const MAX_CONTEXT_TOKENS: Record<string, number> = { focused: 4000, standard: 6000, deep: 10000 };
 
+function computeEvidenceFacts(
+  relatedFeedback: FeedbackItem[],
+  sources: { type: string; id: string; title: string }[]
+): string {
+  if (sources.length < 3) return "";
+  const now = Date.now();
+  const fbItems = sources.filter((s) => s.type === "feedback").length;
+  const jiraItems = sources.filter((s) => s.type === "jira").length;
+  const callItems = sources.filter((s) => s.type === "call").length;
+  const otherItems = sources.length - fbItems - jiraItems - callItems;
+
+  const uniqueAccounts = new Set(relatedFeedback.filter((f) => f.company).map((f) => f.company!)).size;
+
+  const ages = relatedFeedback
+    .map((f) => {
+      const d = f.date ? new Date(f.date) : null;
+      return d && !isNaN(d.getTime()) ? Math.floor((now - d.getTime()) / 86400000) : null;
+    })
+    .filter((d): d is number => d !== null && d >= 0)
+    .sort((a, b) => a - b);
+
+  const medianAge = ages.length > 0 ? ages[Math.floor(ages.length / 2)] : null;
+  const newestAge = ages.length > 0 ? ages[0] : null;
+
+  const companyCounts: Record<string, number> = {};
+  for (const fb of relatedFeedback) {
+    if (fb.company) companyCounts[fb.company] = (companyCounts[fb.company] || 0) + 1;
+  }
+  const topCount = Math.max(...Object.values(companyCounts), 0);
+  const topShare = relatedFeedback.length > 0 && topCount > 0
+    ? Math.round((topCount / relatedFeedback.length) * 100)
+    : 0;
+
+  const sourceParts = [
+    fbItems > 0 ? `${fbItems} customer feedback` : "",
+    jiraItems > 0 ? `${jiraItems} jira/support` : "",
+    callItems > 0 ? `${callItems} calls` : "",
+    otherItems > 0 ? `${otherItems} other` : "",
+  ].filter(Boolean);
+
+  const lines = [
+    `- Sources: ${sourceParts.join(", ")} (${sources.length} total)`,
+    uniqueAccounts > 0 ? `- Unique accounts: ${uniqueAccounts}` : null,
+    newestAge !== null ? `- Freshness: newest ${newestAge}d ago${medianAge !== null ? `, median ${medianAge}d ago` : ""}` : null,
+    topShare > 0 ? `- Concentration: top account = ${topShare}% of feedback items` : null,
+  ].filter(Boolean);
+
+  return `\nEVIDENCE FACTS (populate the ## Confidence section from these):\n${lines.join("\n")}\n`;
+}
+
+function buildFollowupSuggestions(
+  userMessage: string,
+  mode: InteractionMode,
+  qType: string,
+  sourcesCount: number,
+  relatedFeedback: FeedbackItem[]
+): { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[] {
+  if (mode === "prd" || mode === "ticket") return [];
+  if (/^10x thinking:/i.test(userMessage.trimStart())) return [];
+
+  const suggestions: { label: string; prompt: string; kind: "tenx" | "counter" | "gaps" | "cohort" | "custom" }[] = [];
+
+  if ((qType === "detailed" || qType === "list") && sourcesCount >= 5) {
+    suggestions.push({
+      kind: "tenx",
+      label: "10x thinking",
+      prompt: `10x thinking: For the above — list 3 bold bets that would meaningfully change the product experience (not incremental fixes). For each: the customer job it serves, what evidence from the data supports it today, and what we would need to see to fully commit.`,
+    });
+  }
+
+  const companies = Array.from(new Set(relatedFeedback.filter((f) => f.company).map((f) => f.company!)));
+  if (companies.length >= 2 && (qType === "detailed" || qType === "list" || qType === "conversational")) {
+    suggestions.push({
+      kind: "cohort",
+      label: "Compare by account",
+      prompt: `For the above: break down by account — which companies are most affected, which experience it differently, and are there any notable outlier signals worth noting?`,
+    });
+  }
+
+  if (qType !== "count") {
+    suggestions.push({
+      kind: "gaps",
+      label: "What are we missing?",
+      prompt: `For the above: what questions would close the evidence gaps? What is ambiguous, potentially skewed, or missing entirely? What would a skeptic challenge?`,
+    });
+  }
+
+  return suggestions.slice(0, 3);
+}
+
 export async function chat(
   userMessage: string,
   conversationHistory: { role: "user" | "assistant"; content: string }[],
@@ -1629,10 +1723,19 @@ export async function chat(
     ? `\nPIVOT INSTRUCTION: The user already knows about "${pivot.excluded.join('", "')}". Do NOT summarize, repeat, or elaborate on ${pivot.excluded.map((e) => `"${e}"`).join(" or ")}. Focus ENTIRELY on OTHER topics, accounts, themes, or items found in the evidence above. If the evidence mentions ${pivot.excluded[0]} only incidentally, skip those items and highlight everything else.\n`
     : "";
 
-  const prompt = `${context}${evidencePack}
+  const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
+  const tenxAddendum = is10xQuery
+    ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.\n`
+    : "";
+
+  const factsBlock = mode !== "prd" && mode !== "ticket"
+    ? computeEvidenceFacts(relatedFeedback, sources)
+    : "";
+
+  const prompt = `${context}${evidencePack}${factsBlock}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
-${pivotAddendum}
+${pivotAddendum}${tenxAddendum}
 ${formatInstructions}`;
 
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(prompt);
@@ -1846,11 +1949,13 @@ ${formatInstructions}`;
         tokensUsed: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         ...(recordedToolCalls.length > 0 ? { toolCalls: recordedToolCalls } : {}),
       };
+      const followupSuggestions = buildFollowupSuggestions(userMessage, mode, queryTypeLabel, sources.length, relatedFeedback);
       return {
         response: aiResponse,
         sources: [...sources, ...webSources],
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
+        ...(followupSuggestions.length > 0 ? { followupSuggestions } : {}),
       };
     }
     aiAttemptedButFailed = true;
@@ -1923,7 +2028,7 @@ Synthesize the provided feedback data, analytics, and conversation history into 
 
 const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 
-**[1-2 sentence answer to the question. Be specific.]**
+[1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
 
 ## [Heading]
 
@@ -1940,6 +2045,9 @@ const SUMMARIZE_FORMAT = `USE THIS EXACT FORMAT:
 1. [owner] [action] [by when]
 2. [owner] [action] [by when]
 3. [owner] [action] [by when]
+
+## Confidence
+[Only include when EVIDENCE FACTS are present in context. Format: "Sample: N items from M accounts, newest Xd ago. Skew: [one phrase — e.g. "enterprise-heavy", "spread across segments", "mostly support tickets"]. Confidence: High / Medium / Low — [one phrase reason]." Example: "Sample: 9 items from 5 accounts, newest 2d ago. Skew: 60% enterprise. Confidence: Medium — fresh but skewed toward one segment." Omit entirely if EVIDENCE FACTS are not in context.]
 
 CONSTRAINTS: 300 words max. No :--- in tables. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No multi-sentence action items. Every quote MUST include a specific, searchable source. Never show an unattributed quote. Do not cite Zapier/portal as the source identity; cite the actual customer identity from the note. Do not duplicate the same name/email in both quote attribution and Source field. When the question asks for specific feedback or ticket details, show the actual content. For "how many"/count questions, start with the numeric count and only say "no data" if there are zero matching items in context. Skip the quote section if none available.`;
 
@@ -2015,7 +2123,7 @@ function generateBuiltInResponse(
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
   const rows = sources.slice(0, 8).map((s) => `| ${s.type} | ${s.title} |`).join("\n");
 
-  return `**Found ${sources.length} relevant items across ${total} total${data.analyticsOverview ? " (plus analytics)" : ""}.**
+  return `Found **${sources.length} relevant items** across ${total} total${data.analyticsOverview ? " (plus analytics)" : ""}.
 
 | Source | Item |
 |--------|------|
