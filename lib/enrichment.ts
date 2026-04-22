@@ -88,11 +88,12 @@ export async function enrichFeedback(
 
   if (!getAIProvider(provider).isConfigured(aiKey)) return feedback;
 
-  // Only enrich items that are still "neutral" with sparse themes (API-tagged items are left alone)
+  // Only enrich items that are still "neutral" with sparse signal themes (API-tagged items are left alone).
+  // Noise themes like "5 stars" don't count — otherwise those items get skipped AND keep their noise.
   const needsEnrichment = feedback.filter(
-    (f) => f.sentiment === "neutral" || f.themes.length < 2
+    (f) => f.sentiment === "neutral" || f.themes.filter((t) => !isNoiseTheme(t)).length < 2
   );
-  if (needsEnrichment.length === 0) return feedback;
+  if (needsEnrichment.length === 0) return stripNoiseThemes(feedback);
 
   const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
   const cached = enrichmentCache.get(key);
@@ -122,12 +123,20 @@ function applyEnrichment(
 ): FeedbackItem[] {
   return feedback.map((f) => {
     const r = results.get(f.id);
-    if (!r) return f;
-    const mergedThemes = Array.from(new Set([...f.themes, ...r.themes])).filter((t) => !isNoiseTheme(t));
+    const sourceThemes = r ? [...f.themes, ...r.themes] : f.themes;
+    const themes = Array.from(new Set(sourceThemes)).filter((t) => !isNoiseTheme(t));
+    if (!r && themes.length === f.themes.length) return f;
     return {
       ...f,
-      sentiment: r.sentiment,
-      themes: mergedThemes,
+      sentiment: r ? r.sentiment : f.sentiment,
+      themes,
     };
+  });
+}
+
+function stripNoiseThemes(feedback: FeedbackItem[]): FeedbackItem[] {
+  return feedback.map((f) => {
+    const cleaned = f.themes.filter((t) => !isNoiseTheme(t));
+    return cleaned.length === f.themes.length ? f : { ...f, themes: cleaned };
   });
 }

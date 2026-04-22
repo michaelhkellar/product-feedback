@@ -124,11 +124,13 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
         ];
 
         const EMBED_BATCH = 64;
-        for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
-          const batch = allItems.slice(i, i + EMBED_BATCH);
-          const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
-          if (vecs) {
-            batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
+        if (allItems.length > 0) {
+          for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
+            const batch = allItems.slice(i, i + EMBED_BATCH);
+            const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
+            if (vecs) {
+              batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
+            }
           }
         }
 
