@@ -211,6 +211,25 @@ function splitJoinedRows(line: string, columnCount: number): string[] {
 }
 
 /**
+ * Pre-pass: the model sometimes glues numbered list items together inline,
+ * e.g. `...first point. 2. **Second bet** — ...third sentence. 3. **Third**`.
+ * That renders as one paragraph in GFM because each item must start its
+ * own line. We detect inline `<sentence-end> N. **` patterns and split
+ * them onto their own lines with a blank line between for visual breathing
+ * room. Only triggers on bold-title-led items so we don't falsely break
+ * ordinary "We had 3. issues" prose.
+ */
+function normalizeNumberedListItems(text: string): string {
+  // Insert a blank line before any "<sentence-end> N. **Title**" pattern
+  // when it appears inline with prior prose. Match sentence-ending
+  // punctuation followed by spaces then `N. **` (N = 1-9, single digit).
+  return text.replace(
+    /([.!?])\s+(\d{1,2}\.\s+\*\*)/g,
+    (_, punct, itemStart) => `${punct}\n\n${itemStart}`,
+  );
+}
+
+/**
  * Pre-pass: the model sometimes glues section headings onto the end of the
  * previous prose line, e.g. `...alert processing. ## Usage Signals`. GFM
  * requires `##` to start a fresh line (ideally with a blank line above), so
@@ -351,9 +370,10 @@ function fixPipeOverflowInAllTables(text: string): string {
  * found in `text`. Non-matching tables are left untouched.
  */
 export function cleanResponseTables(text: string, sources: SourceRef[]): string {
-  // Always normalize heading placement — applies to ALL responses, not just
-  // ones containing tables, because inline `## Heading` glued to prose is
-  // itself a rendering bug regardless of whether tables follow.
+  // Always normalize heading placement + inline numbered items — applies to
+  // ALL responses, not just ones containing tables, because these are
+  // rendering bugs regardless of whether tables follow.
+  text = normalizeNumberedListItems(text);
   text = normalizeHeadingPlacement(text);
 
   if (!text.includes("|")) return text;

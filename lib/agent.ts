@@ -1487,7 +1487,11 @@ function buildFollowupSuggestions(
     suggestions.push({
       kind: "tenx",
       label: "10x thinking",
-      prompt: `10x thinking: For the above — propose 3 bold bets that would meaningfully change the product experience (not incremental fixes). Format each bet as a numbered list item starting with a **bold title**, then one paragraph covering: the customer job it serves, what evidence from the data supports it today, and what we would need to see to fully commit. Do NOT use ### or ## headings for the bets.`,
+      prompt: `10x thinking: For the above — propose 3 bold bets that would meaningfully change the product experience (not incremental fixes).
+
+Render the 3 bets as a numbered list. Each bet MUST be its own list item on its own line, with a BLANK LINE between items. Start each item with "1. **Title** — ", "2. **Title** — ", "3. **Title** — " (bold title, em-dash, then the body). Keep each bet to 2-4 sentences covering: the customer job it serves, the strongest evidence from the data, and what we'd need to see to fully commit. No markdown headings (###, ##) for the bets.
+
+Do NOT include a Customer Evidence table unless you have specific dated evidence to cite — if you do, use the canonical Source|What|When table AFTER the bets with a blank line before it. If every relevant note's date label is "today" (often an ingest/sync artifact in Productboard), write "recent" or "—" in the When column instead of repeating "today" for every row.`,
     });
   }
 
@@ -1843,7 +1847,12 @@ export async function chat(
 
   const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
   const tenxAddendum = is10xQuery
-    ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.\nFORMAT RULE: Render the 3 bets as a numbered list (1., 2., 3.) with a **bold title** at the start of each item (e.g. "1. **Unified detection workbench** — ..."). Do NOT use markdown headings (###, ##) for individual bets — numbered list items only.\n`
+    ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.
+FORMAT RULES (strict):
+- Render the 3 bets as an ordered list. Each of "1.", "2.", "3." MUST start a NEW line with a BLANK LINE before and after the item. Never write "...point. 2. **Next bet**" on the same line.
+- Each item: "1. **Bold title** — " then 2-4 sentences (the customer job, the strongest evidence, what we'd need to see to commit). Keep bets tight; do NOT write a wall of text.
+- No markdown headings (###, ##) for individual bets.
+- DATE HONESTY: if your evidence items all carry "today" in their When label, that likely reflects a Productboard ingest/sync time rather than when the customer originally raised it. Do NOT claim the concern is from today. Use "recent" or "—" in the When column, or write "from a long-standing request" in the body of the bet instead.\n`
     : "";
 
   const factsBlock = mode !== "prd" && mode !== "ticket"
