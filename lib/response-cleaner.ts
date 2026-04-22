@@ -23,6 +23,37 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_SOURCE_LEN = 80;
 
 /**
+ * A Source cell that ends in `(<Platform> <kind>)` is treated as a specific
+ * analytics or document signal — e.g. "Workflow Selection (Pendo page)",
+ * "MSP Portal (Pendo feature)", "page_viewed (Amplitude event)",
+ * "support@acme.com (Pendo visitor)". The cleaner accepts these as valid
+ * because they unambiguously identify a citeable artifact.
+ */
+const PLATFORM_TAG_RE =
+  /\((?:Pendo|Amplitude|PostHog|Productboard|Slite|Confluence|Jira|Linear|Grain|Attention)(?:\s+(?:page|feature|event|user|visitor|account|note|page|call|issue|ticket))?\)\s*$/i;
+
+/**
+ * Strip server-added suffixes from a stored title to get the "short handle"
+ * the model is likely to copy into the Source cell. We strip:
+ *  - " — contact-or-attribution" suffixes
+ *  - " (1 of N from Company)" suffixes (only this NUMERIC pattern, NOT every paren)
+ * We KEEP meaningful platform tags like "(Pendo page)" because those are part
+ * of the source identity.
+ */
+function shortHandle(title: string): string {
+  let t = title.split(/\s+—\s+/)[0];
+  // Strip " (1 of N ...)" / " (N of M ...)" suffixes only
+  t = t.replace(/\s+\(\d+\s+of\s+\d+[^)]*\)\s*$/i, "");
+  // Strip " (from Company)" suffix
+  t = t.replace(/\s+\(from\s+[^)]+\)\s*$/i, "");
+  return t.trim();
+}
+
+/** Bare platform names that should never appear alone in a Source cell. */
+const BARE_PLATFORM_RE =
+  /^(?:Pendo|Amplitude|PostHog|Productboard|Slite|Confluence|Jira|Linear|Grain|Attention)$/i;
+
+/**
  * A source cell is valid when it is:
  * - A Jira / Linear key (e.g. CX-1234 or [CX-1234](url))
  * - An email address
@@ -36,33 +67,47 @@ function isValidSourceCell(cell: string, knownSources: SourceRef[]): boolean {
   if (TICKET_KEY_RE.test(c)) return true;
   if (EMAIL_RE.test(c)) return true;
 
+  // Bare platform names alone are NOT a valid source — too generic.
+  // The model must say "Workflow Selection (Pendo page)" not "Pendo".
+  if (BARE_PLATFORM_RE.test(c)) return false;
+
+  // A specific signal tagged with its platform is always valid:
+  //   "Workflow Selection (Pendo page)", "MSP Portal (Pendo feature)",
+  //   "page_viewed (Amplitude event)", "support@acme.com (Pendo visitor)".
+  if (PLATFORM_TAG_RE.test(c)) return true;
+
   // Ends with a sentence-ending punctuation → long prose, reject
   if (/[.!?]$/.test(c)) return false;
+  // Contains internal sentence punctuation (". " or "! " or "? ") → multi-sentence prose, reject
+  if (/[.!?]\s+[A-Z]/.test(c)) return false;
+  // Contains a "Confidence: N/5" or "Confidence: High" fragment we sometimes
+  // see leak in from analytical commentary → reject
+  if (/confidence\s*[:=]/i.test(c)) return false;
 
   // If it matches the title or id of a known source, it's valid
   const lower = c.toLowerCase();
   if (knownSources.some((s) => {
     const sid = s.id.toLowerCase();
     const fullTitle = s.title.toLowerCase();
-    // Extract the "short title" — the clean prefix before any " — contact"
-    // or " (1 of N from Company)" suffix we add server-side
-    const shortTitle = fullTitle.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
+    const shortTitleLower = shortHandle(s.title).toLowerCase();
     return (
       lower === sid ||
       lower === fullTitle.slice(0, MAX_SOURCE_LEN) ||
-      lower === shortTitle ||
-      shortTitle.startsWith(lower) ||
-      lower.startsWith(shortTitle) ||
+      lower === shortTitleLower ||
+      shortTitleLower.startsWith(lower) ||
+      lower.startsWith(shortTitleLower) ||
       sid.includes(lower) ||
       lower.includes(sid)
     );
   })) return true;
 
-  // Phrases that signal a hallucinated theme label or internal roadmap item
+  // Phrases that signal a hallucinated theme label, internal roadmap item,
+  // or a platform-overview catch-all that isn't tied to a specific signal
   const BANNED_PHRASES = [
     "known feature", "known page", "known event", "known issue",
     "feature request", "the integration", "new feature", "n/a", "unknown",
     "roadmap feature", "roadmap item", "internal roadmap", "pb feature",
+    "analytics overview", "usage overview",
   ];
   if (BANNED_PHRASES.some((bp) => lower.includes(bp))) return false;
 
@@ -91,9 +136,8 @@ function recoverSourceFromCitations(indices: number[], sources: SourceRef[]): st
     // (e.g. title "CX-1234: Refactor detection" → "CX-1234").
     const keyMatch = s.title.match(/^([A-Z]{2,10}-\d+)/);
     if (keyMatch) return keyMatch[1];
-    // Otherwise use the short handle (title prefix before " — " or " (")
-    const shortTitle = s.title.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
-    if (shortTitle && shortTitle.length <= MAX_SOURCE_LEN) return shortTitle;
+    const handle = shortHandle(s.title);
+    if (handle && handle.length <= MAX_SOURCE_LEN) return handle;
     return s.id;
   }
   return null;
@@ -139,11 +183,99 @@ function isPipeRow(line: string): boolean {
 }
 
 /**
+ * Split a single joined-line of pipe content into N-column rows by counting
+ * pipes. Returns an array of rows (each like "| a | b | c |"). Falls back to
+ * `[line]` if the count doesn't divide evenly.
+ */
+function splitJoinedRows(line: string, columnCount: number): string[] {
+  const t = line.trim();
+  if (!t.startsWith("|") || !t.endsWith("|")) return [line];
+  // Count pipes (excluding escaped \|, which we don't expect in practice).
+  const pipeCount = (t.match(/\|/g) || []).length;
+  // A single N-column row has N+1 pipes. K rows joined share the inner pipes,
+  // so total pipes = K*N + 1 if rows share boundary pipes, or K*(N+1) if they
+  // each carry their own bounding pipes (which is what the model emits).
+  // Try the second case first because it matches the `| ... | | ... |` pattern.
+  const cellsPerRow = columnCount;
+  const pipesPerRow = cellsPerRow + 1;
+  if (pipeCount % pipesPerRow !== 0) return [line];
+  const rowCount = pipeCount / pipesPerRow;
+  if (rowCount < 2) return [line];
+
+  // Match each `|cell|cell|...|` greedily, cellsPerRow cells per match.
+  const cellPart = "\\|[^|\\n]*";
+  const rowRe = new RegExp(`(?:${cellPart.repeat(cellsPerRow)})\\|`, "g");
+  const matches = t.match(rowRe);
+  if (!matches || matches.length !== rowCount) return [line];
+  return matches.map((m) => m.trim());
+}
+
+/**
+ * Pre-pass: when the model emits a Source|What|When table inline with prose
+ * (no leading newline before `| Source | ...`), GFM renderers fail to parse
+ * it and the entire table renders as inline pipe text. We:
+ *   1. Insert a blank line before a `| Source | ... |` header preceded by prose
+ *   2. Split the header / separator / joined-body rows onto their own lines
+ *      using the column count derived from the separator row.
+ */
+function normalizeTableSplits(text: string): string {
+  const HEADER_RE = /\|\s*Source\s*\|\s*(?:What|Request|Issue)\s*\|\s*(?:When|Date|Time)\s*\|/i;
+
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    if (!HEADER_RE.test(line)) {
+      out.push(line);
+      continue;
+    }
+
+    // Split the line into: prose-prefix, header, separator (if joined), body (if joined)
+    const headerMatch = line.match(HEADER_RE);
+    if (!headerMatch || headerMatch.index === undefined) {
+      out.push(line);
+      continue;
+    }
+    const prosePrefix = line.slice(0, headerMatch.index).trim();
+    const header = headerMatch[0];
+    const remainder = line.slice(headerMatch.index + header.length).trim();
+
+    if (prosePrefix) {
+      out.push(prosePrefix);
+      out.push(""); // blank line so GFM parses the table
+    }
+    out.push(header);
+
+    if (!remainder) continue;
+
+    // Try to peel a separator row off the start of the remainder
+    const sepMatch = remainder.match(/^\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|/);
+    if (sepMatch) {
+      const sep = sepMatch[0];
+      const columnCount = (sep.match(/\|/g) || []).length - 1;
+      out.push(sep);
+      const bodyJoined = remainder.slice(sep.length).trim();
+      if (bodyJoined) {
+        const rows = splitJoinedRows(bodyJoined, columnCount);
+        for (const row of rows) out.push(row);
+      }
+    } else {
+      // No joined separator — just emit remainder verbatim on the next line
+      out.push(remainder);
+    }
+  }
+  return out.join("\n");
+}
+
+/**
  * Main entry point. Cleans Source cells in the Source|What|When table(s)
  * found in `text`. Non-matching tables are left untouched.
  */
 export function cleanResponseTables(text: string, sources: SourceRef[]): string {
   if (!text.includes("|")) return text;
+
+  // Normalize table placement first so that inline-with-prose tables become
+  // properly delimited, line-based tables that the rest of the cleaner can
+  // process and that GFM renderers can parse downstream.
+  text = normalizeTableSplits(text);
 
   const lines = text.split("\n");
   const output: string[] = [];

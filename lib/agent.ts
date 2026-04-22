@@ -606,7 +606,7 @@ const DETAILED_FORMAT = `Use this format as a guide. Include sections the eviden
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix). When in doubt, prefer the short handle over nothing. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", any analytics label, a bare number, an [n] citation marker, or a theme name. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix), OR a specific analytics signal in the form "<Page/Feature/Event/Visitor name> (Pendo page)" / "(Pendo feature)" / "(Amplitude event)" / "(PostHog event)" etc. (use the EXACT phrasing from the Available Evidence list). When in doubt, prefer the short handle over nothing. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", a bare number, an [n] citation marker, a theme name, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific page/feature/event/note name in parens. What = actual request/issue or usage observation (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
 
 ## [Heading]
 
@@ -638,7 +638,7 @@ const LIST_FORMAT = `Use this format for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix). Prefer a mix of source types over Jira-only. BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix), OR a specific analytics signal as "<Page/Feature/Event name> (Pendo page)" / "(Pendo feature)" / "(Amplitude event)" / "(PostHog event)" etc. (use EXACT phrasing from the Available Evidence list). Prefer a mix of source types over Jira-only. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific signal name in parens. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
@@ -646,13 +646,34 @@ const LIST_FORMAT = `Use this format for list/show-me queries:
 
 CONSTRAINTS: Table is mandatory — do not omit it. Tables MUST be preceded by a blank line — never start a table header on the same line as prose. No :--- in tables. No Next Steps unless explicitly asked. 400 words max total. Use actual customer/source names, not placeholders.`;
 
+const ANALYTICS_FORMAT = `Use this format for product-analytics-centric questions (e.g. "what does pendo show", "top features by usage", "how is X being used"):
+
+[1-2 sentence direct answer naming the headline finding. **Bold** 1-2 short data spans (numbers, page/feature names) inline, not the whole sentence.]
+
+## Usage Signals
+
+| Page / Feature / Event | Volume | Note |
+| --- | --- | --- |
+[3-8 rows. ONE row per distinct page, feature, or event from the analytics context. Volume = the event count or rank from the analytics overview (e.g. "53,895 events" or "#1 page"). Note = a short, specific observation — what role this surface plays, who's using it, or what changed. Do NOT include a Source column here; analytics is the source. Cite supporting customer evidence with inline [n] markers in the Note cell where relevant.]
+
+## What This Suggests
+[1-3 short paragraphs. Tie the usage data to user intent: which jobs-to-be-done it implies, where users are spending effort, what the disparities mean. Reference customer feedback that corroborates or contradicts the usage pattern via inline [n] citations.]
+
+## Customer Evidence
+[OPTIONAL. Include only if 2+ customer feedback items in the Available Evidence list directly relate to the analytics finding. Use the canonical Source|What|When table here. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, short handle of a Productboard note / Slite page / call from the evidence list, OR a specific analytics signal in "<Name> (Pendo page)" / "(Amplitude event)" / etc. form when the evidence is the analytics signal itself. BANNED = the bare platform name alone (Pendo, Amplitude, PostHog, etc.), theme names, prose, [n] citation markers. Skip this section entirely if there is no specific evidence to cite.]
+
+## Take
+[OPTIONAL. 1-2 opinionated sentences with a confidence phrase. Skip if the question is purely descriptive.]
+
+CONSTRAINTS: 500 words max. Tables MUST be preceded by a blank line. No :--- in tables. Use absolute event/page counts where the analytics overview provides them — never guess. The Volume column is for analytics metrics; the Source column (if used in Customer Evidence) is for customer-facing artifacts only.`;
+
 const CONVERSATIONAL_FORMAT = `Respond naturally in 1-4 paragraphs. Be direct but don't over-compress. Where evidence supports a claim, add an inline [n] citation marker matching the numbered evidence list (e.g. "three accounts mentioned this [2]"). Include source citations inline (e.g., "per [Jira CX-123]" or "as noted by customer@example.com in Productboard"). Use a quote block only if a specific customer quote is highly relevant. No Next Steps unless the user asks "what should we do." 300 words max.
 
 If your answer enumerates 3 or more specific feedback items, accounts, tickets, or customer quotes, include the following table (on its own lines, preceded by a blank line) — otherwise omit it:
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon). Prefer a mix of source types. BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon), OR a specific analytics signal as "<Name> (Pendo page)" / "(Amplitude event)" / etc. Prefer a mix of source types. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention). What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
@@ -1633,10 +1654,30 @@ export async function chat(
       }
     } else if (doc.type === "confluence") {
       const p = scopedData.confluencePages.find((p) => p.id === doc.id);
-      if (p) { title = p.title; url = p.url; }
+      if (p) {
+        const isSlite = p.space === "Slite";
+        title = p.title?.trim() || `Untitled (${isSlite ? "Slite page" : "Confluence page"})`;
+        url = p.url;
+      }
     } else if (doc.type === "linear") {
       const l = scopedData.linearIssues.find((l) => l.id === doc.id);
       if (l) { title = `${l.identifier}: ${l.title}`; url = l.url; }
+    }
+    // Fallback: when the lookup failed or returned an empty/UUID-shaped title,
+    // give the model a meaningful handle in "<Untitled> (<Source kind>)" form so
+    // it has something specific to put in the Source column instead of just the
+    // bare platform name.
+    if (!title || title === doc.id) {
+      const typeLabel: Record<string, string> = {
+        feedback: "Productboard note",
+        feature: "Productboard feature",
+        call: "Call recording",
+        insight: "Generated insight",
+        confluence: "Confluence page",
+        linear: "Linear issue",
+        jira: "Jira ticket",
+      };
+      title = `Untitled (${typeLabel[doc.type] || doc.type})`;
     }
     sources.push({ type: doc.type, id: doc.id, title, url });
   }
@@ -2051,6 +2092,24 @@ function isThemeQuery(query: string): boolean {
   return THEME_KEYWORDS.some((kw) => q.includes(kw));
 }
 
+// Heuristic: queries primarily about product analytics (Pendo / Amplitude /
+// PostHog usage data) should use ANALYTICS_FORMAT, which has a Page/Feature
+// table instead of forcing analytics into a customer-source schema.
+const ANALYTICS_QUERY_KEYWORDS = [
+  "pendo", "amplitude", "posthog", "usage data", "usage signals",
+  "page views", "pageviews", "events data", "feature usage", "page usage",
+  "most used feature", "top features", "top pages", "least used",
+  "click data", "clicks data", "telemetry", "instrumentation", "session data",
+  "what does pendo", "what does amplitude", "what does posthog",
+  "from pendo", "from amplitude", "from posthog",
+  "engagement data", "adoption metrics", "active users",
+];
+
+function isAnalyticsQuery(query: string): boolean {
+  const q = query.toLowerCase();
+  return ANALYTICS_QUERY_KEYWORDS.some((kw) => q.includes(kw));
+}
+
 function getFormatInstructions(
   mode: InteractionMode,
   message?: string,
@@ -2061,6 +2120,12 @@ function getFormatInstructions(
   if (mode === "ticket") return TICKET_FORMAT;
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
+    // Analytics-centric queries get a dedicated format with a Page/Feature
+    // table. This keeps "Pendo" out of the Source column and gives the model a
+    // shape that fits product-usage data instead of customer-source data.
+    if (isAnalyticsQuery(message)) {
+      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+    }
     // Theme/pattern queries always get the detailed format regardless of qType,
     // because a conversational route gives a thin 300-word response.
     if (qType === "conversational" && isThemeQuery(message)) {
@@ -2112,7 +2177,7 @@ const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evide
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon). Prefer a mix of source types over Jira-only. BANNED = customer email (use in quote attribution only), analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon), OR a specific analytics signal as "<Name> (Pendo page)" / "(Amplitude event)" / etc. Prefer a mix of source types over Jira-only. BANNED = customer email (use in quote attribution only), "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific signal name. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Segmentation
 [OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]

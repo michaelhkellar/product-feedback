@@ -220,7 +220,7 @@ export async function getRelevantAmplitudeContext(
       if (matchedEvents.length > 0) {
         for (const e of matchedEvents.slice(0, 5)) {
           lines.push(`Event "${e.name}": ${e.count} unique users in the last ${effectiveDays} days.`);
-          sources.push({ type: "amplitude", id: `event:${e.name}`, title: `Amplitude event ${e.name}` });
+          sources.push({ type: "amplitude", id: `event:${e.name}`, title: `${e.name} (Amplitude event)` });
         }
       }
     }
@@ -245,7 +245,7 @@ export async function getRelevantAmplitudeContext(
       } else {
         lines.push("No recent events found.");
       }
-      sources.push({ type: "amplitude", id: `user:${userId}`, title: `Amplitude user ${userId}` });
+      sources.push({ type: "amplitude", id: `user:${userId}`, title: `${userId} (Amplitude user)` });
     }
 
     if (lines.length === 1 && sources.length === 0) {

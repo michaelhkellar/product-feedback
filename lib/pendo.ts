@@ -581,7 +581,7 @@ async function lookupNamedItems(
     } else {
       lines.push(`Page "${p.name}": no usage recorded in the last ${days} days.`);
     }
-    sources.push({ type: "pendo", id: `page:${p.id}`, title: `Pendo page ${p.name}` });
+    sources.push({ type: "pendo", id: `page:${p.id}`, title: `${p.name} (Pendo page)` });
   }
 
   for (const f of matchedFeatures.slice(0, 5)) {
@@ -593,7 +593,7 @@ async function lookupNamedItems(
     } else {
       lines.push(`Feature "${f.name}": no usage recorded in the last ${days} days.`);
     }
-    sources.push({ type: "pendo", id: `feature:${f.id}`, title: `Pendo feature ${f.name}` });
+    sources.push({ type: "pendo", id: `feature:${f.id}`, title: `${f.name} (Pendo feature)` });
   }
 
   return { lines, sources };
@@ -700,7 +700,7 @@ export async function getRelevantPendoContext(
         lines.push(`Recent visitor history sample (last 24h summary): ${history.map(summarizeHistoryItem).filter(Boolean).slice(0, 5).join("; ")}.`);
       }
 
-      sources.push({ type: "pendo", id: `visitor:${matchedVisitor.id}`, title: `Pendo visitor ${visitorLabel}` });
+      sources.push({ type: "pendo", id: `visitor:${matchedVisitor.id}`, title: `${visitorLabel} (Pendo visitor)` });
     }
 
     if (matchedAccount) {
@@ -718,7 +718,7 @@ export async function getRelevantPendoContext(
       ]);
 
       lines.push(...buildUsageSummary("Account activity", totals, pages, features, effectiveLookupDays));
-      sources.push({ type: "pendo", id: `account:${matchedAccount.id}`, title: `Pendo account ${accountLabel}` });
+      sources.push({ type: "pendo", id: `account:${matchedAccount.id}`, title: `${accountLabel} (Pendo account)` });
     }
 
     if (!matchedVisitor && !matchedAccount && !hasNameMatches) {

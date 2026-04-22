@@ -262,7 +262,7 @@ export async function getRelevantPostHogContext(
 
       for (const e of matchedEvents.slice(0, 5)) {
         lines.push(`Event "${e.name}": ${e.count} occurrences, ${e.users} unique users in the last ${effectiveDays} days.`);
-        sources.push({ type: "posthog", id: `event:${e.name}`, title: `PostHog event ${e.name}` });
+        sources.push({ type: "posthog", id: `event:${e.name}`, title: `${e.name} (PostHog event)` });
       }
     }
 
@@ -296,7 +296,7 @@ export async function getRelevantPostHogContext(
       } else {
         lines.push("No recent events found.");
       }
-      sources.push({ type: "posthog", id: `user:${userId}`, title: `PostHog user ${userId}` });
+      sources.push({ type: "posthog", id: `user:${userId}`, title: `${userId} (PostHog user)` });
     }
 
     if (lines.length === 1 && sources.length === 0) {
