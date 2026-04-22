@@ -22,6 +22,8 @@ const enrichmentCache = new Map<string, CachedEnrichment>();
 const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
 const ENRICHMENT_CACHE_MAX = 200;
 const BATCH_SIZE = 40;
+const MAX_CONCURRENT_BATCHES = 5;
+const MAX_ENRICH_ITEMS = 400;
 
 function enrichCacheSet(k: string, v: CachedEnrichment): void {
   enrichmentCache.delete(k);
@@ -107,10 +109,19 @@ export async function enrichFeedback(
 
   // Only enrich items that are still "neutral" with sparse signal themes (API-tagged items are left alone).
   // Noise themes like "5 stars" don't count — otherwise those items get skipped AND keep their noise.
-  const needsEnrichment = feedback.filter(
+  let needsEnrichment = feedback.filter(
     (f) => f.sentiment === "neutral" || f.themes.filter((t) => !isNoiseTheme(t)).length < 2
   );
   if (needsEnrichment.length === 0) return stripNoiseThemes(feedback);
+
+  // Cap first-load enrichment so a cold cache can't block the UI indefinitely.
+  // Unenriched items keep their existing sentiment/themes — the same fallback used on batch error.
+  if (needsEnrichment.length > MAX_ENRICH_ITEMS) {
+    console.warn(
+      `[enrichment] truncating ${needsEnrichment.length} → ${MAX_ENRICH_ITEMS} items for first-load responsiveness`
+    );
+    needsEnrichment = needsEnrichment.slice(0, MAX_ENRICH_ITEMS);
+  }
 
   const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
   const cached = enrichmentCache.get(key);
@@ -120,15 +131,30 @@ export async function enrichFeedback(
 
   const results = new Map<string, EnrichmentResult>();
 
+  // Build all batches upfront then run them with bounded concurrency.
+  const batches: (typeof needsEnrichment)[] = [];
   for (let i = 0; i < needsEnrichment.length; i += BATCH_SIZE) {
-    try {
-      const batch = needsEnrichment.slice(i, i + BATCH_SIZE);
-      const enriched = await enrichBatch(batch, provider, aiKey);
-      for (const r of enriched) results.set(r.id, r);
-    } catch (err) {
-      console.warn(`Enrichment batch ${i / BATCH_SIZE + 1} failed:`, err);
-    }
+    batches.push(needsEnrichment.slice(i, i + BATCH_SIZE));
   }
+
+  console.log(`[enrichment] ${batches.length} batches × ${BATCH_SIZE} items (${needsEnrichment.length} total)`);
+  const enrichStart = Date.now();
+
+  for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
+    const chunk = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
+    const settled = await Promise.allSettled(
+      chunk.map((batch) => enrichBatch(batch, provider, aiKey))
+    );
+    settled.forEach((res, j) => {
+      if (res.status === "fulfilled") {
+        for (const r of res.value) results.set(r.id, r);
+      } else {
+        console.warn(`[enrichment] batch ${i + j + 1} failed:`, res.reason);
+      }
+    });
+  }
+
+  console.log(`[enrichment] done in ${((Date.now() - enrichStart) / 1000).toFixed(1)}s`);
 
   enrichCacheSet(key, { results, timestamp: Date.now() });
   return applyEnrichment(feedback, results);

@@ -55,8 +55,13 @@ export async function GET(req: NextRequest) {
     const timeStart = req.headers.get("x-time-start") || undefined;
     const timeEnd = req.headers.get("x-time-end") || undefined;
 
+    const t0 = Date.now();
     const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost, linearKey, linearTeamId, aiProvider, geminiKey, anthropicKey, openaiKey);
+    console.log(`[insights] getData: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+    const t1 = Date.now();
     let insights = await generateInsights(data, geminiKey, aiProvider, anthropicKey, openaiKey, aiModel);
+    console.log(`[insights] generateInsights: ${((Date.now() - t1) / 1000).toFixed(1)}s → ${insights.length} insights`);
 
     // Apply time filter if provided (filters insights whose lastSeen/firstSeen falls in range)
     if (timeStart && timeEnd) {

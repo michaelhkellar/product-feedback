@@ -54,9 +54,7 @@ function embCacheKey(text: string, model: string): string {
 const FALLBACK_GEMINI_MODELS = [
   "gemini-2.5-pro",
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
+  "gemini-2.5-flash-lite",
 ];
 
 const geminiProvider: AIProvider = {
@@ -67,7 +65,7 @@ const geminiProvider: AIProvider = {
   async *generateStream(systemPrompt, userPrompt, key, model) {
     const apiKey = key || process.env.GEMINI_API_KEY;
     if (!apiKey) return;
-    const modelId = model || "gemini-2.0-flash";
+    const modelId = model || "gemini-2.5-flash";
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?key=${apiKey}&alt=sse`;
     const res = await fetch(url, {
       method: "POST",
