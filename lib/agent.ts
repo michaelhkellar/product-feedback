@@ -373,14 +373,14 @@ function parseSingleTimeRange(text: string, now: Date, clientTz = "UTC"): TimeRa
   const tzOffset = getTimezoneOffsetMs(clientTz, now);
 
   if (/\byesterday\b/.test(text)) {
-    const start = new Date(today); start.setDate(start.getDate() - 1);
+    const start = new Date(today); start.setUTCDate(start.getUTCDate() - 1);
     return { start, end: today, label: "yesterday" };
   }
   if (/\btoday\b/.test(text)) {
     return { start: today, end: now, label: "today" };
   }
   if (/\bthis\s+week\b/.test(text)) {
-    const start = new Date(today); start.setDate(start.getDate() - start.getDay());
+    const start = new Date(today); start.setUTCDate(start.getUTCDate() - start.getUTCDay());
     return { start, end: now, label: "this week" };
   }
   if (/\bthis\s+month\b/.test(text)) {
@@ -1797,9 +1797,9 @@ ${formatInstructions}`;
     }
 
     if (aiResponse) {
-      // Strip any [n] citation markers that weren't in the retrieved context
-      const allSources = [...sources, ...webSources];
-      const { cleaned, orphaned } = verifyCitations(aiResponse, allSources.length);
+      // Strip any [n] citation markers that weren't in the retrieved context.
+      // Citations are numbered against `sources` only — web results aren't numbered in the prompt.
+      const { cleaned, orphaned } = verifyCitations(aiResponse, sources.length);
       if (orphaned.length > 0) console.warn(`[citations] Stripped orphaned: [${orphaned.join(",")}]`);
       aiResponse = cleaned;
 
@@ -1811,7 +1811,7 @@ ${formatInstructions}`;
       };
       return {
         response: aiResponse,
-        sources: allSources,
+        sources: [...sources, ...webSources],
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
       };
