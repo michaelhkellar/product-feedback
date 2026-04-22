@@ -30,6 +30,8 @@ export interface AIProvider {
   getActiveModel(): string | null;
 }
 
+const PROVIDER_TIMEOUT_MS = 30_000;
+
 // --- Simple LRU map (insertion-order eviction) ---
 function lruSet<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number): void {
   map.delete(key); // remove so re-insert goes to end
@@ -74,6 +76,7 @@ const geminiProvider: AIProvider = {
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: "user", parts: [{ text: userPrompt }] }],
       }),
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
     if (!res.ok || !res.body) return;
     const reader = res.body.getReader();
@@ -120,7 +123,8 @@ const geminiProvider: AIProvider = {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents?key=${apiKey}`,
           { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ requests: slice.map((u) => ({ model: `models/${model}`, content: { parts: [{ text: u.text }] } })) }) }
+            body: JSON.stringify({ requests: slice.map((u) => ({ model: `models/${model}`, content: { parts: [{ text: u.text }] } })) }),
+            signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
         );
         if (!res.ok) { slice.forEach(({ idx }) => { results[idx] = []; }); continue; }
         const data = await res.json() as { embeddings?: { values?: number[] }[] };
@@ -178,12 +182,17 @@ const anthropicProvider: AIProvider = {
     const client = new Anthropic({ apiKey });
 
     try {
-      const message = await client.messages.create({
-        model: model || "claude-sonnet-4-20250514",
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      });
+      const message = await Promise.race([
+        client.messages.create({
+          model: model || "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Anthropic generate timeout")), PROVIDER_TIMEOUT_MS)
+        ),
+      ]);
       const block = message.content[0];
       return block.type === "text" ? block.text : null;
     } catch (err) {
@@ -281,14 +290,19 @@ const openaiProvider: AIProvider = {
     const client = new OpenAI({ apiKey });
 
     try {
-      const completion = await client.chat.completions.create({
-        model: model || "gpt-4o",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: 4096,
-      });
+      const completion = await Promise.race([
+        client.chat.completions.create({
+          model: model || "gpt-4o",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          max_tokens: 4096,
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("OpenAI generate timeout")), PROVIDER_TIMEOUT_MS)
+        ),
+      ]);
       return completion.choices[0]?.message?.content || null;
     } catch (err) {
       console.error("OpenAI API error:", err);

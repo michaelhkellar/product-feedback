@@ -22,8 +22,10 @@ const enrichmentCache = new Map<string, CachedEnrichment>();
 const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
 const ENRICHMENT_CACHE_MAX = 200;
 const BATCH_SIZE = 40;
-const MAX_CONCURRENT_BATCHES = 5;
+const MAX_CONCURRENT_BATCHES = 3;
 const MAX_ENRICH_ITEMS = 400;
+const BATCH_TIMEOUT_MS = 30_000;
+const TOTAL_ENRICH_TIMEOUT_MS = 60_000;
 
 function enrichCacheSet(k: string, v: CachedEnrichment): void {
   enrichmentCache.delete(k);
@@ -139,11 +141,24 @@ export async function enrichFeedback(
 
   console.log(`[enrichment] ${batches.length} batches × ${BATCH_SIZE} items (${needsEnrichment.length} total)`);
   const enrichStart = Date.now();
+  const enrichDeadline = enrichStart + TOTAL_ENRICH_TIMEOUT_MS;
 
   for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
+    if (Date.now() >= enrichDeadline) {
+      console.warn(`[enrichment] total deadline reached after ${i} batches — skipping remaining`);
+      break;
+    }
     const chunk = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
+    const batchTimeout = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), BATCH_TIMEOUT_MS)
+    );
     const settled = await Promise.allSettled(
-      chunk.map((batch) => enrichBatch(batch, provider, aiKey))
+      chunk.map((batch) =>
+        Promise.race([
+          enrichBatch(batch, provider, aiKey),
+          batchTimeout.then(() => { throw new Error("batch timeout"); }),
+        ])
+      )
     );
     settled.forEach((res, j) => {
       if (res.status === "fulfilled") {

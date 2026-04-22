@@ -672,7 +672,6 @@ const ANALYTICS_KEYWORDS = [
   "funnel", "retention", "clicks", "pageview", "page view",
   "telemetry", "instrumentation", "tracks", "events",
   "feature flag", "feature flags",
-  "feature", "page", "event",
 ];
 
 const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;

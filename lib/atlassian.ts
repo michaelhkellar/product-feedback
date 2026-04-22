@@ -105,11 +105,14 @@ function sanitizeErrorBody(text: string): string {
   return text.replace(/[A-Za-z0-9+/=]{20,}/g, "[REDACTED]").replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]").replace(/Basic\s+\S+/gi, "Basic [REDACTED]").slice(0, 200);
 }
 
+const ATLASSIAN_FETCH_TIMEOUT_MS = 20_000;
+
 async function atlFetch(url: string, auth: ResolvedAuth, method = "GET", body?: unknown): Promise<{ data: unknown; error: string | null; status?: number }> {
   try {
     const opts: RequestInit = {
       method,
       headers: { Authorization: basicAuthHeader(auth), Accept: "application/json", "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(ATLASSIAN_FETCH_TIMEOUT_MS),
     };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(url, opts);

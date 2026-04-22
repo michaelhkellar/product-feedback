@@ -9,6 +9,8 @@ const MODEL_CANDIDATES = [
 const clients = new Map<string, GoogleGenerativeAI>();
 let resolvedModel: string | null = null;
 
+const GENERATE_TIMEOUT_MS = 30_000;
+
 function getClient(overrideKey?: string): GoogleGenerativeAI | null {
   const key = overrideKey || process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -41,7 +43,13 @@ async function tryGenerate(
     model: modelName,
     systemInstruction: systemPrompt,
   });
-  const result = await model.generateContent(userPrompt);
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Gemini timeout after ${GENERATE_TIMEOUT_MS}ms`)), GENERATE_TIMEOUT_MS)
+  );
+  const result = await Promise.race([
+    model.generateContent(userPrompt),
+    timeoutPromise,
+  ]);
   return result.response.text();
 }
 

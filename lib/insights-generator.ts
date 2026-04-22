@@ -55,7 +55,10 @@ export async function generateInsights(
   if (isAnyAIConfigured(provider, geminiKey, anthropicKey, openaiKey) && data.feedback.length + data.features.length > 0) {
     try {
       const key = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
-      const aiInsights = await generateAIInsights(data, provider, key, aiModel);
+      const aiInsights = await Promise.race([
+        generateAIInsights(data, provider, key, aiModel),
+        new Promise<Insight[]>((resolve) => setTimeout(() => resolve([]), 20_000)),
+      ]);
       if (aiInsights.length > 0) {
         const seen = new Set(programmatic.map((i) => i.id));
         for (const ai of aiInsights) {
@@ -532,13 +535,18 @@ function staleInsights(
 
   if (staleItems.length === 0) return insights;
 
-  // Cross-reference with feedback themes
-  const feedbackThemes = new Set<string>();
-  for (const fb of feedback) {
-    for (const t of cleanThemes(fb.themes)) feedbackThemes.add(normalizeTheme(t));
-  }
+  // Cross-reference stale item titles with feedback via token overlap
+  const staleTokens = new Set<string>(
+    staleItems.flatMap((i) =>
+      i.title.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 3)
+    )
+  );
   const relatedIds = feedback
-    .filter((fb) => fb.themes.some((t) => feedbackThemes.has(normalizeTheme(t))))
+    .filter((fb) => {
+      const fbText = `${fb.title} ${fb.content}`.toLowerCase().replace(/[^a-z0-9 ]/g, " ");
+      const fbTokens = fbText.split(/\s+/).filter((w) => w.length > 3);
+      return fbTokens.some((t) => staleTokens.has(t));
+    })
     .slice(0, 8)
     .map((fb) => fb.id);
 
@@ -708,7 +716,12 @@ async function generateAIInsights(data: AgentData, providerType: AIProviderType 
   }
 
   if (data.feedback.length > 0) {
-    summaryParts.push(`\nRecent 20 feedback:\n${data.feedback.slice(0, 20).map((f) => `- [${f.source}] ${f.title}${f.company ? ` (${f.company})` : ""} — ${f.content.slice(0, 120)}`).join("\n")}`);
+    const sortedFeedback = [...data.feedback].sort((a, b) => {
+      const da = a.date ? new Date(a.date).getTime() : 0;
+      const db = b.date ? new Date(b.date).getTime() : 0;
+      return db - da;
+    });
+    summaryParts.push(`\nRecent 20 feedback:\n${sortedFeedback.slice(0, 20).map((f) => `- [${f.source}] ${f.title}${f.company ? ` (${f.company})` : ""} — ${f.content.slice(0, 120)}`).join("\n")}`);
   }
 
   if (data.calls.length > 0) {

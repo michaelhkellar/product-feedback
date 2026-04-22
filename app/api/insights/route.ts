@@ -55,8 +55,17 @@ export async function GET(req: NextRequest) {
     const timeStart = req.headers.get("x-time-start") || undefined;
     const timeEnd = req.headers.get("x-time-end") || undefined;
 
+    let analyticsDays: number | undefined;
+    if (timeStart && timeEnd) {
+      const startMs = new Date(timeStart).getTime();
+      const endMs = new Date(timeEnd).getTime();
+      if (!isNaN(startMs) && !isNaN(endMs) && endMs > startMs) {
+        analyticsDays = Math.min(Math.ceil((endMs - startMs) / 86400000), 90);
+      }
+    }
+
     const t0 = Date.now();
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost, linearKey, linearTeamId, aiProvider, geminiKey, anthropicKey, openaiKey);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, aiProvider, geminiKey, anthropicKey, openaiKey);
     console.log(`[insights] getData: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     const t1 = Date.now();

@@ -906,6 +906,7 @@ Try one of the suggested queries below to get started.`;
           streamCompleted = true;
           if ((err as { name?: string })?.name === "AbortError") {
             setMessages((prev) => prev.filter((m) => m.id !== streamingId));
+            setIsLoading(false);
             return;
           }
           setMessages((prev) => prev.map((m) =>
@@ -951,7 +952,10 @@ Try one of the suggested queries below to get started.`;
         setMessages((prev) => [...prev, assistantMessage]);
       }
     } catch (err) {
-      if ((err as { name?: string })?.name === "AbortError") return;
+      if ((err as { name?: string })?.name === "AbortError") {
+        setIsLoading(false);
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {

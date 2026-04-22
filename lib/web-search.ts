@@ -14,6 +14,7 @@ export async function searchWeb(query: string, key: string, count = 3): Promise<
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
       },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error(`Brave Search error: ${res.status}`);

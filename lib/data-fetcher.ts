@@ -29,6 +29,7 @@ interface CachedData {
 
 const dataCache = new Map<string, CachedData>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const inflightFetches = new Map<string, Promise<AgentData>>();
 
 function shortHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
@@ -269,20 +270,31 @@ export async function getData(
   const cached = dataCache.get(key);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-  const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider, sliteKey, docProvider);
+  const inflight = inflightFetches.get(key);
+  if (inflight) return inflight;
 
-  // AI-powered sentiment and theme enrichment (skipped for demo data)
-  const enrichedFeedback = (!useDemoData && raw.feedback.length > 0)
-    ? await enrichFeedback(raw.feedback, aiProvider, geminiKey, anthropicKey, openaiKey).catch(() => raw.feedback)
-    : raw.feedback;
-  const data: AgentData = { ...raw, feedback: enrichedFeedback };
+  const fetchPromise = (async (): Promise<AgentData> => {
+    try {
+      const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider, sliteKey, docProvider);
 
-  dataCache.set(key, { data, timestamp: Date.now() });
+      const enrichedFeedback = (!useDemoData && raw.feedback.length > 0)
+        ? await enrichFeedback(raw.feedback, aiProvider, geminiKey, anthropicKey, openaiKey).catch(() => raw.feedback)
+        : raw.feedback;
+      const data: AgentData = { ...raw, feedback: enrichedFeedback };
 
-  const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
-  console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.linearIssues.length} linear, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.analyticsOverview ? ", analytics overview" : ""})`);
+      dataCache.set(key, { data, timestamp: Date.now() });
 
-  return data;
+      const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;
+      console.log(`Data loaded: ${total} items (${data.feedback.length} feedback, ${data.features.length} features, ${data.calls.length} calls, ${data.jiraIssues.length} jira, ${data.linearIssues.length} linear, ${data.confluencePages.length} confluence, ${data.insights.length} insights${data.analyticsOverview ? ", analytics overview" : ""})`);
+
+      return data;
+    } finally {
+      inflightFetches.delete(key);
+    }
+  })();
+
+  inflightFetches.set(key, fetchPromise);
+  return fetchPromise;
 }
 
 export function invalidateCache(): void {
