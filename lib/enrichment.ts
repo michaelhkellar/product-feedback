@@ -24,8 +24,7 @@ const ENRICHMENT_CACHE_MAX = 200;
 const BATCH_SIZE = 25;
 const MAX_CONCURRENT_BATCHES = 3;
 const MAX_ENRICH_ITEMS = 75;
-const BATCH_TIMEOUT_MS = 20_000;
-const TOTAL_ENRICH_TIMEOUT_MS = 30_000;
+const TOTAL_ENRICH_TIMEOUT_MS = 60_000;
 
 function enrichCacheSet(k: string, v: CachedEnrichment): void {
   enrichmentCache.delete(k);
@@ -139,7 +138,6 @@ export async function enrichFeedback(
     aiKey,
     BATCH_SIZE,
     MAX_CONCURRENT_BATCHES,
-    BATCH_TIMEOUT_MS,
     TOTAL_ENRICH_TIMEOUT_MS
   );
 }
@@ -181,7 +179,6 @@ async function runEnrichmentBatches(
   aiKey: string | undefined,
   batchSize: number,
   maxConcurrent: number,
-  batchTimeoutMs: number,
   totalTimeoutMs: number
 ): Promise<FeedbackItem[]> {
   const key = cacheKey(needsEnrichment.map((f) => f.id), `${provider}:${CHEAP_MODELS[provider]}`);
@@ -206,16 +203,8 @@ async function runEnrichmentBatches(
       break;
     }
     const chunk = batches.slice(i, i + maxConcurrent);
-    const batchTimeout = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), batchTimeoutMs)
-    );
     const settled = await Promise.allSettled(
-      chunk.map((batch) =>
-        Promise.race([
-          enrichBatch(batch, provider, aiKey),
-          batchTimeout.then(() => { throw new Error("batch timeout"); }),
-        ])
-      )
+      chunk.map((batch) => enrichBatch(batch, provider, aiKey))
     );
     settled.forEach((res, j) => {
       if (res.status === "fulfilled") {
@@ -264,7 +253,6 @@ export async function enrichSubset(
     aiKey,
     batchSize,
     1,
-    totalTimeoutMs,
     totalTimeoutMs
   );
 }
