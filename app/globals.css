@@ -122,20 +122,24 @@
   letter-spacing: 0.03em;
 }
 
-/* Source (1st) and When (last) columns shrink-to-fit; What (middle) expands */
-.prose thead th:first-child,
-.prose tbody td:first-child,
-.prose thead th:last-child,
-.prose tbody td:last-child {
-  white-space: nowrap;
-  width: 1%;
+/* Allow every cell to wrap so no table can overflow its container.
+   table-layout: auto still keeps naturally-short content (ticket keys,
+   "6d ago", "167,269") compact — wrapping only kicks in when a cell's
+   content is long enough to force it (e.g. Pendo page names, notes).
+   overflow-wrap: break-word (not "anywhere") prefers word boundaries, so
+   short tokens like CX-3773 stay whole unless truly forced to break. */
+.prose tbody td,
+.prose thead th {
+  overflow-wrap: break-word;
+  word-break: normal;
+  white-space: normal;
 }
 
+/* Give the middle column a modest minimum so it doesn't collapse to a
+   sliver when the outer columns have long content. */
 .prose tbody td:nth-child(2),
 .prose thead th:nth-child(2) {
-  min-width: 16ch;
-  word-break: normal;
-  overflow-wrap: anywhere;
+  min-width: 12ch;
 }
 
 .prose tbody td {
