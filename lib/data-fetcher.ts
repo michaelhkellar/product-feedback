@@ -20,6 +20,7 @@ import {
   DEMO_JIRA_ISSUES,
   DEMO_CONFLUENCE_PAGES,
   DEMO_PENDO_OVERVIEW,
+  DEMO_AMPLITUDE_OVERVIEW,
 } from "./demo-data";
 
 interface CachedData {
@@ -133,7 +134,7 @@ async function fetchLiveData(
   const effectiveDocProvider = docProvider || "atlassian";
   let confluencePages: AgentData["confluencePages"] = (useDemoFallback && effectiveDocProvider === "atlassian") ? [...DEMO_CONFLUENCE_PAGES] : [];
   let linearIssues: AgentData["linearIssues"] = [];
-  let analyticsOverview: AgentData["analyticsOverview"] = useDemoFallback ? DEMO_PENDO_OVERVIEW : null;
+  let analyticsOverview: AgentData["analyticsOverview"] = null;
 
   const fetches: Promise<void>[] = [];
 
@@ -172,6 +173,10 @@ async function fetchLiveData(
   }
 
   const effectiveAnalyticsProvider = analyticsProvider || "pendo";
+  // Seed demo analytics based on the selected analytics provider
+  if (useDemoFallback) {
+    analyticsOverview = effectiveAnalyticsProvider === "amplitude" ? DEMO_AMPLITUDE_OVERVIEW : DEMO_PENDO_OVERVIEW;
+  }
   if (effectiveAnalyticsProvider === "posthog" && isPostHogConfigured(posthogKey)) {
     fetches.push(
       (async () => {
@@ -214,8 +219,8 @@ async function fetchLiveData(
   if (isLinearConfigured(linearKey)) {
     fetches.push(
       (async () => {
-        const issues = await getLinearIssues(linearKey, linearTeamId);
-        if (issues.length > 0) linearIssues = issues;
+        const result = await getLinearIssues(linearKey, linearTeamId, useDemoFallback);
+        if (result.data.length > 0) linearIssues = result.data;
       })()
     );
   }

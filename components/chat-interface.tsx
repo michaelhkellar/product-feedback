@@ -275,36 +275,30 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
  * and replace it with a compact placeholder.  The full table appears once on
  * the `done` event when we swap in the final server-cleaned response.
  */
+/**
+ * During streaming, hide ALL pipe-block tables and replace with a single
+ * placeholder. The fully-formed table pops in once isStreaming becomes false.
+ *
+ * This eliminates the per-row column-width thrashing that made table creation
+ * look jumpy — the user sees the placeholder, then the complete table in one step.
+ */
 function stripIncompleteTables(text: string, isStreaming: boolean): string {
   if (!isStreaming || !text.includes("|")) return text;
 
   const lines = text.split("\n");
-  // Walk backwards to find the last pipe-like section
-  let lastPipeIdx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim().startsWith("|")) { lastPipeIdx = i; break; }
+
+  // Find the index of the first line that starts a pipe-block
+  let firstPipeIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("|")) {
+      firstPipeIdx = i;
+      break;
+    }
   }
-  if (lastPipeIdx === -1) return text;
+  if (firstPipeIdx === -1) return text;
 
-  // Find the start of this table block
-  let tableStart = lastPipeIdx;
-  while (tableStart > 0 && lines[tableStart - 1].trim().startsWith("|")) tableStart--;
-
-  const tableLines = lines.slice(tableStart, lastPipeIdx + 1);
-
-  // Check if there's a separator row — if not, the header is still streaming, strip it
-  const hasSeparator = tableLines.some((l) => l.includes("---"));
-  // If separator is present but the line AFTER the last pipe row is non-empty
-  // (mid-stream token) also strip. If the table block is just 1-2 lines (header only), strip.
-  const bodyRows = tableLines.filter((l) => {
-    const t = l.trim();
-    return t.startsWith("|") && !t.includes("---") && t !== tableLines[0].trim();
-  });
-
-  const isIncomplete = !hasSeparator || bodyRows.length === 0;
-  if (!isIncomplete) return text;
-
-  const before = lines.slice(0, tableStart).join("\n").trimEnd();
+  // Keep everything before the table, replace from first pipe line onward
+  const before = lines.slice(0, firstPipeIdx).join("\n").trimEnd();
   return before ? `${before}\n\n_Building table…_` : "_Building table…_";
 }
 
@@ -691,10 +685,12 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
     if (isAIConfigured) configuredSources.push(aiProviderLabel);
     if (status.productboardKey.configured) configuredSources.push("Productboard");
     if (status.attentionKey.configured) configuredSources.push("Attention");
+    if (status.grainKey?.configured) configuredSources.push("Grain");
     if (status.pendoKey?.configured) configuredSources.push("Pendo");
     if (status.amplitudeKey?.configured) configuredSources.push("Amplitude");
     if (status.atlassianKey?.configured) configuredSources.push("Jira + Confluence");
     if (status.linearKey?.configured) configuredSources.push("Linear");
+    if (status.sliteKey?.configured) configuredSources.push("Slite");
 
     const sourceInfo =
       configuredSources.length > 0

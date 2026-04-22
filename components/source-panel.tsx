@@ -183,10 +183,16 @@ export function SourcePanel({
       const headers = { ...keyHeaders, "x-use-demo": demoHeader };
 
       const docProvider = keys.docProvider || "atlassian";
+      const callProvider = keys.callProvider || "attention";
+      const ticketProvider = keys.ticketProvider || "atlassian";
       const fetches = [
         fetch("/api/sources/productboard", { headers }).then((r) => r.json()).catch(() => ({ connected: false, features: [], featuresIsDemo: false, notes: [], notesIsDemo: false })),
-        fetch("/api/sources/attention", { headers }).then((r) => r.json()).catch(() => ({ connected: false, calls: [], callsIsDemo: false })),
-        fetch("/api/sources/atlassian", { headers }).then((r) => r.json()).catch(() => ({ connected: false, jiraIssues: [], confluencePages: [] })),
+        callProvider === "grain"
+          ? fetch("/api/sources/grain", { headers }).then((r) => r.json()).catch(() => ({ connected: false, calls: [], callsIsDemo: false }))
+          : fetch("/api/sources/attention", { headers }).then((r) => r.json()).catch(() => ({ connected: false, calls: [], callsIsDemo: false })),
+        ticketProvider === "linear"
+          ? fetch("/api/sources/linear", { headers }).then((r) => r.json()).catch(() => ({ connected: false, issues: [], issuesIsDemo: false }))
+          : fetch("/api/sources/atlassian", { headers }).then((r) => r.json()).catch(() => ({ connected: false, jiraIssues: [], confluencePages: [] })),
         fetch("/api/sources/pendo", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
         fetch("/api/sources/amplitude", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
         fetch("/api/sources/posthog", { headers }).then((r) => r.json()).catch(() => ({ connected: false, overview: null })),
@@ -202,8 +208,12 @@ export function SourcePanel({
       const newFeatures: ProductboardFeature[] = pbRes.features || [];
       const newFeedback: FeedbackItem[] = pbRes.notes || [];
       const newCalls: AttentionCall[] = attRes.calls || [];
-      const newJira: JiraIssue[] = atlRes.jiraIssues || [];
-      const atlConnected = atlRes.connected === true;
+      const callConnected = attRes.connected === true;
+      // Linear returns `issues`; Atlassian returns `jiraIssues`
+      const newJira: JiraIssue[] = ticketProvider === "linear"
+        ? (atlRes.issues || [])
+        : (atlRes.jiraIssues || []);
+      const atlConnected = ticketProvider === "linear" ? atlRes.connected === true : atlRes.connected === true;
       const sliteConnected = sliteRes?.connected === true;
 
       let newConfluence: ConfluencePage[] = [];
@@ -212,14 +222,14 @@ export function SourcePanel({
           id: n.id, title: n.title, excerpt: n.excerpt,
           space: "Slite", lastModified: n.lastModified, author: n.author, url: n.url,
         }));
-      } else {
+      } else if (ticketProvider !== "linear") {
         newConfluence = atlRes.confluencePages || [];
       }
 
       // isDemo is true only when no data source returned real (non-demo) data
       const anyRealData =
         (pbRes.connected && !pbRes.featuresIsDemo) ||
-        (attRes.connected && !attRes.callsIsDemo) ||
+        (callConnected && !attRes.callsIsDemo) ||
         atlConnected ||
         sliteConnected ||
         pendoRes.connected ||
@@ -254,8 +264,14 @@ export function SourcePanel({
       if (status.productboardKey.configured || pbRes.connected) {
         sources.push({ name: "Productboard", source: "productboard", connected: pbRes.connected, lastSync: pbRes.connected ? "just now" : undefined, itemCount: newFeatures.length + newFeedback.length, icon: "clipboard-list" });
       }
-      if (status.attentionKey.configured || attRes.connected) {
-        sources.push({ name: "Attention", source: "attention", connected: attRes.connected, lastSync: attRes.connected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
+      if (callProvider === "grain") {
+        if (status.grainKey?.configured || callConnected) {
+          sources.push({ name: "Grain", source: "attention", connected: callConnected, lastSync: callConnected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
+        }
+      } else {
+        if (status.attentionKey.configured || callConnected) {
+          sources.push({ name: "Attention", source: "attention", connected: callConnected, lastSync: callConnected ? "just now" : undefined, itemCount: newCalls.length, icon: "phone" });
+        }
       }
       if (status.pendoKey?.configured || pendoRes.connected) {
         sources.push({
@@ -287,7 +303,11 @@ export function SourcePanel({
           icon: "hash",
         });
       }
-      if (status.atlassianKey?.configured || atlConnected) {
+      if (ticketProvider === "linear") {
+        if (status.linearKey?.configured || atlConnected) {
+          sources.push({ name: "Linear", source: "jira", connected: atlConnected, lastSync: atlConnected ? "just now" : undefined, itemCount: newJira.length, icon: "clipboard-list" });
+        }
+      } else if (status.atlassianKey?.configured || atlConnected) {
         const jiraStatus = atlRes.jiraError ? `Error: ${String(atlRes.jiraError).slice(0, 100)}` : atlConnected ? "just now" : undefined;
         sources.push({ name: "Jira", source: "jira", connected: atlConnected && !atlRes.jiraError, lastSync: jiraStatus, itemCount: newJira.length, icon: "clipboard-list" });
         if (docProvider === "atlassian") {

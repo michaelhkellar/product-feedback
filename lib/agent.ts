@@ -244,7 +244,7 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
     const feat = data.features.find((f) => f.id === id);
     if (feat) {
       const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
-      details.push(`[Roadmap feature (internal, not customer feedback)] "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
+      details.push(`(internal roadmap item — do not cite as Source) "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
       continue;
     }
     const call = data.calls.find((c) => c.id === id);
@@ -272,7 +272,8 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
     const page = data.confluencePages.find((p) => p.id === id);
     if (page) {
       const excerpt = detailed && page.excerpt ? `: ${page.excerpt.slice(0, descLen)}` : "";
-      details.push(`[Confluence] ${page.title} — ${page.space}${excerpt}`);
+      const pageLabel = page.space === "Slite" ? "Slite" : "Confluence";
+      details.push(`[${pageLabel}] ${page.title} — ${page.space}${excerpt}`);
     }
   }
   return details;
@@ -605,7 +606,7 @@ const DETAILED_FORMAT = `Use this format as a guide. Include sections the eviden
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (short, ≤60 chars). BANNED = "known feature", any analytics label, a bare number, an [n] citation marker, a theme name, or any sentence/phrase longer than 60 chars. If no valid source token exists, omit that row. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (short, ≤60 chars). BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", any analytics label, a bare number, an [n] citation marker, a theme name, or any sentence/phrase longer than 60 chars. If no valid source token exists, omit that row. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
 
 ## [Heading]
 
@@ -637,7 +638,7 @@ const LIST_FORMAT = `Use this format for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = analytics labels, "known feature", theme names, roadmap items, bare numbers, [n] citation markers, or any text over 60 chars. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, or any text over 60 chars. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
@@ -651,7 +652,7 @@ If your answer enumerates 3 or more specific feedback items, accounts, tickets, 
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or Productboard NOTE title (≤60 chars). BANNED = analytics labels, "known feature", theme names, bare numbers, [n] citation markers, or text >60 chars. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or Productboard NOTE title (≤60 chars). BANNED = analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, or text >60 chars. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
@@ -1146,7 +1147,10 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
   }
 
   if (calls.length > 0) parts.push(temporalSummary(calls as unknown as Record<string, unknown>[], "Calls"));
-  if (confluencePages.length > 0) parts.push(`Confluence: ${confluencePages.length} pages`);
+  if (confluencePages.length > 0) {
+    const docLabel = confluencePages.some((p) => p.space === "Slite") ? "Slite" : "Confluence";
+    parts.push(`${docLabel}: ${confluencePages.length} pages`);
+  }
   if (insights.length > 0) parts.push(`Insights: ${insights.length}`);
   if (analyticsOverview) {
     const ao = analyticsOverview;
@@ -1441,7 +1445,7 @@ function buildFollowupSuggestions(
     suggestions.push({
       kind: "tenx",
       label: "10x thinking",
-      prompt: `10x thinking: For the above — list 3 bold bets that would meaningfully change the product experience (not incremental fixes). For each: the customer job it serves, what evidence from the data supports it today, and what we would need to see to fully commit.`,
+      prompt: `10x thinking: For the above — propose 3 bold bets that would meaningfully change the product experience (not incremental fixes). Format each bet as a numbered list item starting with a **bold title**, then one paragraph covering: the customer job it serves, what evidence from the data supports it today, and what we would need to see to fully commit. Do NOT use ### or ## headings for the bets.`,
     });
   }
 
@@ -1770,7 +1774,7 @@ export async function chat(
 
   const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
   const tenxAddendum = is10xQuery
-    ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.\n`
+    ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.\nFORMAT RULE: Render the 3 bets as a numbered list (1., 2., 3.) with a **bold title** at the start of each item (e.g. "1. **Unified detection workbench** — ..."). Do NOT use markdown headings (###, ##) for individual bets — numbered list items only.\n`
     : "";
 
   const factsBlock = mode !== "prd" && mode !== "ticket"
@@ -2030,6 +2034,18 @@ function getSystemPrompt(mode: InteractionMode): string {
   return SYSTEM_PROMPT;
 }
 
+const THEME_KEYWORDS = [
+  "emerging theme", "emerging themes", "themes", "theme", "patterns", "pattern",
+  "signals", "signal", "trends", "trend", "common threads", "top themes",
+  "what are we hearing", "what are customers saying", "what do customers want",
+  "recurring", "recurring feedback", "key topics", "main topics",
+];
+
+function isThemeQuery(query: string): boolean {
+  const q = query.toLowerCase();
+  return THEME_KEYWORDS.some((kw) => q.includes(kw));
+}
+
 function getFormatInstructions(
   mode: InteractionMode,
   message?: string,
@@ -2040,6 +2056,11 @@ function getFormatInstructions(
   if (mode === "ticket") return TICKET_FORMAT;
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
+    // Theme/pattern queries always get the detailed format regardless of qType,
+    // because a conversational route gives a thin 300-word response.
+    if (qType === "conversational" && isThemeQuery(message)) {
+      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+    }
     switch (qType) {
       case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}`;
       case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}`;
@@ -2086,7 +2107,7 @@ const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evide
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = customer email (use in quote attribution only), analytics labels, "known feature", bare numbers, [n] citation markers, theme names, roadmap items, or text >60 chars. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = customer email (use in quote attribution only), analytics labels, "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names, or text >60 chars. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Segmentation
 [OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]

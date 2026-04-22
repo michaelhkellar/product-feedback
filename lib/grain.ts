@@ -101,7 +101,7 @@ export async function getGrainCalls(
     data: recordings.map((r) => ({
       id: r.id,
       title: r.title || "Untitled Call",
-      date: r.start_datetime || new Date().toISOString(),
+      date: r.start_datetime || "",
       duration: formatDuration(r.duration_ms),
       participants: (r.participants ?? []).map((p) => p.name || p.email || "").filter(Boolean),
       summary: (transcripts.get(r.id) ?? "").slice(0, 800).replace(/\s+/g, " ").trim(),

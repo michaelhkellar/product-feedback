@@ -63,7 +63,7 @@ export async function getCalls(
       (c) => ({
         id: c.id as string,
         title: (c.title as string) || "Untitled Call",
-        date: (c.date as string) || new Date().toISOString(),
+        date: (c.date as string) || "",
         duration: (c.duration as string) || "Unknown",
         participants: (c.participants as string[]) || [],
         summary: (c.summary as string) || "",

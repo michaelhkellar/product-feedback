@@ -780,6 +780,33 @@ export const DEMO_PENDO_OVERVIEW: AnalyticsOverview = {
   generatedAt: "2026-03-07T12:00:00Z",
 };
 
+export const DEMO_AMPLITUDE_OVERVIEW: AnalyticsOverview = {
+  provider: "amplitude",
+  topPages: [
+    { id: "dashboard", name: "Dashboard", count: 52300 },
+    { id: "detections", name: "Detections", count: 38100 },
+    { id: "response-playbooks", name: "Response Playbooks", count: 21900 },
+    { id: "integrations", name: "Settings — Integrations", count: 14700 },
+    { id: "reports", name: "Reports", count: 11200 },
+    { id: "admin-users", name: "Admin — Users", count: 7800 },
+  ],
+  topFeatures: [],
+  topEvents: [
+    { id: "detection_triggered", name: "detection_triggered", count: 143200 },
+    { id: "playbook_executed", name: "playbook_executed", count: 28400 },
+    { id: "rule_created", name: "rule_created", count: 19600 },
+    { id: "report_exported", name: "report_exported", count: 12300 },
+    { id: "api_key_generated", name: "api_key_generated", count: 4100 },
+  ],
+  topAccounts: [],
+  totalTrackedPages: 18,
+  totalTrackedFeatures: 0,
+  generatedAt: "2026-03-07T12:00:00Z",
+  limitations: ["Feature-level and account-level analytics require Amplitude Taxonomy add-on"],
+  allPageNames: ["Dashboard", "Detections", "Response Playbooks", "Settings — Integrations", "Reports", "Admin — Users"],
+  allEventNames: ["detection_triggered", "playbook_executed", "rule_created", "report_exported", "api_key_generated"],
+};
+
 export const DEMO_INSIGHTS: Insight[] = [
   {
     id: "ins-001",

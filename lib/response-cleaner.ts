@@ -18,7 +18,7 @@ interface SourceRef {
 }
 
 /** Patterns that constitute a valid Source cell value. */
-const JIRA_KEY_RE = /^(?:\[)?[A-Z]{2,10}-\d+(?:\])?/;
+const TICKET_KEY_RE = /^(?:\[)?[A-Z]{2,10}-\d+(?:\])?/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_SOURCE_LEN = 80;
 
@@ -33,7 +33,7 @@ function isValidSourceCell(cell: string, knownSources: SourceRef[]): boolean {
   const c = cell.trim();
   if (!c || c === "—" || c === "-") return true; // empty/dash = intentional blank
   if (c.length > MAX_SOURCE_LEN) return false;
-  if (JIRA_KEY_RE.test(c)) return true;
+  if (TICKET_KEY_RE.test(c)) return true;
   if (EMAIL_RE.test(c)) return true;
 
   // Ends with a sentence-ending punctuation → long prose, reject
@@ -48,10 +48,11 @@ function isValidSourceCell(cell: string, knownSources: SourceRef[]): boolean {
     lower.includes(s.id.toLowerCase())
   )) return true;
 
-  // Phrases that signal a hallucinated theme label
+  // Phrases that signal a hallucinated theme label or internal roadmap item
   const BANNED_PHRASES = [
     "known feature", "known page", "known event", "known issue",
     "feature request", "the integration", "new feature", "n/a", "unknown",
+    "roadmap feature", "roadmap item", "internal roadmap", "pb feature",
   ];
   if (BANNED_PHRASES.some((bp) => lower.includes(bp))) return false;
 

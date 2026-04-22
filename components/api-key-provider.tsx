@@ -130,7 +130,7 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const keyHeaders = useMemo(() => buildKeyHeaders(keys), [keys]);
-  const hasAnyKey = useMemo(() => !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey || keys.posthogKey), [keys]);
+  const hasAnyKey = useMemo(() => !!(keys.geminiKey || keys.productboardKey || keys.attentionKey || keys.grainKey || keys.pendoKey || keys.atlassianToken || keys.anthropicKey || keys.openaiKey || keys.amplitudeKey || keys.linearKey || keys.posthogKey || keys.sliteKey), [keys]);
 
   return (
     <ApiKeyContext.Provider
