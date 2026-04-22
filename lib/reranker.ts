@@ -4,7 +4,7 @@ import { AIProviderType, getAIProvider } from "./ai-provider";
 const CHEAP_RERANK_MODELS: Record<AIProviderType, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
-  gemini: "gemini-2.0-flash",
+  gemini: "gemini-1.5-flash",
 };
 
 export interface RerankCandidate {

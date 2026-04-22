@@ -32,7 +32,7 @@ function enrichCacheSet(k: string, v: CachedEnrichment): void {
 const CHEAP_MODELS: Record<AIProviderType, string> = {
   anthropic: "claude-haiku-4-5-20251001",
   openai: "gpt-4o-mini",
-  gemini: "gemini-2.0-flash",
+  gemini: "gemini-2.5-flash",
 };
 
 const ENRICHMENT_SCHEMA_VERSION = "v2";

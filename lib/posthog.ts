@@ -300,7 +300,23 @@ export async function getRelevantPostHogContext(
     }
 
     if (lines.length === 1 && sources.length === 0) {
-      lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+      if (/\b(trends?|overview|analytics|usage|adoption|engagement|posthog)\b/i.test(query)) {
+        const overview = await getPostHogOverview(compositeKey, effectiveDays, overrideHost).catch(() => null);
+        if (overview) {
+          lines[0] = "PostHog product analytics overview:";
+          if (overview.topPages.length > 0)
+            lines.push(`Top pages: ${overview.topPages.slice(0, 5).map((p) => `${p.name} (${p.count} events)`).join(", ")}`);
+          if (overview.topEvents.length > 0)
+            lines.push(`Top events: ${overview.topEvents.slice(0, 5).map((e) => `${e.name} (${e.count})`).join(", ")}`);
+          if (overview.topAccounts.length > 0)
+            lines.push(`Top accounts by activity: ${overview.topAccounts.slice(0, 3).map((a) => a.id).join(", ")}`);
+          sources.push({ type: "posthog", id: "posthog-overview", title: "PostHog analytics overview" });
+        } else {
+          lines.push("No matching events or users could be identified from the question.");
+        }
+      } else {
+        lines.push("No matching events or users could be identified from the question. Ask about a specific event name or include a user email.");
+      }
     }
 
     return { context: lines.join("\n"), sources };
