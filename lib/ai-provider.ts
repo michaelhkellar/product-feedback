@@ -1,4 +1,4 @@
-import { generateWithGemini, isGeminiConfigured, getResolvedModel, getGeminiClient } from "./gemini";
+import { generateWithGemini, isGeminiConfigured, getResolvedModel, getGeminiClient, geminiThinkingConfig } from "./gemini";
 
 export type AIProviderType = "gemini" | "anthropic" | "openai";
 
@@ -28,7 +28,7 @@ export interface ToolCall {
 
 export interface AIProvider {
   generate(systemPrompt: string, userPrompt: string, key?: string, model?: string, opts?: GenerateOpts): Promise<string | null>;
-  generateStream?(systemPrompt: string, userPrompt: string, key?: string, model?: string): AsyncGenerator<string>;
+  generateStream?(systemPrompt: string, userPrompt: string, key?: string, model?: string, opts?: GenerateOpts): AsyncGenerator<string>;
   generateWithTools?(
     systemPrompt: string,
     messages: { role: "user" | "assistant"; content: string }[],
@@ -76,18 +76,21 @@ const geminiProvider: AIProvider = {
     return generateWithGemini(systemPrompt, userPrompt, key, model || undefined, opts);
   },
 
-  async *generateStream(systemPrompt, userPrompt, key, model) {
+  async *generateStream(systemPrompt, userPrompt, key, model, opts) {
     const client = getGeminiClient(key);
     if (!client) return;
     const modelId = model || "gemini-2.5-flash";
+    const tc = geminiThinkingConfig(modelId);
     try {
       const stream = await client.models.generateContentStream({
         model: modelId,
         contents: userPrompt,
         config: {
           systemInstruction: systemPrompt,
-          ...(/gemini-2\.5-flash/.test(modelId) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+          ...(tc ? { thinkingConfig: tc } : {}),
+          ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+          ...(opts?.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+          abortSignal: opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
         },
       });
       for await (const chunk of stream) {
@@ -177,14 +180,6 @@ const anthropicProvider: AIProvider = {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
 
-    // For JSON mode, prefill the assistant turn with "[" or "{" so the model continues in JSON.
-    // Also enforce tight token budget and zero temperature for classification calls.
-    const isJson = opts?.json ?? false;
-    const messages: { role: "user" | "assistant"; content: string }[] = [
-      { role: "user", content: userPrompt },
-    ];
-    if (isJson) messages.push({ role: "assistant", content: "[" });
-
     try {
       const signal = opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
       const message = await client.messages.create(
@@ -193,14 +188,12 @@ const anthropicProvider: AIProvider = {
           max_tokens: opts?.maxOutputTokens ?? 4096,
           temperature: opts?.temperature,
           system: systemPrompt,
-          messages,
+          messages: [{ role: "user", content: userPrompt }],
         },
         { signal }
       );
       const block = message.content[0];
-      const text = block.type === "text" ? block.text : null;
-      // Re-attach the prefill so callers get complete JSON
-      return isJson && text ? "[" + text : text;
+      return block.type === "text" ? block.text : null;
     } catch (err) {
       console.error("Anthropic API error:", err);
       return null;
@@ -226,14 +219,15 @@ const anthropicProvider: AIProvider = {
     }
   },
 
-  async *generateStream(systemPrompt, userPrompt, key, model) {
+  async *generateStream(systemPrompt, userPrompt, key, model, opts) {
     const apiKey = key || process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return;
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
     const client = new Anthropic({ apiKey });
     const stream = client.messages.stream({
       model: model || "claude-sonnet-4-20250514",
-      max_tokens: 4096,
+      max_tokens: opts?.maxOutputTokens ?? 4096,
+      temperature: opts?.temperature,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -337,20 +331,24 @@ const openaiProvider: AIProvider = {
     }
   },
 
-  async *generateStream(systemPrompt, userPrompt, key, model) {
+  async *generateStream(systemPrompt, userPrompt, key, model, opts) {
     const apiKey = key || process.env.OPENAI_API_KEY;
     if (!apiKey) return;
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey });
-    const stream = await client.chat.completions.create({
-      model: model || "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      max_tokens: 4096,
-      stream: true,
-    });
+    const stream = await client.chat.completions.create(
+      {
+        model: model || "gpt-4o",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: opts?.maxOutputTokens ?? 4096,
+        temperature: opts?.temperature,
+        stream: true,
+      },
+      { signal: opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
+    );
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content ?? "";
       if (text) yield text;

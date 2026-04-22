@@ -19,14 +19,46 @@ export interface GeminiGenOpts {
 }
 
 /**
+ * Returns the appropriate thinkingConfig for the given model, or undefined if
+ * the model doesn't support or require it.
+ *
+ * Rules:
+ * - Only Gemini 2.5+ and 3+ series support thinkingConfig (2.0 and earlier don't).
+ * - Pro models cannot fully disable thinking (minimum budget 128 on 2.5-pro;
+ *   not supported as fully-off on 3-pro) — we leave them alone.
+ * - Flash/lite/latest-alias variants that DO support thinking get it disabled:
+ *     Gemini 2.5 flash → thinkingBudget: 0
+ *     Gemini 3 flash   → thinkingLevel: "minimal"
+ * - gemini-flash-latest currently resolves to gemini-2.5-flash server-side.
+ *
+ * Exported so the streaming path in lib/ai-provider.ts can reuse the same logic
+ * without duplicating it.
+ */
+export function geminiThinkingConfig(modelName: string): Record<string, unknown> | undefined {
+  const name = modelName.toLowerCase();
+  const isPro = name.includes("pro");
+  const isFlashFamily = name.includes("flash") || name.includes("lite") || name.includes("latest");
+  // Only 2.5+ and 3+ series (and their -latest aliases) support thinkingConfig
+  const supportsThinking =
+    /gemini-2\.5/.test(name) ||
+    /gemini-3/.test(name) ||
+    /gemini-flash-latest|gemini-2\.5-latest/.test(name);
+
+  if (!supportsThinking || isPro || !isFlashFamily) return undefined;
+  return /gemini-3/.test(name)
+    ? { thinkingLevel: "minimal" as const }
+    : { thinkingBudget: 0 };
+}
+
+/**
  * Returns generation config fields for the given model + caller options.
  * Flash variants default to "thinking" mode which adds 5-30s latency on simple
- * classification tasks; thinkingBudget:0 disables it. Pro models cannot have
- * thinking turned off (minimum budget 128) so we leave them alone.
+ * classification tasks — thinkingBudget:0 / thinkingLevel:"minimal" disables it.
  */
 function buildConfig(modelName: string, opts?: GeminiGenOpts) {
+  const tc = geminiThinkingConfig(modelName);
   return {
-    ...(/gemini-2\.5-flash/.test(modelName) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    ...(tc ? { thinkingConfig: tc } : {}),
     ...(opts?.json ? { responseMimeType: "application/json" } : {}),
     ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
     ...(opts?.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
@@ -57,6 +89,14 @@ function isModelNotFoundError(err: unknown): boolean {
   );
 }
 
+/**
+ * Note on cancellation: @google/genai's abortSignal is a CLIENT-SIDE-ONLY
+ * operation. Aborting the signal stops this process from waiting, but the
+ * Gemini server continues processing the request and you are still billed for
+ * the tokens generated. This is unlike Anthropic and OpenAI, where aborting
+ * the signal closes the HTTP connection and actually stops server-side work.
+ * The timeout here therefore only protects against client-side hangs, not cost.
+ */
 async function tryGenerate(
   client: GoogleGenAI,
   modelName: string,
@@ -64,8 +104,7 @@ async function tryGenerate(
   userPrompt: string,
   opts?: GeminiGenOpts
 ): Promise<string> {
-  // Use AbortController so the underlying HTTP request is cancelled on timeout,
-  // preventing the call from leaking quota/tokens after we give up.
+  // AbortController gates our local await; does not save server-side tokens (see above).
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error(`Gemini timeout after ${GENERATE_TIMEOUT_MS}ms`)),

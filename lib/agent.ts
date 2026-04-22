@@ -1,5 +1,6 @@
 import { InMemoryVectorStore } from "./vector-store";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType, ToolDefinition } from "./ai-provider";
+import { CHAT } from "./ai-presets";
 import { shouldRerank, rerankResults } from "./reranker";
 import { clusterFeedback, annotateClusters } from "./clustering";
 import { getRelevantPendoContext, getFullPendoAnalytics } from "./pendo";
@@ -1812,7 +1813,7 @@ ${formatInstructions}`;
           : prompt;
         if (onChunk && provider.generateStream) {
           let fullText = "";
-          for await (const chunk of provider.generateStream(systemPrompt, finalPrompt, aiKey, keys.aiModel || undefined)) {
+          for await (const chunk of provider.generateStream(systemPrompt, finalPrompt, aiKey, keys.aiModel || undefined, CHAT)) {
             onChunk(chunk);
             fullText += chunk;
           }
@@ -1823,7 +1824,7 @@ ${formatInstructions}`;
       }
     } else if (onChunk && provider.generateStream) {
       let fullText = "";
-      for await (const chunk of provider.generateStream(systemPrompt, prompt, aiKey, keys.aiModel || undefined)) {
+      for await (const chunk of provider.generateStream(systemPrompt, prompt, aiKey, keys.aiModel || undefined, CHAT)) {
         onChunk(chunk);
         fullText += chunk;
       }
