@@ -10,6 +10,14 @@ const clients = new Map<string, GoogleGenAI>();
 let resolvedModel: string | null = null;
 
 const GENERATE_TIMEOUT_MS = 30_000;
+const RETRY_ATTEMPTS = 1;
+const RETRY_BASE_MS = 1_000;
+
+function isTransientError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status === 503 || err.status === 429;
+  const msg = err instanceof Error ? err.message.toLowerCase() : "";
+  return /503|429|rate.?limit|overloaded|unavailable|quota/.test(msg);
+}
 
 export interface GeminiGenOpts {
   json?: boolean;
@@ -147,6 +155,27 @@ async function tryGenerate(
   }
 }
 
+/** Wraps tryGenerate with a single retry on transient 503/429 errors. */
+async function tryGenerateWithRetry(
+  client: GoogleGenAI,
+  modelName: string,
+  systemPrompt: string,
+  userPrompt: string,
+  opts?: GeminiGenOpts
+): Promise<string> {
+  for (let attempt = 0; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await tryGenerate(client, modelName, systemPrompt, userPrompt, opts);
+    } catch (err) {
+      if (!isTransientError(err) || attempt >= RETRY_ATTEMPTS) throw err;
+      const delay = RETRY_BASE_MS + Math.random() * 500;
+      console.warn(`[gemini] ${modelName} transient error (attempt ${attempt + 1}), retrying in ${Math.round(delay)}ms...`);
+      await new Promise((res) => setTimeout(res, delay));
+    }
+  }
+  throw new Error("unreachable");
+}
+
 export async function generateWithGemini(
   systemPrompt: string,
   userPrompt: string,
@@ -159,7 +188,7 @@ export async function generateWithGemini(
 
   if (overrideModel) {
     try {
-      return await tryGenerate(client, overrideModel, systemPrompt, userPrompt, opts);
+      return await tryGenerateWithRetry(client, overrideModel, systemPrompt, userPrompt, opts);
     } catch (err) {
       console.error(`Gemini API error (${overrideModel}):`, err);
       return null;
@@ -168,7 +197,7 @@ export async function generateWithGemini(
 
   if (resolvedModel) {
     try {
-      return await tryGenerate(client, resolvedModel, systemPrompt, userPrompt, opts);
+      return await tryGenerateWithRetry(client, resolvedModel, systemPrompt, userPrompt, opts);
     } catch (err) {
       if (!isModelNotFoundError(err)) {
         console.error(`Gemini API error (${resolvedModel}):`, err);
@@ -180,7 +209,7 @@ export async function generateWithGemini(
 
   for (const candidate of MODEL_CANDIDATES) {
     try {
-      const text = await tryGenerate(client, candidate, systemPrompt, userPrompt, opts);
+      const text = await tryGenerateWithRetry(client, candidate, systemPrompt, userPrompt, opts);
       resolvedModel = candidate;
       console.log(`Gemini: resolved working model → ${candidate}`);
       return text;
