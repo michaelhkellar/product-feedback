@@ -1,4 +1,5 @@
 import { generateWithGemini, isGeminiConfigured, getResolvedModel, getGeminiClient, geminiThinkingConfig } from "./gemini";
+import { withRetry } from "./ai-retry";
 
 export type AIProviderType = "gemini" | "anthropic" | "openai";
 
@@ -182,15 +183,18 @@ const anthropicProvider: AIProvider = {
 
     try {
       const signal = opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
-      const message = await client.messages.create(
-        {
-          model: model || "claude-sonnet-4-20250514",
-          max_tokens: opts?.maxOutputTokens ?? 4096,
-          temperature: opts?.temperature,
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-        },
-        { signal }
+      const message = await withRetry(
+        () => client.messages.create(
+          {
+            model: model || "claude-sonnet-4-20250514",
+            max_tokens: opts?.maxOutputTokens ?? 4096,
+            temperature: opts?.temperature,
+            system: systemPrompt,
+            messages: [{ role: "user", content: userPrompt }],
+          },
+          { signal }
+        ),
+        "anthropic"
       );
       const block = message.content[0];
       return block.type === "text" ? block.text : null;
@@ -290,18 +294,21 @@ const openaiProvider: AIProvider = {
     const client = new OpenAI({ apiKey });
 
     try {
-      const completion = await client.chat.completions.create(
-        {
-          model: model || "gpt-4o",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          max_tokens: opts?.maxOutputTokens ?? 4096,
-          temperature: opts?.temperature,
-          ...(opts?.json ? { response_format: { type: "json_object" as const } } : {}),
-        },
-        { signal: opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
+      const completion = await withRetry(
+        () => client.chat.completions.create(
+          {
+            model: model || "gpt-4o",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            max_tokens: opts?.maxOutputTokens ?? 4096,
+            temperature: opts?.temperature,
+            ...(opts?.json ? { response_format: { type: "json_object" as const } } : {}),
+          },
+          { signal: opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS) }
+        ),
+        "openai"
       );
       return completion.choices[0]?.message?.content || null;
     } catch (err) {
