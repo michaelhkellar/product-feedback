@@ -586,8 +586,11 @@ function trendInsights(feedback: FeedbackItem[], now: string): Insight[] {
     }
   }
 
-  // Minimum count scales with dataset size to avoid false positives on small datasets
-  const minEmergingCount = Math.max(2, Math.ceil(Math.log10(Math.max(feedback.length, 10)) * 1.5));
+  // Scale threshold to the windowed population (recent + prior), not total corpus size
+  const windowedCount =
+    Object.values(recentCounts).reduce((s, v) => s + v.count, 0) +
+    Object.values(priorCounts).reduce((s, v) => s + v, 0);
+  const minEmergingCount = Math.max(2, Math.ceil(Math.log10(Math.max(windowedCount, 10)) * 1.5));
   const minResolvingCount = Math.max(3, minEmergingCount + 1);
 
   const emerging: { theme: string; recent: number; prior: number; ids: string[] }[] = [];

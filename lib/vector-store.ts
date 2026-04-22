@@ -57,6 +57,9 @@ export class InMemoryVectorStore {
           priority: item.priority,
           customer: item.customer,
           company: item.company || "",
+          urgency: item.urgency || "",
+          actionability: item.actionability || "",
+          topicArea: item.topicArea || "",
         },
       });
     }
@@ -203,10 +206,19 @@ export class InMemoryVectorStore {
 
   search(
     query: string,
-    options?: { limit?: number; type?: VectorDocument["type"]; themes?: string[]; queryEmbedding?: number[] }
+    options?: {
+      limit?: number;
+      type?: VectorDocument["type"];
+      themes?: string[];
+      queryEmbedding?: number[];
+      minUrgency?: "high" | "medium" | "low";
+      requireActionable?: boolean;
+    }
   ): { document: VectorDocument; score: number }[] {
     const limit = options?.limit || 8;
     const K = 60; // RRF constant
+    const URGENCY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+    const minUrgencyRank = options?.minUrgency ? (URGENCY_RANK[options.minUrgency] || 0) : 0;
 
     // Build TF-IDF query vector
     const queryTokens = tokenize(query);
@@ -220,7 +232,15 @@ export class InMemoryVectorStore {
     const candidates = this.documents.filter((doc) => {
       if (options?.type && doc.type !== options.type) return false;
       if (options?.themes?.length) {
-        return doc.themes.some((t) => options.themes!.includes(t));
+        if (!doc.themes.some((t) => options.themes!.includes(t))) return false;
+      }
+      // Urgency/actionability filters apply only to feedback docs (others have no such metadata)
+      if (doc.type === "feedback") {
+        if (minUrgencyRank > 0) {
+          const docUrgencyRank = URGENCY_RANK[doc.metadata.urgency] || 0;
+          if (docUrgencyRank < minUrgencyRank) return false;
+        }
+        if (options?.requireActionable && doc.metadata.actionability !== "high") return false;
       }
       return true;
     });

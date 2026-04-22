@@ -7,6 +7,10 @@ interface EnrichmentResult {
   id: string;
   sentiment: Sentiment;
   themes: string[];
+  urgency: "high" | "medium" | "low";
+  actionability: "high" | "medium" | "low";
+  topicArea: string;
+  confidence: number;
 }
 
 interface CachedEnrichment {
@@ -31,9 +35,11 @@ const CHEAP_MODELS: Record<AIProviderType, string> = {
   gemini: "gemini-2.0-flash",
 };
 
+const ENRICHMENT_SCHEMA_VERSION = "v2";
+
 function cacheKey(ids: string[], modelId: string): string {
   const today = new Date().toISOString().slice(0, 10);
-  return createHash("sha256").update([...ids].sort().join(",") + "|" + modelId + "|" + today).digest("hex").slice(0, 20);
+  return createHash("sha256").update([...ids].sort().join(",") + "|" + modelId + "|" + today + "|" + ENRICHMENT_SCHEMA_VERSION).digest("hex").slice(0, 20);
 }
 
 async function enrichBatch(
@@ -45,11 +51,15 @@ async function enrichBatch(
   const model = CHEAP_MODELS[aiProvider];
 
   const system = "You are a precise product feedback classifier. Respond only with valid JSON — no markdown, no explanation.";
-  const prompt = `Classify each customer feedback item. Return a JSON array only.
+  const prompt = `Classify each customer feedback item. Return a JSON array matching this exact schema for each item:
+{"id":"<id>","sentiment":"positive|negative|neutral|mixed","themes":["<2-5 short phrases>"],"urgency":"high|medium|low","actionability":"high|medium|low","topic_area":"<kebab-case label>","confidence":0.0-1.0}
 
-For each item output: {"id":"<id>","sentiment":"<positive|negative|neutral|mixed>","themes":["<theme>",…]}
-- themes: 2–5 short phrases (e.g. "SSO login", "slow exports", "missing API docs")
-- Do NOT include meta-phrases like "customer feedback" or "product request"
+Rules:
+- themes: 2–5 short descriptive phrases (e.g. "SSO login", "slow exports", "missing API docs"). No meta-phrases like "customer feedback".
+- urgency: high = blocking/critical pain; medium = notable friction; low = nice-to-have or positive
+- actionability: high = clear specific ask; medium = implied need; low = vague or praise only
+- topic_area: one kebab-case label (e.g. "onboarding", "api-integrations", "billing", "performance", "reporting")
+- confidence: how confident you are in this classification (0.0–1.0)
 
 Items:
 ${items.map((f) => `ID: ${f.id}\n${f.title}. ${f.content.slice(0, 300)}`).join("\n\n")}
@@ -62,14 +72,21 @@ JSON array:`;
   try {
     const jsonMatch = response.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return [];
-    const parsed = JSON.parse(jsonMatch[0]) as { id: string; sentiment: string; themes: unknown }[];
-    const valid: Sentiment[] = ["positive", "negative", "neutral", "mixed"];
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      id: string; sentiment: string; themes: unknown;
+      urgency?: string; actionability?: string; topic_area?: string; confidence?: unknown;
+    }[];
+    const validSentiment: Sentiment[] = ["positive", "negative", "neutral", "mixed"];
+    const validLevel = (v: unknown): "high" | "medium" | "low" =>
+      v === "high" || v === "low" ? v : "medium";
     return parsed.map((r) => ({
       id: r.id,
-      sentiment: (valid.includes(r.sentiment as Sentiment) ? r.sentiment : "neutral") as Sentiment,
-      themes: Array.isArray(r.themes)
-        ? r.themes.slice(0, 5).map((t) => String(t).slice(0, 60))
-        : [],
+      sentiment: (validSentiment.includes(r.sentiment as Sentiment) ? r.sentiment : "neutral") as Sentiment,
+      themes: Array.isArray(r.themes) ? r.themes.slice(0, 5).map((t) => String(t).slice(0, 60)) : [],
+      urgency: validLevel(r.urgency),
+      actionability: validLevel(r.actionability),
+      topicArea: typeof r.topic_area === "string" ? r.topic_area.slice(0, 50) : "",
+      confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : 0.7,
     }));
   } catch {
     return [];
@@ -130,6 +147,12 @@ function applyEnrichment(
       ...f,
       sentiment: r ? r.sentiment : f.sentiment,
       themes,
+      ...(r ? {
+        urgency: r.urgency,
+        actionability: r.actionability,
+        topicArea: r.topicArea || undefined,
+        enrichmentConfidence: r.confidence,
+      } : {}),
     };
   });
 }

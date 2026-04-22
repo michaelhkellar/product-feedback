@@ -787,6 +787,7 @@ Try one of the suggested queries below to get started.`;
         headers: {
           "Content-Type": "application/json",
           "x-stream": "1",
+          "x-client-timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...keyHeaders,
         },
         body: JSON.stringify({

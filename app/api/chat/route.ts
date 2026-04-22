@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
     const callProvider = (req.headers.get("x-call-provider") as "attention" | "grain") || undefined;
     const sliteKey = req.headers.get("x-slite-key") || undefined;
     const docProvider = (req.headers.get("x-doc-provider") as "atlassian" | "slite") || undefined;
+    const clientTz = req.headers.get("x-client-timezone") || "UTC";
 
     const agentKeys = {
       ...keys,
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest) {
       braveSearchKey,
     };
 
-    const timeRange = extractTimeRange(trimmedMessage);
+    const timeRange = extractTimeRange(trimmedMessage, clientTz);
     const analyticsDays = timeRange
       ? Math.min(Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000), 90)
       : undefined;
@@ -132,7 +133,8 @@ export async function POST(req: NextRequest) {
             sourceIds,
             (chunk: string) => {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: chunk })}\n\n`));
-            }
+            },
+            clientTz
           ).then((result) => {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", ...result })}\n\n`));
             controller.close();
@@ -153,7 +155,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz);
 
     return NextResponse.json(result);
   } catch (error) {

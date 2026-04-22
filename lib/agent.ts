@@ -1,5 +1,6 @@
 import { InMemoryVectorStore } from "./vector-store";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType, ToolDefinition } from "./ai-provider";
+import { shouldRerank, rerankResults } from "./reranker";
 import { clusterFeedback, annotateClusters } from "./clustering";
 import { getRelevantPendoContext, getFullPendoAnalytics } from "./pendo";
 import { getRelevantAmplitudeContext, getFullAmplitudeAnalytics } from "./amplitude";
@@ -75,13 +76,35 @@ function estimateTokens(text: string): number {
 
 let cachedStore: { fingerprint: string; store: InMemoryVectorStore; embeddingMap: Map<string, number[]> } | null = null;
 
-function dataFingerprint(data: AgentData, aiProvider?: string): string {
-  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${aiProvider || ""}`;
+function pickEmbedder(keys: AgentKeys): { provider: ReturnType<typeof getAIProvider>; key: string | undefined; id: string } | null {
+  const aiProvider = keys.aiProvider || "gemini";
+  const primaryProvider = getAIProvider(aiProvider);
+  const primaryKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+  if (primaryProvider.embed && primaryProvider.isConfigured(primaryKey)) {
+    return { provider: primaryProvider, key: primaryKey, id: `${aiProvider}:${(primaryKey || "").slice(-6)}` };
+  }
+  if (aiProvider !== "gemini" && keys.geminiKey) {
+    const gp = getAIProvider("gemini");
+    if (gp.embed && gp.isConfigured(keys.geminiKey)) {
+      return { provider: gp, key: keys.geminiKey, id: `gemini:${keys.geminiKey.slice(-6)}` };
+    }
+  }
+  if (aiProvider !== "openai" && keys.openaiKey) {
+    const op = getAIProvider("openai");
+    if (op.embed && op.isConfigured(keys.openaiKey)) {
+      return { provider: op, key: keys.openaiKey, id: `openai:${keys.openaiKey.slice(-6)}` };
+    }
+  }
+  return null;
+}
+
+function dataFingerprint(data: AgentData, embedderId: string): string {
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}`;
 }
 
 async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
-  const aiProvider = keys?.aiProvider || "gemini";
-  const fp = dataFingerprint(data, aiProvider);
+  const embedder = keys ? pickEmbedder(keys) : null;
+  const fp = dataFingerprint(data, embedder?.id || "none");
 
   if (cachedStore && cachedStore.fingerprint === fp) {
     return { store: cachedStore.store, embeddingMap: cachedStore.embeddingMap, enrichedData: data };
@@ -89,58 +112,38 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
 
   const store = new InMemoryVectorStore();
 
-  // Compute embeddings and cluster feedback — fall back across providers when primary lacks embed().
   let enrichedData = data;
   const embeddingMap = new Map<string, number[]>();
 
-  if (keys) {
-    // Pick best available embedder: primary provider > Gemini > OpenAI > none
-    const embedCandidates: { provider: ReturnType<typeof getAIProvider>; key: string | undefined }[] = [];
-    const primaryProvider = getAIProvider(aiProvider);
-    const primaryKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
-    if (primaryProvider.embed && primaryProvider.isConfigured(primaryKey)) {
-      embedCandidates.push({ provider: primaryProvider, key: primaryKey });
-    }
-    if (aiProvider !== "gemini" && keys.geminiKey) {
-      const gp = getAIProvider("gemini");
-      if (gp.embed && gp.isConfigured(keys.geminiKey)) embedCandidates.push({ provider: gp, key: keys.geminiKey });
-    }
-    if (aiProvider !== "openai" && keys.openaiKey) {
-      const op = getAIProvider("openai");
-      if (op.embed && op.isConfigured(keys.openaiKey)) embedCandidates.push({ provider: op, key: keys.openaiKey });
-    }
+  if (embedder) {
+    try {
+      // Embed all doc types so RRF fusion works across sources
+      const allItems: { id: string; text: string }[] = [
+        ...data.feedback.map((f) => ({ id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}` })),
+        ...data.features.map((f) => ({ id: f.id, text: `${f.name}. ${f.description.slice(0, 400)}` })),
+        ...data.calls.map((c) => ({ id: c.id, text: `${c.title}. ${c.summary.slice(0, 400)}` })),
+        ...data.jiraIssues.map((j) => ({ id: j.id, text: `${j.summary}. ${j.description.slice(0, 400)}` })),
+        ...data.linearIssues.map((l) => ({ id: l.id, text: `${l.title}. ${l.description.slice(0, 400)}` })),
+        ...data.confluencePages.map((p) => ({ id: p.id, text: `${p.title}. ${p.excerpt.slice(0, 400)}` })),
+      ];
 
-    const embedder = embedCandidates[0];
-    if (embedder) {
-      try {
-        // Embed all doc types so RRF fusion works across sources
-        const allItems: { id: string; text: string }[] = [
-          ...data.feedback.map((f) => ({ id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}` })),
-          ...data.features.map((f) => ({ id: f.id, text: `${f.name}. ${f.description.slice(0, 400)}` })),
-          ...data.calls.map((c) => ({ id: c.id, text: `${c.title}. ${c.summary.slice(0, 400)}` })),
-          ...data.jiraIssues.map((j) => ({ id: j.id, text: `${j.summary}. ${j.description.slice(0, 400)}` })),
-          ...data.linearIssues.map((l) => ({ id: l.id, text: `${l.title}. ${l.description.slice(0, 400)}` })),
-          ...data.confluencePages.map((p) => ({ id: p.id, text: `${p.title}. ${p.excerpt.slice(0, 400)}` })),
-        ];
-
-        const EMBED_BATCH = 64;
-        if (allItems.length > 0) {
-          for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
-            const batch = allItems.slice(i, i + EMBED_BATCH);
-            const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
-            if (vecs) {
-              batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
-            }
+      const EMBED_BATCH = 64;
+      if (allItems.length > 0) {
+        for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
+          const batch = allItems.slice(i, i + EMBED_BATCH);
+          const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
+          if (vecs) {
+            batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
           }
         }
+      }
 
-        if (data.feedback.length > 0 && embeddingMap.size > 0) {
-          const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
-          const annotated = annotateClusters(data.feedback, clusterMap, clusters);
-          enrichedData = { ...data, feedback: annotated };
-        }
-      } catch { /* non-fatal: proceed with TF-IDF */ }
-    }
+      if (data.feedback.length > 0 && embeddingMap.size > 0) {
+        const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
+        const annotated = annotateClusters(data.feedback, clusterMap, clusters);
+        enrichedData = { ...data, feedback: annotated };
+      }
+    } catch { /* non-fatal: proceed with TF-IDF */ }
   }
 
   if (enrichedData.feedback.length) store.addFeedback(enrichedData.feedback);
@@ -312,22 +315,62 @@ interface TimeRange {
   compare?: { start: Date; end: Date; label: string };
 }
 
-export function extractTimeRange(message: string): TimeRange | null {
+// Return the offset in ms between local TZ and UTC at the given instant (local - UTC).
+function getTimezoneOffsetMs(tz: string, at: Date): number {
+  try {
+    const utcDate = new Date(at.toLocaleString("en-US", { timeZone: "UTC" }));
+    const tzDate = new Date(at.toLocaleString("en-US", { timeZone: tz }));
+    return tzDate.getTime() - utcDate.getTime();
+  } catch {
+    return 0;
+  }
+}
+
+// Midnight of the current calendar day expressed as a UTC Date, adjusted for the client TZ.
+function midnightInTZ(tz: string, now: Date): Date {
+  try {
+    const dateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(now); // "YYYY-MM-DD"
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const offset = getTimezoneOffsetMs(tz, now);
+    return new Date(Date.UTC(y, m - 1, d) - offset);
+  } catch {
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+}
+
+// Year and 0-indexed month for the client TZ.
+function datePartsInTZ(tz: string, now: Date): { y: number; m: number } {
+  try {
+    const dateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit",
+    }).format(now);
+    const [y, m] = dateStr.split("-").map(Number);
+    return { y, m: m - 1 };
+  } catch {
+    return { y: now.getFullYear(), m: now.getMonth() };
+  }
+}
+
+export function extractTimeRange(message: string, clientTz = "UTC"): TimeRange | null {
   const q = message.toLowerCase();
   const now = new Date();
 
   const compareParts = q.match(/(.+?)\s+(?:vs\.?|versus|compared?\s+to|against)\s+(.+)/i);
   if (compareParts) {
-    const a = parseSingleTimeRange(compareParts[1].trim(), now);
-    const b = parseSingleTimeRange(compareParts[2].trim(), now);
+    const a = parseSingleTimeRange(compareParts[1].trim(), now, clientTz);
+    const b = parseSingleTimeRange(compareParts[2].trim(), now, clientTz);
     if (a && b) return { ...a, compare: b };
   }
 
-  return parseSingleTimeRange(q, now);
+  return parseSingleTimeRange(q, now, clientTz);
 }
 
-function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function parseSingleTimeRange(text: string, now: Date, clientTz = "UTC"): TimeRange | null {
+  const today = midnightInTZ(clientTz, now);
+  const { y: nowYear, m: nowMonth } = datePartsInTZ(clientTz, now);
+  const tzOffset = getTimezoneOffsetMs(clientTz, now);
 
   if (/\byesterday\b/.test(text)) {
     const start = new Date(today); start.setDate(start.getDate() - 1);
@@ -341,14 +384,14 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
     return { start, end: now, label: "this week" };
   }
   if (/\bthis\s+month\b/.test(text)) {
-    return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now, label: "this month" };
+    return { start: new Date(Date.UTC(nowYear, nowMonth, 1) - tzOffset), end: now, label: "this month" };
   }
   if (/\bthis\s+quarter\b/.test(text)) {
-    const qMonth = Math.floor(now.getMonth() / 3) * 3;
-    return { start: new Date(now.getFullYear(), qMonth, 1), end: now, label: "this quarter" };
+    const qMonth = Math.floor(nowMonth / 3) * 3;
+    return { start: new Date(Date.UTC(nowYear, qMonth, 1) - tzOffset), end: now, label: "this quarter" };
   }
   if (/\bytd\b|\byear\s+to\s+date\b/.test(text)) {
-    return { start: new Date(now.getFullYear(), 0, 1), end: now, label: "YTD" };
+    return { start: new Date(Date.UTC(nowYear, 0, 1) - tzOffset), end: now, label: "YTD" };
   }
 
   const lastN = text.match(/(?:last|past)\s+(\d+)\s+(day|week|month|quarter)s?/);
@@ -356,27 +399,27 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
     const n = parseInt(lastN[1], 10);
     const unit = lastN[2];
     const start = new Date(today);
-    if (unit === "day") start.setDate(start.getDate() - n);
-    else if (unit === "week") start.setDate(start.getDate() - n * 7);
-    else if (unit === "month") start.setMonth(start.getMonth() - n);
-    else if (unit === "quarter") start.setMonth(start.getMonth() - n * 3);
+    if (unit === "day") start.setUTCDate(start.getUTCDate() - n);
+    else if (unit === "week") start.setUTCDate(start.getUTCDate() - n * 7);
+    else if (unit === "month") start.setUTCMonth(start.getUTCMonth() - n);
+    else if (unit === "quarter") start.setUTCMonth(start.getUTCMonth() - n * 3);
     return { start, end: now, label: `last ${n} ${unit}${n > 1 ? "s" : ""}` };
   }
 
   if (/\blast\s+week\b/.test(text)) {
-    const end = new Date(today); end.setDate(end.getDate() - end.getDay());
-    const start = new Date(end); start.setDate(start.getDate() - 7);
+    const end = new Date(today); end.setUTCDate(end.getUTCDate() - end.getUTCDay());
+    const start = new Date(end); start.setUTCDate(start.getUTCDate() - 7);
     return { start, end, label: "last week" };
   }
   if (/\blast\s+month\b/.test(text)) {
-    const end = new Date(now.getFullYear(), now.getMonth(), 1);
-    const start = new Date(end); start.setMonth(start.getMonth() - 1);
+    const end = new Date(Date.UTC(nowYear, nowMonth, 1) - tzOffset);
+    const start = new Date(end); start.setUTCMonth(start.getUTCMonth() - 1);
     return { start, end, label: "last month" };
   }
   if (/\blast\s+quarter\b/.test(text)) {
-    const qMonth = Math.floor(now.getMonth() / 3) * 3;
-    const end = new Date(now.getFullYear(), qMonth, 1);
-    const start = new Date(end); start.setMonth(start.getMonth() - 3);
+    const qMonth = Math.floor(nowMonth / 3) * 3;
+    const end = new Date(Date.UTC(nowYear, qMonth, 1) - tzOffset);
+    const start = new Date(end); start.setUTCMonth(start.getUTCMonth() - 3);
     return { start, end, label: "last quarter" };
   }
 
@@ -388,8 +431,8 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
     const startIdx = monthNames.indexOf(rangeMatch[1].toLowerCase()) !== -1 ? monthNames.indexOf(rangeMatch[1].toLowerCase()) : monthAbbrevs.indexOf(rangeMatch[1].toLowerCase());
     const endIdx = monthNames.indexOf(rangeMatch[2].toLowerCase()) !== -1 ? monthNames.indexOf(rangeMatch[2].toLowerCase()) : monthAbbrevs.indexOf(rangeMatch[2].toLowerCase());
     if (startIdx >= 0 && endIdx >= 0) {
-      const start = new Date(now.getFullYear(), startIdx, 1);
-      const end = new Date(now.getFullYear(), endIdx + 1, 0, 23, 59, 59);
+      const start = new Date(Date.UTC(nowYear, startIdx, 1) - tzOffset);
+      const end = new Date(Date.UTC(nowYear, endIdx + 1, 0, 23, 59, 59) - tzOffset);
       return { start, end, label: `${monthNames[startIdx]} to ${monthNames[endIdx]}` };
     }
   }
@@ -398,8 +441,8 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
   if (inMonth) {
     const idx = monthNames.indexOf(inMonth[1].toLowerCase()) !== -1 ? monthNames.indexOf(inMonth[1].toLowerCase()) : monthAbbrevs.indexOf(inMonth[1].toLowerCase());
     if (idx >= 0) {
-      const year = idx > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
-      return { start: new Date(year, idx, 1), end: new Date(year, idx + 1, 0, 23, 59, 59), label: monthNames[idx] };
+      const year = idx > nowMonth ? nowYear - 1 : nowYear;
+      return { start: new Date(Date.UTC(year, idx, 1) - tzOffset), end: new Date(Date.UTC(year, idx + 1, 0, 23, 59, 59) - tzOffset), label: monthNames[idx] };
     }
   }
 
@@ -407,8 +450,8 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
   if (sinceMonth) {
     const idx = monthNames.indexOf(sinceMonth[1].toLowerCase()) !== -1 ? monthNames.indexOf(sinceMonth[1].toLowerCase()) : monthAbbrevs.indexOf(sinceMonth[1].toLowerCase());
     if (idx >= 0) {
-      const year = idx > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
-      return { start: new Date(year, idx, 1), end: now, label: `since ${monthNames[idx]}` };
+      const year = idx > nowMonth ? nowYear - 1 : nowYear;
+      return { start: new Date(Date.UTC(year, idx, 1) - tzOffset), end: now, label: `since ${monthNames[idx]}` };
     }
   }
 
@@ -416,7 +459,7 @@ function parseSingleTimeRange(text: string, now: Date): TimeRange | null {
   if (inQ) {
     const qNum = parseInt(inQ[1], 10);
     const qMonth = (qNum - 1) * 3;
-    return { start: new Date(now.getFullYear(), qMonth, 1), end: new Date(now.getFullYear(), qMonth + 3, 0, 23, 59, 59), label: `Q${qNum}` };
+    return { start: new Date(Date.UTC(nowYear, qMonth, 1) - tzOffset), end: new Date(Date.UTC(nowYear, qMonth + 3, 0, 23, 59, 59) - tzOffset), label: `Q${qNum}` };
   }
 
   return null;
@@ -732,6 +775,26 @@ function isLikelyFollowUp(query: string): boolean {
  * e.g. "connectwise is in progress, what else?" → { isPivot: true, excluded: ["connectwise"] }
  *       "besides SSO, what are people asking?" → { isPivot: true, excluded: ["sso"] }
  */
+function verifyCitations(text: string, validCount: number): { cleaned: string; orphaned: number[] } {
+  const orphaned: number[] = [];
+  const cleaned = text.replace(/\[(\d+)\]/g, (match, n) => {
+    const idx = parseInt(n, 10);
+    if (idx >= 1 && idx <= validCount) return match;
+    orphaned.push(idx);
+    return "";
+  }).replace(/\[\s*\]/g, "").replace(/\s{2,}/g, " ").trim();
+  return { cleaned, orphaned };
+}
+
+function detectUrgencyFilter(query: string): { minUrgency?: "high"; requireActionable?: boolean } {
+  const q = query.toLowerCase();
+  const highUrgencyKeywords = ["urgent", "critical", "blocking", "blocker", "asap", "p1", "high priority", "must fix", "show stopper"];
+  const actionableKeywords = ["what should we fix", "what should we build", "actionable", "top priorities", "prioritize", "what to build", "recommend"];
+  const minUrgency = highUrgencyKeywords.some((k) => q.includes(k)) ? "high" as const : undefined;
+  const requireActionable = actionableKeywords.some((k) => q.includes(k)) ? true : undefined;
+  return { minUrgency, requireActionable };
+}
+
 function detectPivot(message: string): { isPivot: boolean; excluded: string[] } {
   const q = message.toLowerCase().trim();
   const excluded: string[] = [];
@@ -1255,9 +1318,10 @@ export async function chat(
   contextMode: ContextMode = "focused",
   mode: InteractionMode = "summarize",
   accumulatedSourceIds?: string[],
-  onChunk?: (chunk: string) => void
+  onChunk?: (chunk: string) => void,
+  clientTz = "UTC"
 ): Promise<ChatResult> {
-  const timeRange = extractTimeRange(userMessage);
+  const timeRange = extractTimeRange(userMessage, clientTz);
   const _rawScopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
@@ -1286,9 +1350,12 @@ export async function chat(
     }
   }
 
+  // Detect urgency/actionability intent for optional retrieval filters
+  const urgencyFilter = detectUrgencyFilter(userMessage);
+
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit, queryEmbedding })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, ...urgencyFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -1313,6 +1380,13 @@ export async function chat(
         ...rawResults.filter((r) => mentionsExcluded(r)),
       ];
     }
+  }
+
+  // LLM rerank: improves precision on ambiguous queries (non-fatal, falls back to RRF order)
+  if (shouldRerank(userMessage, rawResults, countQuery, drilldownQuery) && embeddingMap.size > 0) {
+    const aiProvider = keys.aiProvider || "gemini";
+    const aiKey = resolveAIKey(aiProvider, keys.geminiKey, keys.anthropicKey, keys.openaiKey);
+    rawResults = await rerankResults(userMessage, rawResults, aiProvider, aiKey);
   }
 
   const includeConfluence = wantsConfluence(userMessage);
@@ -1723,6 +1797,12 @@ ${formatInstructions}`;
     }
 
     if (aiResponse) {
+      // Strip any [n] citation markers that weren't in the retrieved context
+      const allSources = [...sources, ...webSources];
+      const { cleaned, orphaned } = verifyCitations(aiResponse, allSources.length);
+      if (orphaned.length > 0) console.warn(`[citations] Stripped orphaned: [${orphaned.join(",")}]`);
+      aiResponse = cleaned;
+
       const outputTokens = estimateTokens(aiResponse);
       const finalTrace: ChatTrace = {
         ...trace,
@@ -1731,7 +1811,7 @@ ${formatInstructions}`;
       };
       return {
         response: aiResponse,
-        sources: [...sources, ...webSources],
+        sources: allSources,
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
       };
