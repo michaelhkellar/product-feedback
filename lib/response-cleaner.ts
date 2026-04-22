@@ -15,6 +15,9 @@ interface SourceRef {
   id: string;
   title: string;
   type: string;
+  /** Ground-truth relative-date label, computed at source-build time.
+   *  Used to overwrite the When cell when the model hallucinates it. */
+  when?: string;
 }
 
 /** Patterns that constitute a valid Source cell value. */
@@ -330,6 +333,57 @@ function normalizeTableSplits(text: string): string {
 }
 
 /**
+ * Find the SourceRef whose id/title matches the given Source-cell value.
+ * Mirrors the match rules in isValidSourceCell so a cell we accepted as
+ * valid also resolves back to its source record.
+ */
+function findSourceForCell(cell: string, sources: SourceRef[]): SourceRef | null {
+  const c = cell.trim();
+  if (!c) return null;
+  // Ticket key match (strip brackets/markdown link syntax if present)
+  const keyMatch = c.match(/^\[?([A-Z]{2,10}-\d+)\]?/);
+  if (keyMatch) {
+    const key = keyMatch[1].toLowerCase();
+    const byKey = sources.find((s) => {
+      const idMatch = s.id.toLowerCase().includes(key);
+      const titleMatch = s.title.toLowerCase().startsWith(key);
+      return idMatch || titleMatch;
+    });
+    if (byKey) return byKey;
+  }
+  // Email match: title may carry " — email@..." as contact suffix
+  if (EMAIL_RE.test(c)) {
+    const lc = c.toLowerCase();
+    const byEmail = sources.find((s) => s.title.toLowerCase().includes(lc));
+    if (byEmail) return byEmail;
+  }
+  // Exact/prefix title match on the short handle
+  const lower = c.toLowerCase();
+  return sources.find((s) => {
+    const sh = shortHandle(s.title).toLowerCase();
+    return sh === lower || sh.startsWith(lower) || lower.startsWith(sh);
+  }) || null;
+}
+
+/**
+ * Overwrite the When cell with the source's ground-truth `when` label when
+ * the two disagree. This blocks the common model drift of writing "today"
+ * for every row even when the evidence carries real relative dates.
+ * Row layout assumed: [Source, What, When] for the canonical table.
+ */
+function enforceWhenCell(rowCells: string[], sources: SourceRef[]): void {
+  if (rowCells.length < 3) return;
+  const source = findSourceForCell(rowCells[0], sources);
+  if (!source || !source.when) return;
+  const written = rowCells[2].trim();
+  // Accept the model's value only when it already matches ground truth.
+  // Anything else — "today" hallucinations, arbitrary prose, empty — is
+  // replaced with the computed label.
+  if (written.toLowerCase() === source.when.toLowerCase()) return;
+  rowCells[2] = source.when;
+}
+
+/**
  * Collapse body-row overflow into the first cell for any markdown table.
  * Applied as a pre-pass so ALL tables (Source|What|When and analytics-shape
  * alike) survive unescaped `|` chars in cell values.
@@ -424,11 +478,13 @@ export function cleanResponseTables(text: string, sources: SourceRef[]): string 
               const recovered = recoverSourceFromCitations(indices, sources);
               if (recovered) {
                 rowCells[0] = recovered;
+                enforceWhenCell(rowCells, sources);
                 output.push(buildPipeRow(rowCells));
               }
               // else: drop the row (don't push)
             } else {
-              output.push(row);
+              enforceWhenCell(rowCells, sources);
+              output.push(buildPipeRow(rowCells));
             }
           } else {
             output.push(row);

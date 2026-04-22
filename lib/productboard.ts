@@ -103,22 +103,57 @@ export async function getNotes(
     };
   }
 
-  return {
-    data: items.map((n) => ({
-      id: (n.id as string) || (n.uuid as string) || "",
-      source: "productboard" as const,
-      title: (n.title as string) || (n.note_title as string) || "Untitled Note",
-      content: (n.content as string) || (n.note_text as string) || "",
-      customer: (n.user_name as string) || (n.user_email as string) || "",
-      company: (n.company_name as string) || undefined,
-      sentiment: "neutral" as const,
-      themes: extractNoteTags(n),
-      date: (n.createdAt as string) || (n.created_at as string) || (n.created as string) || (n.dateCreated as string) || (n.inserted_at as string) || (n.createdTime as string) || "",
-      priority: mapNotePriority(n),
-      metadata: buildNoteMetadata(n),
-    })),
-    isDemo: false,
-  };
+  const mapped = items.map((n) => ({
+    id: (n.id as string) || (n.uuid as string) || "",
+    source: "productboard" as const,
+    title: (n.title as string) || (n.note_title as string) || "Untitled Note",
+    content: (n.content as string) || (n.note_text as string) || "",
+    customer: (n.user_name as string) || (n.user_email as string) || "",
+    company: (n.company_name as string) || undefined,
+    sentiment: "neutral" as const,
+    themes: extractNoteTags(n),
+    date: (n.createdAt as string) || (n.created_at as string) || (n.created as string) || (n.dateCreated as string) || (n.inserted_at as string) || (n.createdTime as string) || "",
+    priority: mapNotePriority(n),
+    metadata: buildNoteMetadata(n),
+  }));
+
+  logDateDistribution("Productboard notes", mapped);
+  return { data: mapped, isDemo: false };
+}
+
+/**
+ * Log a quick age histogram so we can tell at a glance whether Productboard
+ * is returning fresh `createdAt` values for most notes (an ingest-time
+ * artifact that makes items look falsely "today") or truly-distributed
+ * historical dates. Only runs in dev / serverless logs.
+ */
+function logDateDistribution(label: string, items: { date: string }[]): void {
+  if (items.length === 0) return;
+  const now = Date.now();
+  const DAY = 1000 * 60 * 60 * 24;
+  const buckets = { today: 0, this_week: 0, this_month: 0, older: 0, unknown: 0 };
+  const sampleToday: string[] = [];
+  for (const it of items) {
+    if (!it.date) { buckets.unknown++; continue; }
+    const t = new Date(it.date).getTime();
+    if (isNaN(t)) { buckets.unknown++; continue; }
+    const days = (now - t) / DAY;
+    if (days < 1) {
+      buckets.today++;
+      if (sampleToday.length < 3) sampleToday.push(it.date);
+    } else if (days < 7) buckets.this_week++;
+    else if (days < 30) buckets.this_month++;
+    else buckets.older++;
+  }
+  const pctToday = Math.round((buckets.today / items.length) * 100);
+  console.log(
+    `[dates] ${label}: today=${buckets.today} (${pctToday}%) / week=${buckets.this_week} / month=${buckets.this_month} / older=${buckets.older} / unknown=${buckets.unknown}`
+  );
+  if (pctToday >= 40) {
+    console.warn(
+      `[dates] ⚠ ${pctToday}% of ${label} are dated within the last 24h — likely an ingest-time artifact, not true creation time. Sample: ${sampleToday.join(", ")}`
+    );
+  }
 }
 
 function extractThemes(f: Record<string, unknown>): string[] {

@@ -311,10 +311,12 @@ DATA SOURCE RULES:
 - If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.
 - Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.
 
-DATE RULES:
-- Evidence items in context show dates as "Xd ago" (creation date) or "updated Xd ago" (only the last-modified date is known). Use this labeling in your response.
-- "updated Xd ago" does NOT mean the issue was first raised that recently — it means the source system only provides a modification timestamp. Do not imply recency from update times.
-- If an item has "date unknown", do not guess a date; write "—" in the When column.
+DATE RULES (STRICT — violations are detected and corrected server-side):
+- Every evidence item in context carries a When label in square brackets, e.g. "[Source: Jira CX-1234, 6d ago]" or "[Source: Productboard note "...", 2w ago]" or "[Source: ..., updated 3mo ago]" or "[Source: ..., date unknown]".
+- When you place a row in a Source|What|When table, the When cell MUST be the EXACT label from that item's bracket in the context. "6d ago" stays "6d ago". "2w ago" stays "2w ago". Do NOT round, rewrite, or substitute "today" for items whose bracketed label is anything other than "today".
+- "updated Xd ago" does NOT mean the issue was first raised that recently — it reflects a modification timestamp. Do not imply recency from update times.
+- If an item's label is "date unknown", write "—" in the When column.
+- Analytics signals (Pendo/Amplitude/PostHog pages, features, events) have NO per-item date. Write "—" in the When column for any analytics row, never "today".
 - Do not explain these timestamp limitations in your prose unless the user directly asks about date accuracy.
 
 AUTHORING RULES:
@@ -1643,7 +1645,7 @@ export async function chat(
     if (co) companyFeedbackCount[co] = (companyFeedbackCount[co] || 0) + 1;
   }
 
-  const sources: { type: string; id: string; title: string; url?: string }[] = [];
+  const sources: { type: string; id: string; title: string; url?: string; when?: string }[] = [];
   const searchParts: string[] = [];
   const recentItemIds = new Set<string>();
   const detailed = wantsDetail(userMessage) || drilldownQuery;
@@ -1656,6 +1658,10 @@ export async function chat(
 
     let title = doc.id;
     let url: string | undefined;
+    // Ground-truth When label for this source, computed from actual data.
+    // The cleaner uses this to correct any drift where the model writes
+    // "today" for items that are not actually from today.
+    let when: string | undefined;
     if (doc.type === "feedback") {
       const fb = scopedData.feedback.find((f) => f.id === doc.id);
       const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
@@ -1664,10 +1670,13 @@ export async function chat(
       const coNote = coCount >= 2 ? ` (1 of ${coCount} from ${fb!.company})` : "";
       title = fb ? `${cleanFeedbackTitle(fb)}${contact ? ` — ${contact}` : ""}${coNote}` : title;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
+      if (fb) when = shortDate(fb as unknown as Record<string, unknown>);
     } else if (doc.type === "feature") {
       title = scopedData.features.find((f) => f.id === doc.id)?.name || title;
     } else if (doc.type === "call") {
-      title = scopedData.calls.find((c) => c.id === doc.id)?.title || title;
+      const c = scopedData.calls.find((c) => c.id === doc.id);
+      title = c?.title || title;
+      if (c) when = shortDate(c as unknown as Record<string, unknown>);
     } else if (doc.type === "insight") {
       title = scopedData.insights.find((i) => i.id === doc.id)?.title || title;
     } else if (doc.type === "jira") {
@@ -1676,6 +1685,7 @@ export async function chat(
         title = `${j.key}: ${j.summary}`;
         const domain = keys.atlassianDomain || process.env.ATLASSIAN_DOMAIN || "";
         if (domain) url = `https://${domain.replace(/\.atlassian\.net\/?$/, "")}.atlassian.net/browse/${j.key}`;
+        when = shortDate(j as unknown as Record<string, unknown>);
       }
     } else if (doc.type === "confluence") {
       const p = scopedData.confluencePages.find((p) => p.id === doc.id);
@@ -1683,10 +1693,15 @@ export async function chat(
         const isSlite = p.space === "Slite";
         title = p.title?.trim() || `Untitled (${isSlite ? "Slite page" : "Confluence page"})`;
         url = p.url;
+        when = shortDate(p as unknown as Record<string, unknown>);
       }
     } else if (doc.type === "linear") {
       const l = scopedData.linearIssues.find((l) => l.id === doc.id);
-      if (l) { title = `${l.identifier}: ${l.title}`; url = l.url; }
+      if (l) {
+        title = `${l.identifier}: ${l.title}`;
+        url = l.url;
+        when = shortDate(l as unknown as Record<string, unknown>);
+      }
     }
     // Fallback: when the lookup failed or returned an empty/UUID-shaped title,
     // give the model a meaningful handle in "<Untitled> (<Source kind>)" form so
@@ -1704,12 +1719,15 @@ export async function chat(
       };
       title = `Untitled (${typeLabel[doc.type] || doc.type})`;
     }
-    sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url });
+    sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
   }
 
   if (analyticsLookup?.sources.length) {
     for (const source of analyticsLookup.sources) {
-      sources.push({ ...source, title: sanitizeTitleForTable(source.title) });
+      // Analytics signals have no item-level timestamp; mark when as "—" so
+      // the cleaner can overwrite any hallucinated date the model writes
+      // for an analytics row.
+      sources.push({ ...source, title: sanitizeTitleForTable(source.title), when: "—" });
     }
   }
 
