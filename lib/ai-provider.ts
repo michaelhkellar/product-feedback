@@ -1,4 +1,4 @@
-import { generateWithGemini, isGeminiConfigured, getResolvedModel } from "./gemini";
+import { generateWithGemini, isGeminiConfigured, getResolvedModel, getGeminiClient } from "./gemini";
 
 export type AIProviderType = "gemini" | "anthropic" | "openai";
 
@@ -71,57 +71,31 @@ const FALLBACK_GEMINI_MODELS = [
   "gemini-2.5-flash-lite",
 ];
 
-/** Returns generationConfig fields for the REST/stream path (no SDK types needed). */
-function geminiRestGenConfig(modelId: string, opts?: GenerateOpts): Record<string, unknown> {
-  const cfg: Record<string, unknown> = {};
-  if (/gemini-2\.5-flash/.test(modelId)) cfg.thinkingConfig = { thinkingBudget: 0 };
-  if (opts?.json) cfg.responseMimeType = "application/json";
-  if (opts?.temperature !== undefined) cfg.temperature = opts.temperature;
-  if (opts?.maxOutputTokens !== undefined) cfg.maxOutputTokens = opts.maxOutputTokens;
-  return cfg;
-}
-
 const geminiProvider: AIProvider = {
   async generate(systemPrompt, userPrompt, key, model, opts) {
     return generateWithGemini(systemPrompt, userPrompt, key, model || undefined, opts);
   },
 
   async *generateStream(systemPrompt, userPrompt, key, model) {
-    const apiKey = key || process.env.GEMINI_API_KEY;
-    if (!apiKey) return;
+    const client = getGeminiClient(key);
+    if (!client) return;
     const modelId = model || "gemini-2.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:streamGenerateContent?key=${apiKey}&alt=sse`;
-    const genConfig = geminiRestGenConfig(modelId);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        ...(Object.keys(genConfig).length > 0 ? { generationConfig: genConfig } : {}),
-      }),
-      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-    });
-    if (!res.ok || !res.body) return;
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const jsonStr = line.slice(6).trim();
-        if (!jsonStr || jsonStr === "[DONE]") continue;
-        try {
-          const chunk = JSON.parse(jsonStr) as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
-          const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-          if (text) yield text;
-        } catch { /* skip malformed chunk */ }
+    try {
+      const stream = await client.models.generateContentStream({
+        model: modelId,
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          ...(/gemini-2\.5-flash/.test(modelId) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          abortSignal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        },
+      });
+      for await (const chunk of stream) {
+        const text = chunk.text ?? "";
+        if (text) yield text;
       }
+    } catch (err) {
+      console.error("Gemini stream error:", err);
     }
   },
 

@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI, ApiError } from "@google/genai";
 
 const MODEL_CANDIDATES = [
   "gemini-2.5-flash",
@@ -6,7 +6,7 @@ const MODEL_CANDIDATES = [
   "gemini-2.5-pro",
 ];
 
-const clients = new Map<string, GoogleGenerativeAI>();
+const clients = new Map<string, GoogleGenAI>();
 let resolvedModel: string | null = null;
 
 const GENERATE_TIMEOUT_MS = 30_000;
@@ -19,34 +19,34 @@ export interface GeminiGenOpts {
 }
 
 /**
- * Builds a generationConfig for the given model + caller options.
- * Flash models default to "thinking" mode which adds 5-30s latency on simple tasks.
- * thinkingBudget:0 disables reasoning; @google/generative-ai@0.21.0 types don't expose
- * thinkingConfig or responseMimeType yet — callers cast the result as `never`.
+ * Returns generation config fields for the given model + caller options.
+ * Flash variants default to "thinking" mode which adds 5-30s latency on simple
+ * classification tasks; thinkingBudget:0 disables it. Pro models cannot have
+ * thinking turned off (minimum budget 128) so we leave them alone.
  */
-function buildGenerationConfig(modelName: string, opts?: GeminiGenOpts): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-  if (/gemini-2\.5-flash/.test(modelName)) {
-    config.thinkingConfig = { thinkingBudget: 0 };
-  }
-  if (opts?.json) config.responseMimeType = "application/json";
-  if (opts?.temperature !== undefined) config.temperature = opts.temperature;
-  if (opts?.maxOutputTokens !== undefined) config.maxOutputTokens = opts.maxOutputTokens;
-  return config;
+function buildConfig(modelName: string, opts?: GeminiGenOpts) {
+  return {
+    ...(/gemini-2\.5-flash/.test(modelName) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    ...(opts?.json ? { responseMimeType: "application/json" } : {}),
+    ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts?.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+  };
 }
 
-function getClient(overrideKey?: string): GoogleGenerativeAI | null {
+/** Returns a cached client for the given key, or null if no key is available. */
+export function getGeminiClient(overrideKey?: string): GoogleGenAI | null {
   const key = overrideKey || process.env.GEMINI_API_KEY;
   if (!key) return null;
   let client = clients.get(key);
   if (!client) {
-    client = new GoogleGenerativeAI(key);
+    client = new GoogleGenAI({ apiKey: key });
     clients.set(key, client);
   }
   return client;
 }
 
 function isModelNotFoundError(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status === 404;
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
   return (
@@ -58,22 +58,14 @@ function isModelNotFoundError(err: unknown): boolean {
 }
 
 async function tryGenerate(
-  client: GoogleGenerativeAI,
+  client: GoogleGenAI,
   modelName: string,
   systemPrompt: string,
   userPrompt: string,
   opts?: GeminiGenOpts
 ): Promise<string> {
-  const generationConfig = buildGenerationConfig(modelName, opts);
-  const model = client.getGenerativeModel({
-    model: modelName,
-    systemInstruction: systemPrompt,
-    // Cast required: @google/generative-ai@0.21.0 types don't include thinkingConfig / responseMimeType
-    generationConfig: generationConfig as never,
-  });
-
-  // AbortController lets the underlying HTTP request be cancelled on timeout,
-  // preventing the SDK call from leaking quota/tokens after we give up.
+  // Use AbortController so the underlying HTTP request is cancelled on timeout,
+  // preventing the call from leaking quota/tokens after we give up.
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error(`Gemini timeout after ${GENERATE_TIMEOUT_MS}ms`)),
@@ -92,15 +84,25 @@ async function tryGenerate(
   }
 
   try {
-    // requestOptions.signal is supported by the underlying REST client (cast for old types)
-    const result = await model.generateContent(userPrompt, { signal: controller.signal } as never);
-    const usage = result.response.usageMetadata as { thoughtsTokenCount?: number } | undefined;
+    const cfg = buildConfig(modelName, opts);
+    const result = await client.models.generateContent({
+      model: modelName,
+      contents: userPrompt,
+      config: {
+        systemInstruction: systemPrompt,
+        ...cfg,
+        abortSignal: controller.signal,
+      },
+    });
+
+    const usage = result.usageMetadata;
     if (usage?.thoughtsTokenCount) {
       console.warn(
         `[gemini] ${modelName} used ${usage.thoughtsTokenCount} thinking tokens — thinkingConfig may have regressed`
       );
     }
-    return result.response.text();
+
+    return result.text ?? "";
   } finally {
     clearTimeout(timer);
   }
@@ -113,7 +115,7 @@ export async function generateWithGemini(
   overrideModel?: string,
   opts?: GeminiGenOpts
 ): Promise<string | null> {
-  const client = getClient(overrideKey);
+  const client = getGeminiClient(overrideKey);
   if (!client) return null;
 
   if (overrideModel) {
@@ -158,16 +160,19 @@ export async function generateWithGemini(
 }
 
 export async function findWorkingModel(overrideKey?: string): Promise<string | null> {
-  const client = getClient(overrideKey);
+  const client = getGeminiClient(overrideKey);
   if (!client) return null;
 
   for (const candidate of MODEL_CANDIDATES) {
     try {
-      const model = client.getGenerativeModel({
+      await client.models.generateContent({
         model: candidate,
-        generationConfig: buildGenerationConfig(candidate) as never,
+        contents: "Say OK",
+        config: {
+          ...buildConfig(candidate),
+          abortSignal: AbortSignal.timeout(10_000),
+        },
       });
-      await model.generateContent("Say OK", { signal: AbortSignal.timeout(10_000) } as never);
       resolvedModel = candidate;
       return candidate;
     } catch (err) {

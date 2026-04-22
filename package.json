@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@google/generative-ai": "^0.21.0",
+    "@google/genai": "^1.50.1",
     "@linear/sdk": "^29.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
