@@ -96,7 +96,7 @@ const TICKET_QUERIES = [
 ];
 
 const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof MessageSquare; queries: typeof SUMMARIZE_QUERIES }> = {
-  summarize: { label: "Summarize", icon: MessageSquare, queries: SUMMARIZE_QUERIES },
+  summarize: { label: "Insights", icon: MessageSquare, queries: SUMMARIZE_QUERIES },
   prd: { label: "Write PRD", icon: FileText, queries: PRD_QUERIES },
   ticket: { label: "Write Ticket", icon: Ticket, queries: TICKET_QUERIES },
 };
