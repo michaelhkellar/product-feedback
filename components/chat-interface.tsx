@@ -224,7 +224,9 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
 }) {
   // During streaming, defer heavy re-parses so React can coalesce rapid token updates
   const deferredContent = useDeferredValue(content);
-  const renderContent = isStreaming ? deferredContent : content;
+  const rawContent = isStreaming ? deferredContent : content;
+  // Hide incomplete tables mid-stream to eliminate per-row column-width thrashing
+  const renderContent = stripIncompleteTables(rawContent, !!isStreaming);
   const processed = useMemo(() => fixMarkdown(renderContent), [renderContent]);
   const srcs = sources || [];
   const ents = entities || [];
@@ -264,6 +266,47 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
     </div>
   );
 });
+
+/**
+ * During streaming, the model often emits a table one row at a time.
+ * That causes columns to thrash in width every frame (table-layout: auto).
+ * When isStreaming is true, detect any table that looks incomplete (header
+ * present but body still streaming in), strip it from the end of the content,
+ * and replace it with a compact placeholder.  The full table appears once on
+ * the `done` event when we swap in the final server-cleaned response.
+ */
+function stripIncompleteTables(text: string, isStreaming: boolean): string {
+  if (!isStreaming || !text.includes("|")) return text;
+
+  const lines = text.split("\n");
+  // Walk backwards to find the last pipe-like section
+  let lastPipeIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim().startsWith("|")) { lastPipeIdx = i; break; }
+  }
+  if (lastPipeIdx === -1) return text;
+
+  // Find the start of this table block
+  let tableStart = lastPipeIdx;
+  while (tableStart > 0 && lines[tableStart - 1].trim().startsWith("|")) tableStart--;
+
+  const tableLines = lines.slice(tableStart, lastPipeIdx + 1);
+
+  // Check if there's a separator row — if not, the header is still streaming, strip it
+  const hasSeparator = tableLines.some((l) => l.includes("---"));
+  // If separator is present but the line AFTER the last pipe row is non-empty
+  // (mid-stream token) also strip. If the table block is just 1-2 lines (header only), strip.
+  const bodyRows = tableLines.filter((l) => {
+    const t = l.trim();
+    return t.startsWith("|") && !t.includes("---") && t !== tableLines[0].trim();
+  });
+
+  const isIncomplete = !hasSeparator || bodyRows.length === 0;
+  if (!isIncomplete) return text;
+
+  const before = lines.slice(0, tableStart).join("\n").trimEnd();
+  return before ? `${before}\n\n_Building table…_` : "_Building table…_";
+}
 
 function fixMarkdown(text: string): string {
   if (!text.includes("|")) return text;
@@ -624,6 +667,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const rafPendingRef = useRef<number | null>(null);
   const streamingIdRef = useRef<string | null>(null);
   const isNearBottomRef = useRef(true);
+  const lastScrollAtRef = useRef(0);
 
   const aiProviderLabel = (() => {
     const p = keys.aiProvider || "gemini";
@@ -680,6 +724,12 @@ Try one of the suggested queries below to get started.`;
   useEffect(() => {
     if (!isNearBottomRef.current) return;
     const hasStreaming = messages.some((m) => m.isStreaming);
+    if (hasStreaming) {
+      // Throttle auto-scroll to ~10fps while streaming to reduce layout churn
+      const now = Date.now();
+      if (now - lastScrollAtRef.current < 100) return;
+      lastScrollAtRef.current = now;
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: hasStreaming ? "auto" : "smooth" });
   }, [messages]);
 

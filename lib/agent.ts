@@ -17,6 +17,7 @@ import {
 import { ContextMode } from "./api-keys";
 import { searchWeb } from "./web-search";
 import { enrichSubset } from "./enrichment";
+import { cleanResponseTables } from "./response-cleaner";
 
 export type InteractionMode = "summarize" | "prd" | "ticket";
 
@@ -298,6 +299,12 @@ DATA SOURCE RULES:
 - Prefer source citations that are directly actionable: Jira key/link, Productboard note link, and customer name/email from the note.
 - If the user asks for a number/count/how many, prioritize numeric accuracy over recency and compute from matching items in the provided context.
 - Evidence items annotated "(1 of N from Company)" mean that company has N total feedback items. Treat all N as one customer signal, not N independent requests.
+
+DATE RULES:
+- Evidence items in context show dates as "Xd ago" (creation date) or "updated Xd ago" (only the last-modified date is known). Use this labeling in your response.
+- "updated Xd ago" does NOT mean the issue was first raised that recently — it means the source system only provides a modification timestamp. Do not imply recency from update times.
+- If an item has "date unknown", do not guess a date; write "—" in the When column.
+- Do not explain these timestamp limitations in your prose unless the user directly asks about date accuracy.
 
 AUTHORING RULES:
 - Structure: answer first, evidence second, caveats last (if any). An opinionated recommendation or stance is welcome when evidence supports it — clearly separated from the descriptive answer.
@@ -594,11 +601,11 @@ function classifyQueryType(
 
 const DETAILED_FORMAT = `Use this format as a guide. Include sections the evidence actually supports; omit any section that would be empty or forced. The order below is recommended, not mandatory — adapt if the question needs a different shape.
 
-[1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
+[1-2 sentence answer to the question. Be specific. Do NOT wrap the entire opening sentence in **bold** — but **bold** on 1-2 short data spans within it is encouraged (e.g. "**Three accounts** reported SSO failures this week.")]
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. Source = Jira key/link, customer name/email, or Productboard NOTE title — NEVER a bare number, [n] citation marker, feature name, or roadmap item. What = actual request/issue (with inline [n] citation if applicable). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates like 1/23/26). Skip if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (short, ≤60 chars). BANNED = "known feature", any analytics label, a bare number, an [n] citation marker, a theme name, or any sentence/phrase longer than 60 chars. If no valid source token exists, omit that row. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
 
 ## [Heading]
 
@@ -626,11 +633,11 @@ CONSTRAINTS: 600 words max. No :--- in tables. Tables MUST be preceded by a blan
 
 const LIST_FORMAT = `Use this format for list/show-me queries:
 
-[1 sentence naming what you found and how many items. Plain prose — do not wrap in ** or bold.]
+[1 sentence naming what you found and how many items. Do NOT wrap the entire sentence in bold — but **bold** on a key number or name within it is fine.]
 
 | Source | What | When |
 | --- | --- | --- |
-[3-10 rows. Always include this table. Source = customer name/email OR Jira key/Productboard NOTE link — NEVER a bare number, [n] citation marker, feature name, or roadmap item (citation markers belong in the What column only). What = the specific request, complaint, or issue — be concrete, not generic. Add inline [n] citation markers in the What column where evidence is numbered. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = analytics labels, "known feature", theme names, roadmap items, bare numbers, [n] citation markers, or any text over 60 chars. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
@@ -644,7 +651,7 @@ If your answer enumerates 3 or more specific feedback items, accounts, tickets, 
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. Source = Jira key, customer name/email, or Productboard NOTE title — NEVER a bare number, [n] citation marker, feature name, or roadmap item. What = specific request/issue, may include [n] citation. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates like 1/23/26.]
+[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, or Productboard NOTE title (≤60 chars). BANNED = analytics labels, "known feature", theme names, bare numbers, [n] citation markers, or text >60 chars. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
@@ -664,7 +671,7 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 
 CONSTRAINTS: Focus on what changed, not what stayed the same — unless the thing that stayed the same is itself surprising. 400 words max. No :--- in tables.`;
 
-const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** only for 1-3 short data spans in the body (numbers, names, dates): e.g. "**7 accounts**", "**churn risk at Acme**", "**Q4 renewal**". Do NOT bold entire sentences. Bad: "**The main issue is SSO failures across seven accounts.**" Good: "The main issue is **SSO failures** across **seven accounts**." Max 3 bolded spans; never an entire clause or opening sentence.`;
+const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** to draw the reader's eye to 1-3 key data spans (numbers, customer names, product areas, dates). Bolding a short span in the opening sentence is encouraged — that's where the reader looks first. Rules: (1) Bold the data point, not the whole sentence. Good: "**Three enterprise accounts** flagged SSO failures in the last week." Not OK: "**Three enterprise accounts flagged SSO failures in the last week.**" (2) Max 3 bolded spans per response. (3) Never bold an entire clause, sentence, or paragraph. (4) Skip bold entirely if there are no standout data points.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -1012,21 +1019,36 @@ function buildInsightDrilldownContext(
   return parts.join("\n");
 }
 
+/**
+ * Prefer true creation date. Only fall back to `updated` if no creation-time
+ * field is present — and tag it so callers can label it honestly.
+ */
+function parseDateInfo(item: Record<string, unknown>): { date: Date; isUpdateOnly: boolean } | null {
+  const created = (item.date || item.created || item.createdAt || item.dateCreated || item.inserted_at || item.createdTime || "") as string;
+  if (created) {
+    const d = new Date(created);
+    if (!isNaN(d.getTime())) return { date: d, isUpdateOnly: false };
+  }
+  const updated = (item.updated || item.lastModified || item.updatedAt || "") as string;
+  if (updated) {
+    const d = new Date(updated);
+    if (!isNaN(d.getTime())) return { date: d, isUpdateOnly: true };
+  }
+  return null;
+}
+
 function recentItems<T extends { date?: string; created?: string; updated?: string }>(items: T[], limit: number): T[] {
   const withDate = items.map((item) => {
-    const raw = (item as Record<string, unknown>);
-    const dateStr = (raw.date || raw.updated || raw.created || raw.lastModified || "") as string;
-    return { item, ts: dateStr ? new Date(dateStr).getTime() : 0 };
+    const info = parseDateInfo(item as Record<string, unknown>);
+    return { item, ts: info ? info.date.getTime() : 0 };
   });
   withDate.sort((a, b) => b.ts - a.ts);
   return withDate.slice(0, limit).map((x) => x.item);
 }
 
 function parseDate(item: Record<string, unknown>): Date | null {
-  const str = (item.date || item.updated || item.created || item.lastModified || item.createdAt || "") as string;
-  if (!str) return null;
-  const d = new Date(str);
-  return isNaN(d.getTime()) ? null : d;
+  const info = parseDateInfo(item);
+  return info ? info.date : null;
 }
 
 function dateBucket(d: Date, now: Date): "today" | "this_week" | "last_2_weeks" | "this_month" | "older" {
@@ -1138,13 +1160,13 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
     if (eventSummary) parts.push(`${analyticsLabel} top events: ${eventSummary}`);
     if (accountSummary) parts.push(`${analyticsLabel} top accounts: ${accountSummary}`);
     if (ao.allPageNames && ao.allPageNames.length > ao.topPages.length) {
-      parts.push(`${analyticsLabel} all known pages (${ao.allPageNames.length}): ${ao.allPageNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked page names in analytics (${ao.allPageNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allPageNames.join(", ")}`);
     }
     if (ao.allFeatureNames && ao.allFeatureNames.length > ao.topFeatures.length) {
-      parts.push(`${analyticsLabel} all known features (${ao.allFeatureNames.length}): ${ao.allFeatureNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked feature names in analytics (${ao.allFeatureNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allFeatureNames.join(", ")}`);
     }
     if (ao.allEventNames && ao.allEventNames.length > ao.topEvents.length) {
-      parts.push(`${analyticsLabel} all known events (${ao.allEventNames.length}): ${ao.allEventNames.join(", ")}`);
+      parts.push(`${analyticsLabel} tracked event names in analytics (${ao.allEventNames.length} — for lookup/context only, never cite as a Source in a feedback table): ${ao.allEventNames.join(", ")}`);
     }
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
   }
@@ -1203,17 +1225,21 @@ function buildComputedCounts(data: AgentData): string {
   return lines.join("\n");
 }
 
-function shortDate(item: Record<string, unknown>): string {
-  const d = parseDate(item);
-  if (!d) return "";
+function relDays(d: Date): string {
   const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const days = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
   if (days === 0) return "today";
   if (days === 1) return "yesterday";
   if (days < 7) return `${days}d ago`;
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function shortDate(item: Record<string, unknown>): string {
+  const info = parseDateInfo(item);
+  if (!info) return "date unknown";
+  const rel = relDays(info.date);
+  return info.isUpdateOnly ? `updated ${rel}` : rel;
 }
 
 function filterJiraForContext(issues: JiraIssue[], includeEng: boolean): JiraIssue[] {
@@ -1411,7 +1437,7 @@ function buildFollowupSuggestions(
 
   const suggestions: FollowupSuggestion[] = [];
 
-  if ((qType === "detailed" || qType === "list") && sourcesCount >= 5) {
+  if ((qType === "detailed" || qType === "list" || qType === "conversational") && sourcesCount >= 3) {
     suggestions.push({
       kind: "tenx",
       label: "10x thinking",
@@ -1962,6 +1988,9 @@ ${formatInstructions}`;
       if (orphaned.length > 0) console.warn(`[citations] Stripped orphaned: [${orphaned.join(",")}]`);
       aiResponse = cleaned;
 
+      // Validate and repair Source cells in the Source|What|When table.
+      aiResponse = cleanResponseTables(aiResponse, sources);
+
       const outputTokens = estimateTokens(aiResponse);
       const finalTrace: ChatTrace = {
         ...trace,
@@ -2047,7 +2076,7 @@ Synthesize the provided feedback data, analytics, and conversation history into 
 
 const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 
-[1-2 sentence answer to the question. Be specific. Opening sentence must be plain prose — do not wrap it in ** or bold.]
+[1-2 sentence answer to the question. Be specific. Do NOT wrap the entire opening sentence in **bold** — but **bold** on 1-2 short data spans within it is encouraged.]
 
 ## [Heading]
 
@@ -2057,7 +2086,7 @@ const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evide
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Source must be specific and searchable: include Jira key (prefer link) or Productboard NOTE title (plus link when available) — NEVER a bare number, [n] citation marker, feature name, or roadmap item. Put customer/email in the quote attribution, not duplicated in Source. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), or a Productboard NOTE title from the evidence list (≤60 chars). BANNED = customer email (use in quote attribution only), analytics labels, "known feature", bare numbers, [n] citation markers, theme names, roadmap items, or text >60 chars. Never use generic "Productboard" alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Segmentation
 [OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]

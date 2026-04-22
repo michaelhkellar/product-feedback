@@ -113,7 +113,7 @@ export async function getNotes(
       company: (n.company_name as string) || undefined,
       sentiment: "neutral" as const,
       themes: extractNoteTags(n),
-      date: (n.createdAt as string) || (n.created_at as string) || new Date().toISOString(),
+      date: (n.createdAt as string) || (n.created_at as string) || (n.created as string) || (n.dateCreated as string) || (n.inserted_at as string) || (n.createdTime as string) || "",
       priority: mapNotePriority(n),
       metadata: buildNoteMetadata(n),
     })),
