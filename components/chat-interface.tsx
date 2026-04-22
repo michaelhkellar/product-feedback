@@ -273,12 +273,6 @@ function fixMarkdown(text: string): string {
 
   let result = withPlaceholders;
 
-  // Fix prose text ending in a pipe-header on the same line: "Some text. | A | B |" → two separate lines
-  result = result.replace(/([^|\n]+?)\s*(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*$/gm, (_, prose, header) => {
-    const trimmedProse = prose.trim();
-    return trimmedProse ? `${trimmedProse}\n\n${header}` : header;
-  });
-
   // Fix tab-delimited dash rows after a pipe-header: "---\t---\t---" → "| --- | --- | --- |"
   result = result.replace(/((?:\|[^|\n]+)+\|)\n(\s*-{2,}(?:[\t ]-{2,})+\s*)/gm, (_, header, _dashRow) => {
     const cols = header.split("|").filter((s: string) => s.trim()).length;
