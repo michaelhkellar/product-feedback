@@ -273,8 +273,16 @@ function fixMarkdown(text: string): string {
 
   let result = withPlaceholders;
 
-  // Fix tab-delimited dash rows after a pipe-header: "---\t---\t---" → "| --- | --- | --- |"
-  result = result.replace(/((?:\|[^|\n]+)+\|)\n(\s*-{2,}(?:[\t ]-{2,})+\s*)/gm, (_, header, _dashRow) => {
+  // Fix prose text ending with an inline pipe-header on the same line: "Some text. | A | B |" → separate lines.
+  // Anchored to ^[^|] so valid table rows (which start with |) are never matched.
+  result = result.replace(/^([^|\n][^|\n]*?)\s*(\|[^|\n]+(?:\|[^|\n]+)+\|)\s*$/gm, (_, prose, header) => {
+    const trimmedProse = prose.trim();
+    return trimmedProse ? `${trimmedProse}\n\n${header}` : header;
+  });
+
+  // Fix tab-delimited dash rows after a pipe-header: "---\t---\t---" → "| --- | --- | --- |".
+  // \n\n? handles the blank line the model sometimes emits between header and separator.
+  result = result.replace(/((?:\|[^|\n]+)+\|)\n\n?(\s*-{2,}(?:[\t ]-{2,})+\s*)/gm, (_, header, _dashRow) => {
     const cols = header.split("|").filter((s: string) => s.trim()).length;
     return `${header}\n| ${Array(cols).fill("---").join(" | ")} |`;
   });
