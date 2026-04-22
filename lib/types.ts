@@ -15,6 +15,11 @@ export interface FeedbackItem {
   date: string;
   priority: Priority;
   metadata?: Record<string, string>;
+  // Enrichment-derived fields (optional, populated by AI enrichment)
+  urgency?: "high" | "medium" | "low";
+  actionability?: "high" | "medium" | "low";
+  topicArea?: string;
+  enrichmentConfidence?: number;
 }
 
 export interface ProductboardFeature {
