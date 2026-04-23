@@ -654,6 +654,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [mode, setMode] = useState<InteractionMode>("summarize");
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
+  const threadStateRef = useRef<import("@/lib/conversation-state").ThreadState | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -802,6 +803,7 @@ Try one of the suggested queries below to get started.`;
       mode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(threadStateRef.current ? { state: threadStateRef.current } : {}),
     };
     await saveThread(thread);
     setCurrentThreadId(id);
@@ -812,6 +814,7 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
     setMode(thread.mode);
     setCurrentThreadId(thread.id);
+    threadStateRef.current = thread.state;
     setShowSuggestions(false);
   }, []);
 
@@ -819,6 +822,7 @@ Try one of the suggested queries below to get started.`;
     setMessages([]);
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
+    threadStateRef.current = undefined;
     setShowSuggestions(true);
   }, [mode]);
 
@@ -888,6 +892,7 @@ Try one of the suggested queries below to get started.`;
           contextMode: keys.contextMode || "focused",
           mode,
           accumulatedSourceIds: Array.from(accumulatedSourceIds),
+          threadState: threadStateRef.current ?? null,
         }),
       });
 
@@ -946,6 +951,7 @@ Try one of the suggested queries below to get started.`;
                   trace?: ChatMessage["trace"];
                   tokenEstimate?: { input: number; output: number; total: number };
                   followupSuggestions?: FollowupSuggestion[];
+                  updatedState?: import("@/lib/conversation-state").ThreadState;
                 };
                 if (event.type === "delta" && event.text) {
                   deltaBufferRef.current += event.text;
@@ -971,6 +977,8 @@ Try one of the suggested queries below to get started.`;
                   const buffered = deltaBufferRef.current;
                   deltaBufferRef.current = "";
                   streamingIdRef.current = null;
+
+                  if (event.updatedState) threadStateRef.current = event.updatedState;
 
                   if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
                     setSessionTokens((prev) => prev + event.tokenEstimate!.total);
@@ -1028,7 +1036,10 @@ Try one of the suggested queries below to get started.`;
           sources?: ChatMessage["sources"];
           trace?: ChatMessage["trace"];
           tokenEstimate?: { input: number; output: number; total: number };
+          updatedState?: import("@/lib/conversation-state").ThreadState;
         };
+
+        if (data.updatedState) threadStateRef.current = data.updatedState;
 
         if (data.tokenEstimate?.total && data.tokenEstimate.total > 0) {
           setSessionTokens((prev) => prev + data.tokenEstimate!.total);

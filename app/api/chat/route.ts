@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { message, useDemoData, contextMode, mode: interactionMode } = body;
+    const { message, useDemoData, contextMode, mode: interactionMode, threadState } = body;
     let { history, accumulatedSourceIds } = body;
 
     if (!message || typeof message !== "string") {
@@ -134,7 +134,8 @@ export async function POST(req: NextRequest) {
             (chunk: string) => {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: chunk })}\n\n`));
             },
-            clientTz
+            clientTz,
+            threadState ?? undefined
           ).then((result) => {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", ...result })}\n\n`));
             controller.close();
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz, threadState ?? undefined);
 
     return NextResponse.json(result);
   } catch (error) {

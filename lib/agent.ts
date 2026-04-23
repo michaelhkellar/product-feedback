@@ -18,6 +18,10 @@ import { ContextMode } from "./api-keys";
 import { searchWeb } from "./web-search";
 import { enrichSubset } from "./enrichment";
 import { cleanResponseTables } from "./response-cleaner";
+import { synthesizeAnalyticsDocs } from "./analytics-docs";
+import { scoreDoc } from "./signal-score";
+import { ThreadState, updateState } from "./conversation-state";
+import { AGENT_TOOLS, runTool, ToolContext } from "./agent-tools";
 
 export type InteractionMode = "summarize" | "prd" | "ticket";
 
@@ -72,6 +76,7 @@ export interface ChatResult {
   tokenEstimate: { input: number; output: number; total: number };
   trace?: ChatTrace;
   followupSuggestions?: FollowupSuggestion[];
+  updatedState?: ThreadState;
 }
 
 function estimateTokens(text: string): number {
@@ -115,41 +120,29 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   }
 
   const store = new InMemoryVectorStore();
-
   let enrichedData = data;
-  const embeddingMap = new Map<string, number[]>();
 
-  if (embedder) {
+  // Step 1: pre-compute feedback embeddings for clustering (must happen before store build)
+  const feedbackEmbMap = new Map<string, number[]>();
+  if (embedder && data.feedback.length > 0) {
     try {
-      // Embed all doc types so RRF fusion works across sources
-      const allItems: { id: string; text: string }[] = [
-        ...data.feedback.map((f) => ({ id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}` })),
-        ...data.features.map((f) => ({ id: f.id, text: `${f.name}. ${f.description.slice(0, 400)}` })),
-        ...data.calls.map((c) => ({ id: c.id, text: `${c.title}. ${c.summary.slice(0, 400)}` })),
-        ...data.jiraIssues.map((j) => ({ id: j.id, text: `${j.summary}. ${j.description.slice(0, 400)}` })),
-        ...data.linearIssues.map((l) => ({ id: l.id, text: `${l.title}. ${l.description.slice(0, 400)}` })),
-        ...data.confluencePages.map((p) => ({ id: p.id, text: `${p.title}. ${p.excerpt.slice(0, 400)}` })),
-      ];
-
+      const feedbackItems = data.feedback.map((f) => ({
+        id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}`,
+      }));
       const EMBED_BATCH = 64;
-      if (allItems.length > 0) {
-        for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
-          const batch = allItems.slice(i, i + EMBED_BATCH);
-          const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
-          if (vecs) {
-            batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
-          }
-        }
+      for (let i = 0; i < feedbackItems.length; i += EMBED_BATCH) {
+        const batch = feedbackItems.slice(i, i + EMBED_BATCH);
+        const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
+        if (vecs) batch.forEach((item, j) => { if (vecs[j]?.length) feedbackEmbMap.set(item.id, vecs[j]); });
       }
-
-      if (data.feedback.length > 0 && embeddingMap.size > 0) {
-        const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
-        const annotated = annotateClusters(data.feedback, clusterMap, clusters);
-        enrichedData = { ...data, feedback: annotated };
+      if (feedbackEmbMap.size > 0) {
+        const { clusters, clusterMap } = clusterFeedback(data.feedback, feedbackEmbMap);
+        enrichedData = { ...data, feedback: annotateClusters(data.feedback, clusterMap, clusters) };
       }
-    } catch { /* non-fatal: proceed with TF-IDF */ }
+    } catch { /* non-fatal: proceed without cluster annotations */ }
   }
 
+  // Step 2: add all items to store — long docs get chunked into sub-documents
   if (enrichedData.feedback.length) store.addFeedback(enrichedData.feedback);
   if (enrichedData.features.length) store.addFeatures(enrichedData.features);
   if (enrichedData.calls.length) store.addCalls(enrichedData.calls);
@@ -157,9 +150,44 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   if (enrichedData.jiraIssues.length) store.addJiraIssues(enrichedData.jiraIssues);
   if (enrichedData.linearIssues.length) store.addLinearIssues(enrichedData.linearIssues);
   if (enrichedData.confluencePages.length) store.addConfluencePages(enrichedData.confluencePages);
-  store.buildIndex();
-  if (embeddingMap.size > 0) store.setEmbeddings(embeddingMap);
 
+  // Step 2b: synthesize analytics docs so events/pages are semantically searchable
+  if (enrichedData.analyticsOverview) {
+    const analyticsDocs = synthesizeAnalyticsDocs(
+      enrichedData.analyticsOverview,
+      enrichedData.analyticsOverview.provider
+    );
+    store.addAnalytics(analyticsDocs);
+  }
+
+  store.buildIndex();
+
+  // Step 3: apply signal scores to all search-candidate documents
+  for (const doc of store.getAllDocuments()) {
+    doc.signalScore = scoreDoc({ text: doc.text, sourceType: doc.type as Parameters<typeof scoreDoc>[0]["sourceType"] });
+  }
+
+  // Step 4: compute embeddings for ALL store documents (including chunks)
+  const embeddingMap = new Map<string, number[]>();
+  if (embedder) {
+    try {
+      // Reuse feedback embeddings — feedback is never chunked so doc.id == item.id
+      feedbackEmbMap.forEach((vec, id) => embeddingMap.set(id, vec));
+
+      // Embed everything else (chunks from calls/jira/confluence/linear + features + analytics docs)
+      const needsEmbed = store.getAllDocuments().filter((d) => !embeddingMap.has(d.id));
+      const EMBED_BATCH = 64;
+      for (let i = 0; i < needsEmbed.length; i += EMBED_BATCH) {
+        const batch = needsEmbed.slice(i, i + EMBED_BATCH);
+        try {
+          const vecs = await embedder.provider.embed!(batch.map((d) => d.text.slice(0, 512)), embedder.key);
+          if (vecs) batch.forEach((doc, j) => { if (vecs[j]?.length) embeddingMap.set(doc.id, vecs[j]); });
+        } catch { /* non-fatal per-batch; TF-IDF covers missing docs */ }
+      }
+    } catch { /* non-fatal: TF-IDF fallback covers all docs */ }
+  }
+
+  if (embeddingMap.size > 0) store.setEmbeddings(embeddingMap);
   cachedStore = { fingerprint: fp, store, embeddingMap };
   return { store, embeddingMap, enrichedData };
 }
@@ -1526,10 +1554,20 @@ export async function chat(
   mode: InteractionMode = "summarize",
   accumulatedSourceIds?: string[],
   onChunk?: (chunk: string) => void,
-  clientTz = "UTC"
+  clientTz = "UTC",
+  incomingState?: ThreadState
 ): Promise<ChatResult> {
   const timeRange = extractTimeRange(userMessage, clientTz);
-  const _rawScopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
+  // Fall back to persisted time window from conversation state when no explicit range in message
+  const _rawScopedData = timeRange
+    ? filterByTimeRange(data, timeRange)
+    : incomingState?.timeWindow
+      ? filterByTimeRange(data, {
+          start: new Date(incomingState.timeWindow.start),
+          end: new Date(incomingState.timeWindow.end),
+          label: incomingState.timeWindow.label,
+        })
+      : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
   const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys);
@@ -1537,11 +1575,29 @@ export async function chat(
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
   const wideQuery = countQuery || drilldownQuery || isBroadQuery(userMessage) || deepDiveEarly.analytics || deepDiveEarly.data;
-  const pivot = detectPivot(userMessage);
+  const rawPivot = detectPivot(userMessage);
+  // Merge persisted excluded entities from conversation state with current-turn pivot detection
+  const pivot = incomingState?.excludedEntities?.length
+    ? {
+        isPivot: rawPivot.isPivot || incomingState.excludedEntities.length > 0,
+        excluded: Array.from(new Set([...rawPivot.excluded, ...incomingState.excludedEntities])),
+      }
+    : rawPivot;
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
   // Use a wider search limit for pivot queries so we get enough non-excluded results
   const searchLimit = wideQuery || pivot.isPivot ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
   const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage), pivot);
+  // Boost focal companies from conversation state (append as extra queries if not already present)
+  if (incomingState?.focalCompanies?.length) {
+    const msgLower = userMessage.toLowerCase();
+    const alreadyMentioned = incomingState.focalCompanies.every((c) => msgLower.includes(c.toLowerCase()));
+    if (!alreadyMentioned) {
+      for (const company of incomingState.focalCompanies) {
+        const boost = `${userMessage} ${company}`;
+        if (!searchQueries.includes(boost)) searchQueries.push(boost);
+      }
+    }
+  }
 
   // Compute query embedding for semantic search (non-fatal if unavailable)
   let queryEmbedding: number[] | undefined;
@@ -1562,7 +1618,7 @@ export async function chat(
 
   const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, ...urgencyFilter })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -1954,6 +2010,23 @@ ${formatInstructions}`;
           ? "detailed"
           : "conversational";
 
+  // Compute structured conversation state for this turn (persisted back by the client)
+  const retrievedCompanies = Array.from(new Set(
+    results
+      .filter((r) => r.document.type === "feedback")
+      .flatMap((r) => {
+        const fb = scopedData.feedback.find((f) => f.id === r.document.id);
+        return fb?.company ? [fb.company] : [];
+      })
+  )).slice(0, 5);
+  const updatedState = updateState(incomingState, {
+    retrievedThemes: detectedThemes,
+    retrievedCompanies,
+    extractedTimeRange: timeRange,
+    pivotExcluded: rawPivot.excluded,
+    mode,
+  });
+
   const trace: ChatTrace = {
     detectedIntent: mode as "summarize" | "prd" | "ticket",
     queryType: queryTypeLabel,
@@ -2010,6 +2083,8 @@ ${formatInstructions}`;
           required: ["query"],
         },
       }] : []),
+      // Multi-hop tools: structured cross-source queries for comparison and causal reasoning
+      ...AGENT_TOOLS,
     ];
 
     const webSources: { type: string; id: string; title: string; url?: string }[] = [];
@@ -2057,6 +2132,16 @@ ${formatInstructions}`;
           text: results.map((r) => `[${r.domain}] ${r.title} — ${r.description} (${r.url})`).join("\n---\n"),
           count: results.length,
         };
+      }
+      // Dispatch multi-hop structured tools (findFeedback, compareWindows, findAnalytics, findAccountHistory)
+      if (["findFeedback", "compareWindows", "findAnalytics", "findAccountHistory"].includes(name)) {
+        const toolCtx: ToolContext = { data: scopedData, store, queryEmbedding };
+        const result = await runTool({ id: `tool-${Date.now()}`, name, input }, toolCtx);
+        const text = JSON.stringify(result.result);
+        const count = Array.isArray((result.result as Record<string, unknown>)?.items)
+          ? ((result.result as Record<string, unknown>).items as unknown[]).length
+          : 1;
+        return { text: text.slice(0, 2000), count };
       }
       return { text: "Unknown tool.", count: 0 };
     };
@@ -2146,6 +2231,7 @@ ${formatInstructions}`;
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
         ...(followupSuggestions.length > 0 ? { followupSuggestions } : {}),
+        updatedState,
       };
     }
     aiAttemptedButFailed = true;

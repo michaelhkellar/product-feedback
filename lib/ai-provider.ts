@@ -59,7 +59,7 @@ function lruGet<K, V>(map: Map<K, V>, key: K): V | undefined {
 
 // --- Embedding cache (shared across providers) ---
 const _embeddingCache = new Map<string, number[]>();
-const EMBED_CACHE_MAX = 2000;
+const EMBED_CACHE_MAX = 10_000;
 function embCacheKey(text: string, model: string): string {
   return `${model}:${text.length}:${text.slice(0, 64)}`;
 }

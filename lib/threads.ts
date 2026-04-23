@@ -1,5 +1,8 @@
 import { ChatMessage } from "./types";
 import { InteractionMode } from "./agent";
+import { ThreadState } from "./conversation-state";
+
+export type { ThreadState };
 
 export interface Thread {
   id: string;
@@ -9,10 +12,13 @@ export interface Thread {
   mode: InteractionMode;
   createdAt: string;
   updatedAt: string;
+  /** Structured conversation context persisted across turns. Optional — absent on old threads. */
+  state?: ThreadState;
 }
 
 const DB_NAME = "feedback-agent-threads";
-const DB_VERSION = 1;
+// Version 2: added optional `state` field on Thread (no schema migration needed; field is optional).
+const DB_VERSION = 2;
 const STORE_NAME = "threads";
 
 function openDB(): Promise<IDBDatabase> {
