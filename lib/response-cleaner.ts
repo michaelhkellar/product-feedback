@@ -47,8 +47,16 @@ function shortHandle(title: string): string {
   let t = title.split(/\s+—\s+/)[0];
   // Strip " (1 of N ...)" / " (N of M ...)" suffixes only
   t = t.replace(/\s+\(\d+\s+of\s+\d+[^)]*\)\s*$/i, "");
+  // Strip " (N items)" annotation (added when multiple feedback items share
+  // the same company, so the Source column stays clean — "Acme" not
+  // "Acme (3 items)")
+  t = t.replace(/\s+\(\d+\s+items?\)\s*$/i, "");
   // Strip " (from Company)" suffix
   t = t.replace(/\s+\(from\s+[^)]+\)\s*$/i, "");
+  // "vote: FeatureName" and "feedback on: FeatureName" are the identity prefixes
+  // injected by the resolver. Strip them so cell matching compares the identity
+  // token (e.g. "vote: Centralized Insights") cleanly without suffix clutter.
+  // We keep the prefix so that model copies "vote: X" which is still human-readable.
   return t.trim();
 }
 
@@ -105,12 +113,17 @@ function isValidSourceCell(cell: string, knownSources: SourceRef[]): boolean {
   })) return true;
 
   // Phrases that signal a hallucinated theme label, internal roadmap item,
-  // or a platform-overview catch-all that isn't tied to a specific signal
+  // a platform vote-portal title, or a platform-overview catch-all that isn't
+  // tied to a specific signal
   const BANNED_PHRASES = [
     "known feature", "known page", "known event", "known issue",
     "feature request", "the integration", "new feature", "n/a", "unknown",
     "roadmap feature", "roadmap item", "internal roadmap", "pb feature",
     "analytics overview", "usage overview",
+    // Generic Productboard note title patterns — identity resolver should
+    // have replaced these with company/email/vote:/feedback on: but guard
+    // here in case the model copies the raw title anyway.
+    "vote for ", "direct feedback for", "blumira portal", "untitled note",
   ];
   if (BANNED_PHRASES.some((bp) => lower.includes(bp))) return false;
 
@@ -338,8 +351,29 @@ function normalizeTableSplits(text: string): string {
  * valid also resolves back to its source record.
  */
 function findSourceForCell(cell: string, sources: SourceRef[]): SourceRef | null {
-  const c = cell.trim();
-  if (!c) return null;
+  const raw = cell.trim();
+  if (!raw) return null;
+
+  // Exact source-id match (the model sometimes echoes the raw doc id,
+  // e.g. a UUID, when it can't pick a short handle). Do this FIRST so
+  // enforcement works even for unhelpful-looking cells.
+  const lowerRaw = raw.toLowerCase();
+  const byId = sources.find((s) => s.id.toLowerCase() === lowerRaw);
+  if (byId) return byId;
+
+  // Leading `[N]` or `N ` citation prefix → try index-based lookup.
+  // The model sometimes writes e.g. "[17] Pre-populate filter values" or
+  // "17 Pre-populate filter values" as the Source cell, copying the citation
+  // index from the evidence list. Map it back to sources[N-1] directly.
+  const citeMatch = raw.match(/^\[?(\d{1,3})\]?[\s.:—-]+(.*)$/);
+  const stripped = citeMatch ? citeMatch[2].trim() : raw;
+  if (citeMatch) {
+    const idx = parseInt(citeMatch[1], 10) - 1;
+    if (idx >= 0 && idx < sources.length) return sources[idx];
+  }
+
+  const c = stripped || raw;
+
   // Ticket key match (strip brackets/markdown link syntax if present)
   const keyMatch = c.match(/^\[?([A-Z]{2,10}-\d+)\]?/);
   if (keyMatch) {
@@ -351,7 +385,9 @@ function findSourceForCell(cell: string, sources: SourceRef[]): SourceRef | null
     });
     if (byKey) return byKey;
   }
-  // Email match: title may carry " — email@..." as contact suffix
+  // Email match: title may carry " — email@..." as contact suffix, OR the
+  // email may BE the identity lead of a feedback title like
+  // "support@acme.com — Add host info…".
   if (EMAIL_RE.test(c)) {
     const lc = c.toLowerCase();
     const byEmail = sources.find((s) => s.title.toLowerCase().includes(lc));

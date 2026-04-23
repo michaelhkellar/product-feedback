@@ -212,6 +212,23 @@ function buildNoteMetadata(n: Record<string, unknown>): Record<string, string> {
   if (n.state) meta.state = n.state as string;
   if (n.company_domain) meta.companyDomain = n.company_domain as string;
   if (n.user_email) meta.userEmail = n.user_email as string;
+
+  // Capture the name of the feature this note is attached to. Notes with
+  // generic titles like "Blumira Portal - vote for X" or "Direct feedback for
+  // a feature" carry no useful customer identity in their title, so we store
+  // the linked feature name so the identity resolver in agent.ts can use it
+  // as a fallback Source label. The Productboard API may return this under
+  // several shapes:
+  //   feature.name        (v1 notes with a single feature link)
+  //   features[0].name    (notes linked to multiple features, take first)
+  const feature = n.feature as Record<string, unknown> | undefined;
+  const features = n.features as Array<Record<string, unknown>> | undefined;
+  const featureName =
+    (typeof feature?.name === "string" && feature.name) ||
+    (Array.isArray(features) && features.length > 0 && typeof features[0]?.name === "string" && features[0].name) ||
+    "";
+  if (featureName) meta.featureName = featureName;
+
   return meta;
 }
 

@@ -178,6 +178,10 @@ export interface ChatMessage {
   trace?: ChatMessageTrace;
   isStreaming?: boolean;
   followupSuggestions?: FollowupSuggestion[];
+  /** Optional short label to render in the UI instead of `content`.
+   *  Used when a follow-up chip sends a long prompt to the model but we
+   *  want the chat bubble to show a compact label (e.g. "10x thinking"). */
+  displayContent?: string;
 }
 
 export interface DataSourceStatus {

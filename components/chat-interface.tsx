@@ -823,7 +823,7 @@ Try one of the suggested queries below to get started.`;
   }, [mode]);
 
   // Keep a ref so the imperative handle always calls the latest sendMessage
-  const sendMessageRef = useRef<((text?: string, opts?: { skipFilterSuffix?: boolean }) => void) | null>(null);
+  const sendMessageRef = useRef<((text?: string, opts?: { skipFilterSuffix?: boolean; displayContent?: string }) => void) | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -832,7 +832,7 @@ Try one of the suggested queries below to get started.`;
 
   useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessageRef.current?.(msg, { skipFilterSuffix: true }) }), []);
 
-  async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean }) {
+  async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean; displayContent?: string }) {
     let content = text || input.trim();
     if (!content || isLoading) return;
 
@@ -851,6 +851,7 @@ Try one of the suggested queries below to get started.`;
       role: "user",
       content,
       timestamp: new Date().toISOString(),
+      ...(opts?.displayContent ? { displayContent: opts.displayContent } : {}),
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -1173,7 +1174,7 @@ Try one of the suggested queries below to get started.`;
                 )}
               >
                 <MemoizedMarkdown
-                  content={msg.content}
+                  content={msg.role === "user" && msg.displayContent ? msg.displayContent : msg.content}
                   isStreaming={msg.isStreaming}
                   sources={msg.sources}
                   entities={[
@@ -1203,7 +1204,7 @@ Try one of the suggested queries below to get started.`;
                     return (
                       <button
                         key={f.kind}
-                        onClick={() => sendMessage(f.prompt, { skipFilterSuffix: true })}
+                        onClick={() => sendMessage(f.prompt, { skipFilterSuffix: true, displayContent: f.label })}
                         className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                         title={f.prompt}
                       >

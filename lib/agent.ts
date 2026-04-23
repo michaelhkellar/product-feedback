@@ -624,7 +624,7 @@ const DETAILED_FORMAT = `Use this format as a guide. Include sections the eviden
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix), OR a specific analytics signal in the form "<Page/Feature/Event/Visitor name> (Pendo page)" / "(Pendo feature)" / "(Amplitude event)" / "(PostHog event)" etc. (use the EXACT phrasing from the Available Evidence list). When in doubt, prefer the short handle over nothing. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", a bare number, an [n] citation marker, a theme name, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific page/feature/event/note name in parens. What = actual request/issue or usage observation (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
+[max 5 rows. Include this table whenever citing 2+ distinct sources or when the question asks about feedback items, accounts, or requests. SOURCE CELL RULES: The Available Evidence list has the format "[N] IDENTITY: full-title (type)". Copy the IDENTITY (everything before the colon) verbatim — it is the company name, customer email, Jira/Linear key, "vote: FeatureName", or "feedback on: FeatureName" that identifies who said it or what ticket it is. VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, company name, "vote: X", "feedback on: X", or a specific analytics signal as "<Page/Feature/Event name> (Pendo page)" / "(Pendo feature)" / "(Amplitude event)" / "(PostHog event)" (use EXACT phrasing from the evidence list). NEVER use the feedback title that appears after the " — " in the evidence list as the Source cell value. BANNED = any generic portal title ("Blumira Portal", "vote for ...", "Direct feedback for ..."), "known feature", "roadmap item", bare numbers, [n] citation markers, theme names, bare platform name alone. What = actual request/issue (inline [n] citation goes here, not in Source). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday — no absolute dates). Skip table if 0-1 sources.]
 
 ## [Heading]
 
@@ -656,7 +656,7 @@ const LIST_FORMAT = `Use this format for list/show-me queries:
 
 | Source | What | When |
 | --- | --- | --- |
-[3-10 rows. Always include this table. SOURCE CELL RULES: VALID = Jira/Linear key ("CX-1234" or "[CX-1234](url)"), customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text shown before the first colon, typically ≤80 chars — do NOT include the "— customer" or "(1 of N)" suffix), OR a specific analytics signal as "<Page/Feature/Event name> (Pendo page)" / "(Pendo feature)" / "(Amplitude event)" / "(PostHog event)" etc. (use EXACT phrasing from the Available Evidence list). Prefer a mix of source types over Jira-only. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific signal name in parens. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[3-10 rows. Always include this table. SOURCE CELL RULES: The Available Evidence list has the format "[N] IDENTITY: full-title (type)". Copy the IDENTITY (everything before the colon) verbatim — it is the company name, customer email, Jira/Linear key, "vote: FeatureName", or "feedback on: FeatureName". VALID = Jira/Linear key, customer email, company name, "vote: X", "feedback on: X", or analytics signal as "<Name> (Pendo page)" / "(Pendo feature)" etc. Prefer a mix of source types over Jira-only. NEVER use the feedback title after the " — " as a Source cell value. BANNED = generic portal titles, "known feature", "roadmap item", bare numbers, [n] citation markers, theme names, bare platform name alone. Citation markers belong in the What column only. What = the specific request, complaint, or issue — be concrete, not generic. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 [Optional: 1-3 sentence pattern or theme across the items above. Call out the dominant thread, any meaningful outlier, and how segments differ if they do. Skip if self-evident from the table.]
 
@@ -678,7 +678,7 @@ const ANALYTICS_FORMAT = `Use this format for product-analytics-centric question
 [1-3 short paragraphs. Tie the usage data to user intent: which jobs-to-be-done it implies, where users are spending effort, what the disparities mean. Reference customer feedback that corroborates or contradicts the usage pattern via inline [n] citations.]
 
 ## Customer Evidence
-[OPTIONAL. Include only if 2+ customer feedback items in the Available Evidence list directly relate to the analytics finding. Use the canonical Source|What|When table here. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, short handle of a Productboard note / Slite page / call from the evidence list, OR a specific analytics signal in "<Name> (Pendo page)" / "(Amplitude event)" / etc. form when the evidence is the analytics signal itself. BANNED = the bare platform name alone (Pendo, Amplitude, PostHog, etc.), theme names, prose, [n] citation markers. Skip this section entirely if there is no specific evidence to cite.]
+[OPTIONAL. Include only if 2+ customer feedback items in the Available Evidence list directly relate to the analytics finding. Use the canonical Source|What|When table here. SOURCE CELL RULES: Copy the IDENTITY from the Available Evidence list (everything before the colon) — company name, email, Jira/Linear key, "vote: X", "feedback on: X", or analytics signal as "<Name> (Pendo page)" etc. BANNED = generic portal titles, bare platform name alone, theme names, prose, [n] citation markers. Skip this section entirely if there is no specific evidence to cite.]
 
 ## Take
 [OPTIONAL. 1-2 opinionated sentences with a confidence phrase. Skip if the question is purely descriptive.]
@@ -691,7 +691,7 @@ If your answer enumerates 3 or more specific feedback items, accounts, tickets, 
 
 | Source | What | When |
 | --- | --- | --- |
-[up to 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key, customer email, the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon), OR a specific analytics signal as "<Name> (Pendo page)" / "(Amplitude event)" / etc. Prefer a mix of source types. BANNED = "known feature", "roadmap feature", "roadmap item", "internal roadmap item", theme names, bare numbers, [n] citation markers, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention). What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[up to 5 rows. SOURCE CELL RULES: Copy the IDENTITY from the Available Evidence list (everything before the colon) — company name, email, Jira/Linear key, "vote: X", or "feedback on: X". VALID = Jira/Linear key, customer email, company name, "vote: X", "feedback on: X", or analytics signal as "<Name> (Pendo page)" etc. NEVER use the feedback title after the " — ". BANNED = generic portal titles, "known feature", "roadmap item", bare numbers, [n] citation markers, theme names, bare platform name alone. What = specific request/issue (inline [n] citation goes here). When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 A short opinionated closing sentence (a "Take") is welcome when the evidence supports one — keep it to one sentence and separate it from the descriptive answer.`;
 
@@ -1493,7 +1493,7 @@ function buildFollowupSuggestions(
 
 Render the 3 bets as a numbered list. Each bet MUST be its own list item on its own line, with a BLANK LINE between items. Start each item with "1. **Title** — ", "2. **Title** — ", "3. **Title** — " (bold title, em-dash, then the body). Keep each bet to 2-4 sentences covering: the customer job it serves, the strongest evidence from the data, and what we'd need to see to fully commit. No markdown headings (###, ##) for the bets.
 
-Do NOT include a Customer Evidence table unless you have specific dated evidence to cite — if you do, use the canonical Source|What|When table AFTER the bets with a blank line before it. If every relevant note's date label is "today" (often an ingest/sync artifact in Productboard), write "recent" or "—" in the When column instead of repeating "today" for every row.`,
+Do NOT include a Customer Evidence table unless you have specific dated evidence to cite — if you do, use the canonical Source|What|When table AFTER the bets with a blank line before it. Use the actual dates provided in the evidence (e.g. "3d ago", "2w ago") for the When column — do NOT substitute "—" or "recent" when real dates are available.`,
     });
   }
 
@@ -1664,21 +1664,62 @@ export async function chat(
     let when: string | undefined;
     if (doc.type === "feedback") {
       const fb = scopedData.feedback.find((f) => f.id === doc.id);
+      // Five-level identity resolver (preference order):
+      // 1. Company name — best for stakeholder-facing Source cells
+      // 2. Customer email or name
+      // 3. "vote: {FeatureName}" — when the note title is a portal vote with
+      //    no real customer attribution, use the feature name it's linked to
+      // 4. "feedback on: {FeatureName}" — "Direct feedback for a feature" shape
+      // 5. Cleaned feedback title (last resort — can still be generic)
+      const GENERIC_TITLE_RE = /^(?:[A-Z][\w ]+ Portal\s*[-–—]\s*vote for |Direct feedback for|Feature Request$|Untitled Note|Note \d+)/i;
       const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
-      const contact = email || fb?.customer || fb?.company || "";
+      const person = email || fb?.customer || "";
+      const rawTitle = fb?.title || "";
+      const featureName = fb?.metadata?.featureName || "";
+      let identity = "";
+      if (fb?.company) {
+        identity = fb.company;
+      } else if (person) {
+        identity = person;
+      } else if (featureName && /Portal\s*[-–—]\s*vote for/i.test(rawTitle)) {
+        identity = `vote: ${featureName}`;
+      } else if (featureName && /^Direct feedback for/i.test(rawTitle)) {
+        identity = `feedback on: ${featureName}`;
+      } else if (featureName && GENERIC_TITLE_RE.test(rawTitle)) {
+        identity = `feedback on: ${featureName}`;
+      }
       const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
-      const coNote = coCount >= 2 ? ` (1 of ${coCount} from ${fb!.company})` : "";
-      title = fb ? `${cleanFeedbackTitle(fb)}${contact ? ` — ${contact}` : ""}${coNote}` : title;
+      const coNote = coCount >= 2 ? ` (${coCount} items)` : "";
+      const core = fb ? cleanFeedbackTitle(fb) : doc.id;
+      title = identity
+        ? `${identity}${coNote} — ${core}`
+        : core;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
       if (fb) when = shortDate(fb as unknown as Record<string, unknown>);
     } else if (doc.type === "feature") {
-      title = scopedData.features.find((f) => f.id === doc.id)?.name || title;
+      const feat = scopedData.features.find((f) => f.id === doc.id);
+      title = feat?.name || title;
+      // Features have no createdAt/updatedAt in our type; surface the newest
+      // related-feedback date as the ground-truth When so rows don't stay blank.
+      if (feat) {
+        const related = scopedData.feedback
+          .filter((fb) => fb.themes?.some((t) => feat.themes?.includes(t)))
+          .map((fb) => fb as unknown as Record<string, unknown>);
+        if (related.length > 0) {
+          const newest = related
+            .map((r) => shortDate(r))
+            .find((d) => d && d !== "date unknown");
+          if (newest) when = newest;
+        }
+      }
     } else if (doc.type === "call") {
       const c = scopedData.calls.find((c) => c.id === doc.id);
       title = c?.title || title;
       if (c) when = shortDate(c as unknown as Record<string, unknown>);
     } else if (doc.type === "insight") {
-      title = scopedData.insights.find((i) => i.id === doc.id)?.title || title;
+      const ins = scopedData.insights.find((i) => i.id === doc.id);
+      title = ins?.title || title;
+      if (ins) when = shortDate(ins as unknown as Record<string, unknown>);
     } else if (doc.type === "jira") {
       const j = scopedData.jiraIssues.find((j) => j.id === doc.id);
       if (j) {
@@ -1850,12 +1891,13 @@ export async function chat(
   const formatInstructions = getFormatInstructions(mode, userMessage, conversationHistory, hasComparison);
 
   const evidencePack = sources.length > 0
-    ? "\n---\nAvailable Evidence (cite by [n] citation marker; for Source cells use the short handle shown before the colon):\n" +
+    ? "\n---\nAvailable Evidence (cite by [n] citation marker; for Source cells copy the IDENTITY shown before the colon — this is the company, email, Jira key, ticket identifier, vote: feature, or feedback on: feature that identifies the source. Never use the feedback title after the em-dash or any generic label as the Source cell value):\n" +
       sources.map((s, i) => {
-        // Short handle = title up to first " — " or " (" (strips contact/company suffixes we added server-side).
-        // This is the string the model should put in the Source column for non-Jira items.
-        const shortTitle = s.title.split(/\s+—\s+/)[0].split(/\s+\(/)[0].trim();
-        return `[${i + 1}] ${shortTitle}: ${s.title} (${s.type})`;
+        // Identity = title up to first " — " (strips the feedback title we
+        // added after the em-dash for context). This is exactly what should
+        // go in the Source column — not the full compound title.
+        const identity = s.title.split(/\s+—\s+/)[0].trim();
+        return `[${i + 1}] ${identity}: ${s.title} (${s.type})`;
       }).join("\n")
     : "";
 
@@ -2227,7 +2269,7 @@ const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evide
 
 | Source | What | When |
 | --- | --- | --- |
-[max 5 rows. SOURCE CELL RULES: VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), the SHORT HANDLE of a Productboard note / Slite page / call from the Available Evidence list (the text before the first colon), OR a specific analytics signal as "<Name> (Pendo page)" / "(Amplitude event)" / etc. Prefer a mix of source types over Jira-only. BANNED = customer email (use in quote attribution only), "known feature", "roadmap feature", "roadmap item", "internal roadmap item", bare numbers, [n] citation markers, theme names, the bare PLATFORM name alone (Pendo, Amplitude, PostHog, Productboard, Jira, Linear, Slite, Confluence, Grain, Attention) — always pair the platform with a specific signal name. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
+[max 5 rows. SOURCE CELL RULES: Copy the IDENTITY from the Available Evidence list (everything before the colon) — company name, Jira/Linear key, "vote: X", "feedback on: X". VALID = Jira/Linear key (prefer linked "[CX-1234](url)"), company name, "vote: X", "feedback on: X", or analytics signal as "<Name> (Pendo page)" etc. Prefer a mix of source types. NEVER use customer email in Source (use in quote attribution only) and NEVER use the feedback title after the " — ". BANNED = generic portal titles, "known feature", "roadmap item", bare numbers, [n] citation markers, theme names, bare platform name alone. What = the actual request/issue. When = relative date (Xd ago, Xw ago, Xmo ago, today/yesterday) — no absolute dates.]
 
 ## Segmentation
 [OPTIONAL. Include when signals differ meaningfully across account tier, industry, role, or use case. 1-3 sentences. Skip when the data is uniform.]
