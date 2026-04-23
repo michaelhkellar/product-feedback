@@ -1,11 +1,15 @@
 # Customer Feedback Intelligence Agent
 
-An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard and Attention — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Summarize** feedback, **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
+An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard and Attention — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Insights** (query and analyze feedback), **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
 
 > Demo data in this repository is synthetic and intentionally fictionalized for safe demos and public code sharing.
 
 ## What's New
 
+- **Insights mode** — the main chat mode is now called "Insights" (previously "Summarize"), reflecting its broader analytical capability
+- **Evidence confidence** — every response that cites 3+ sources now includes a Confidence block showing sample size, unique account count, newest item age, and a High / Medium / Low rating with a one-phrase reason
+- **Follow-up suggestion chips** — AI responses surface 2–4 clickable follow-up prompts (10x opportunity, counter-signal, gaps analysis, cohort breakdown) so you can keep digging without typing
+- **Retry resilience** — automatic retries with backoff on transient 429 / 503 errors across all three AI providers (Gemini, Anthropic, OpenAI), reducing failed responses during rate-limit spikes
 - **Richer AI context** — feature descriptions, Jira/Linear issue details, and call key moments (with negative-sentiment prioritization) now flow into the AI context, giving it substantially more signal to reason from
 - **Sentiment-weighted themes** — the Insights panel now ranks themes by urgency (negative mentions weighted 1.5×), surfacing pain points above popularity
 - **Emerging trend detection** — new insight rule flags themes that doubled in the last 14 days vs. the prior 14, and highlights declining themes that may indicate a fix took hold
@@ -33,7 +37,7 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 │  │  Panel    │  │  Interface         │  │  (Live Analysis)     │ │
 │  │          │  │  ┌──────────────┐  │  │                      │ │
 │  │          │  │  │ Mode Tabs:   │  │  │                      │ │
-│  │          │  │  │ Summarize    │  │  │                      │ │
+│  │          │  │  │ Insights     │  │  │                      │ │
 │  │          │  │  │ Write PRD    │  │  │                      │ │
 │  │          │  │  │ Write Ticket │  │  │                      │ │
 │  │          │  │  └──────────────┘  │  │                      │ │
@@ -80,7 +84,7 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 - **Rich Demo Data**: 12 synthetic feedback items, 8 Productboard features, 4 Attention calls, 6 pre-computed insights — all ready to explore without any API keys. Demo data auto-disables when real data source keys are configured
 
 ### Interaction Modes
-- **Summarize**: Query and analyze feedback with configurable context depth (quick, balanced, or full)
+- **Insights**: Query and analyze feedback with configurable context depth (quick, balanced, or full). Responses include a structured evidence table, inline citations, a Confidence block (sample size, account count, recency, High/Medium/Low rating), and follow-up suggestion chips
 - **Write PRD**: Generate product pitches using a blended methodology from Shape Up, Front's 1-Pager, Figma's PRD process, and Cutler's one-pager principles — with preview, edit, copy, download, and Confluence publish
 - **Write Ticket**: Generate structured engineering tickets with problem-first framing, scope boundaries, and rabbit holes — with preview, edit, and creation via Jira or Linear
 
@@ -104,6 +108,8 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 - **Entity Drawer**: Click any customer or feature name in a chat response to open a detail panel with feedback history, analytics context, and a sentiment breakdown
 - **Inline Citations**: Every factual claim includes a numbered `[n]` marker; hover to preview the source without leaving the chat
 - **Answer Provenance**: Every message has a trace button that shows which query type the agent chose, which documents were retrieved, and any pivot/exclusion decisions
+- **Follow-up Suggestion Chips**: Each Insights response surfaces 2–4 clickable follow-up prompts (10x opportunity, counter-signal, gaps, cohort) to continue the investigation without typing
+- **Evidence Confidence**: Responses with 3+ sources include a sample size, unique account count, newest-item age, and a High / Medium / Low confidence rating
 - **Pivot Detection**: Phrases like "ConnectWise is in progress, what else?" are detected and the agent excludes the mentioned entity from retrieval, giving diverse results
 - **Progressive Disclosure**: Long responses wrap distinct sub-topics in collapsible `<details>` blocks to reduce visual noise
 
@@ -200,7 +206,7 @@ If you deploy this app publicly and connect real data sources:
 
 Once the app is running, try asking the agent:
 
-### Summarize Mode
+### Insights Mode
 - "What accounts are at risk of churning?"
 - "Show me all feedback from enterprise accounts in the last 30 days"
 - "What's happening with SSO — who's affected and what's the revenue impact?"
