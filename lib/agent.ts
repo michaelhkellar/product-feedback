@@ -251,6 +251,54 @@ function cleanFeedbackTitle(fb: FeedbackItem): string {
   return sanitizeTitleForTable(base);
 }
 
+const GENERIC_TITLE_RE = /^(?:[A-Z][\w ]+ Portal\s*[-–—]\s*vote for |Direct feedback for|Feature Request$|Untitled Note|Note \d+)/i;
+
+/**
+ * Resolve the best-available user-facing identity for a feedback item's Source cell.
+ * Preference order: company > email (any field) > non-email customer name > linked feature
+ * > source integration name > short id. Returns `skip: true` only for truly unattributable
+ * portal-vote rows (generic title AND no feature link AND no other identity).
+ */
+function resolveFeedbackIdentity(fb: FeedbackItem | undefined): { identity: string; skip: boolean } {
+  if (!fb) return { identity: "unknown", skip: false };
+
+  if (fb.company) return { identity: fb.company, skip: false };
+
+  const email = (fb.metadata?.userEmail?.match(EMAIL_RE)?.[0])
+    || (fb.customer?.match(EMAIL_RE)?.[0])
+    || (fb.title?.match(EMAIL_RE)?.[0])
+    || (fb.content?.match(EMAIL_RE)?.[0])
+    || "";
+  if (email) return { identity: email, skip: false };
+
+  const customerName = (fb.customer || "").trim();
+  if (customerName && customerName.toLowerCase() !== "unknown") {
+    return { identity: customerName, skip: false };
+  }
+
+  const domain = fb.metadata?.companyDomain;
+  if (domain) return { identity: domain, skip: false };
+
+  const featureName = fb.metadata?.featureName;
+  const rawTitle = fb.title || "";
+  if (featureName) {
+    const isPortalVote = /Portal\s*[-–—]\s*vote for/i.test(rawTitle);
+    return { identity: isPortalVote ? `vote: ${featureName}` : `feedback on: ${featureName}`, skip: false };
+  }
+
+  // Truly unattributable portal-vote junk (no featureName, no customer) — skip the row entirely.
+  if (GENERIC_TITLE_RE.test(rawTitle)) return { identity: "", skip: true };
+
+  // Last-resort: use the integration name so the Source cell is at least specific.
+  const src = fb.source;
+  if (src && src !== "manual") {
+    return { identity: `via ${src}`, skip: false };
+  }
+
+  // Still no identity — use a short deterministic id so downstream dedup works.
+  return { identity: fb.id ? `note ${fb.id.slice(0, 8)}` : "unknown", skip: false };
+}
+
 function feedbackContactRef(fb: FeedbackItem): string {
   const explicitEmail = fb.metadata?.userEmail || "";
   const customerLooksLikeEmail = /\S+@\S+/.test(fb.customer) ? fb.customer : "";
@@ -1727,40 +1775,13 @@ export async function chat(
     let when: string | undefined;
     if (doc.type === "feedback") {
       const fb = scopedData.feedback.find((f) => f.id === doc.id);
-      // Five-level identity resolver (preference order):
-      // 1. Company name — best for stakeholder-facing Source cells
-      // 2. Customer email or name
-      // 3. "vote: {FeatureName}" — when the note title is a portal vote with
-      //    no real customer attribution, use the feature name it's linked to
-      // 4. "feedback on: {FeatureName}" — "Direct feedback for a feature" shape
-      // 5. Cleaned feedback title (last resort — can still be generic)
-      const GENERIC_TITLE_RE = /^(?:[A-Z][\w ]+ Portal\s*[-–—]\s*vote for |Direct feedback for|Feature Request$|Untitled Note|Note \d+)/i;
-      const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
-      const person = email || fb?.customer || "";
-      const rawTitle = fb?.title || "";
-      const featureName = fb?.metadata?.featureName || "";
-      let identity = "";
-      if (fb?.company) {
-        identity = fb.company;
-      } else if (person) {
-        identity = person;
-      } else if (featureName && /Portal\s*[-–—]\s*vote for/i.test(rawTitle)) {
-        identity = `vote: ${featureName}`;
-      } else if (featureName) {
-        // Any feedback lacking customer attribution but linked to a feature — show the feature
-        // so the Source cell never becomes the ask itself.
-        identity = `feedback on: ${featureName}`;
-      }
-      // Skip unattributable portal votes — no featureName, no customer; raw title would mislead.
-      if (!identity && GENERIC_TITLE_RE.test(rawTitle)) continue;
-      // Fallback for generic-attribution feedback: prefer a neutral label over repeating the ask.
-      if (!identity) identity = "anonymous";
+      const resolved = resolveFeedbackIdentity(fb);
+      if (resolved.skip) continue;
+      const identity = resolved.identity;
       const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
       const coNote = coCount >= 2 ? ` (${coCount} items)` : "";
       const core = fb ? cleanFeedbackTitle(fb) : doc.id;
-      title = identity
-        ? `${identity}${coNote} — ${core}`
-        : core;
+      title = `${identity}${coNote} — ${core}`;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
       if (fb) when = shortDate(fb as unknown as Record<string, unknown>);
     } else if (doc.type === "feature") {
