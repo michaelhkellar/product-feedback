@@ -9,7 +9,6 @@ import { InMemoryVectorStore } from "./vector-store";
 export interface ToolContext {
   data: AgentData;
   store: InMemoryVectorStore;
-  queryEmbedding?: number[];
 }
 
 export interface ToolResult {
@@ -27,7 +26,7 @@ export const AGENT_TOOLS: ToolDefinition[] = [
       properties: {
         theme: { type: "string", description: "Keyword or theme to search for" },
         company: { type: "string", description: "Customer company name" },
-        sentiment: { type: "string", enum: ["positive", "negative", "neutral"], description: "Sentiment filter" },
+        sentiment: { type: "string", enum: ["positive", "negative", "neutral", "mixed"], description: "Sentiment filter" },
         since: { type: "string", description: "ISO date string — only return items on or after this date" },
         until: { type: "string", description: "ISO date string — only return items on or before this date" },
         limit: { type: "number", description: "Max results (default 10, max 20)" },
@@ -81,13 +80,6 @@ export const AGENT_TOOLS: ToolDefinition[] = [
   },
 ];
 
-const MAX_TOOL_OUTPUT_CHARS = 2000;
-
-function truncate(obj: unknown): string {
-  const s = JSON.stringify(obj);
-  return s.length > MAX_TOOL_OUTPUT_CHARS ? s.slice(0, MAX_TOOL_OUTPUT_CHARS) + "…" : s;
-}
-
 function inWindow(date: string, since?: string, until?: string): boolean {
   if (!date) return true;
   const d = new Date(date).getTime();
@@ -106,6 +98,10 @@ function runFindFeedback(
   const since = input.since as string | undefined;
   const until = input.until as string | undefined;
   const limit = Math.min(Number(input.limit) || 10, 20);
+
+  if (!theme && !company && !sentiment && !since && !until) {
+    return { items: [], total: 0, note: "provide at least one of theme, company, sentiment, since, or until" };
+  }
 
   const items = data.feedback
     .filter((f) => {
@@ -207,20 +203,23 @@ function runFindAccountHistory(
     .slice(0, 5)
     .map((c) => ({ id: c.id, label: c.title, date: c.date }));
 
-  const tickets = [
-    ...data.jiraIssues
-      .filter((j) => j.reporter.toLowerCase().includes(company))
-      .slice(0, 5)
-      .map((j) => ({ id: j.id, label: `${j.key}: ${j.summary.slice(0, 60)}`, date: j.created })),
-    ...data.linearIssues
-      .filter((l) => l.assignee.toLowerCase().includes(company))
-      .slice(0, 5)
-      .map((l) => ({ id: l.id, label: `${l.identifier}: ${l.title.slice(0, 60)}`, date: l.created })),
-  ];
+  const tickets = data.jiraIssues
+    .filter((j) => {
+      const hay = `${j.summary} ${j.description || ""} ${j.labels.join(" ")} ${j.reporter}`.toLowerCase();
+      return hay.includes(company);
+    })
+    .slice(0, 5)
+    .map((j) => ({ id: j.id, label: `${j.key}: ${j.summary.slice(0, 60)}`, date: j.created }));
 
   const topEvents = data.analyticsOverview?.topEvents.slice(0, 3).map((e) => e.name) ?? [];
 
-  return { feedback, calls, tickets, analytics: topEvents.length ? { topEvents } : undefined };
+  return {
+    feedback,
+    calls,
+    tickets,
+    analytics: topEvents.length ? { topEvents } : undefined,
+    note: "Linear issues are internally assigned and not filtered by customer company.",
+  };
 }
 
 /** Run a single tool call. Returns a ToolResult — never throws. */
@@ -247,7 +246,7 @@ export async function runTool(
       default:
         result = { error: `unknown_tool: ${tc.name}` };
     }
-    return { toolCallId: tc.id, result: JSON.parse(truncate(result)) };
+    return { toolCallId: tc.id, result };
   } catch (err) {
     return { toolCallId: tc.id, result: { error: String(err) } };
   }

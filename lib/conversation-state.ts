@@ -13,6 +13,30 @@ const MAX_THEMES = 5;
 const MAX_COMPANIES = 3;
 const MAX_EXCLUDED = 10;
 
+function lruMerge(prev: string[], incoming: string[], max: number): string[] {
+  const merged = [...prev, ...incoming];
+  // Dedup preserving LAST-seen order: iterate backwards, keep first occurrence
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (let i = merged.length - 1; i >= 0; i--) {
+    if (!seen.has(merged[i])) {
+      seen.add(merged[i]);
+      result.unshift(merged[i]);
+    }
+  }
+  return result.slice(-max);
+}
+
+/** Reset focus context (companies + excluded) while keeping time window and active themes. */
+export function clearFocus(state: ThreadState): ThreadState {
+  return {
+    ...state,
+    focalCompanies: [],
+    excludedEntities: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function updateState(
   prev: ThreadState | undefined,
   turn: {
@@ -23,13 +47,11 @@ export function updateState(
     mode: InteractionMode;
   }
 ): ThreadState {
-  // Active themes: union with prior, keep last MAX_THEMES (newest at end, evict oldest)
-  const themeSet = new Set([...(prev?.activeThemes ?? []), ...turn.retrievedThemes]);
-  const activeThemes = Array.from(themeSet).slice(-MAX_THEMES);
+  // Active themes: LRU — most recently seen themes stay, oldest evicted
+  const activeThemes = lruMerge(prev?.activeThemes ?? [], turn.retrievedThemes, MAX_THEMES);
 
   // Focal companies: same LRU pattern
-  const companySet = new Set([...(prev?.focalCompanies ?? []), ...turn.retrievedCompanies]);
-  const focalCompanies = Array.from(companySet).slice(-MAX_COMPANIES);
+  const focalCompanies = lruMerge(prev?.focalCompanies ?? [], turn.retrievedCompanies, MAX_COMPANIES);
 
   // Time window: overwrite if turn extracted one; else keep prior
   const timeWindow = turn.extractedTimeRange

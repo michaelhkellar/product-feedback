@@ -13,11 +13,10 @@ function slug(name: string): string {
 function renderItem(
   item: AnalyticsOverviewItem,
   entityType: string,
-  provider: string,
+  providerLabel: string,
   window: string
 ): string {
-  const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
-  const parts = [`${providerLabel} ${entityType} "${item.name}" — ${item.count.toLocaleString()} events in ${window}`];
+  const parts = [`"${item.name}" (${providerLabel} ${entityType}) — ${item.count.toLocaleString()} events in ${window}`];
   if (item.minutes !== undefined && item.minutes > 0) {
     parts.push(`${item.minutes.toFixed(0)} avg minutes`);
   }
@@ -26,11 +25,11 @@ function renderItem(
 
 export function synthesizeAnalyticsDocs(
   overview: AnalyticsOverview,
-  provider: "pendo" | "amplitude" | "posthog"
+  provider: "pendo" | "amplitude" | "posthog",
+  window = "recent activity"
 ): VectorDocument[] {
   const docs: VectorDocument[] = [];
   const providerLabel = provider.charAt(0).toUpperCase() + provider.slice(1);
-  const window = "last 30 days";
 
   const addItems = (
     items: AnalyticsOverviewItem[],
@@ -40,8 +39,8 @@ export function synthesizeAnalyticsDocs(
     for (const item of items.slice(0, maxN)) {
       if (!item.name) continue;
       const id = `analytics:${provider}:${entityType}:${slug(item.name)}`;
-      const label = `${providerLabel} ${entityType} ${item.name}`;
-      const text = renderItem(item, entityType, provider, window);
+      const label = `${item.name} (${providerLabel} ${entityType})`;
+      const text = renderItem(item, entityType, providerLabel, window);
       docs.push({
         id,
         type: "analytics",

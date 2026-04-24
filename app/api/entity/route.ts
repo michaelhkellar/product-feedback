@@ -75,7 +75,11 @@ export async function POST(req: NextRequest) {
     const tickets: (JiraIssue | LinearIssue)[] = [];
 
     if (kind === "theme") {
-      feedback.push(...allFeedback.filter((f) => matchesTheme(f.themes, name)));
+      feedback.push(...allFeedback.filter((f) =>
+        matchesTheme(f.themes, name) ||
+        lc(f.title).includes(lc(name)) ||
+        lc(f.content).includes(lc(name))
+      ));
       calls.push(...allCalls.filter((c) => matchesTheme(c.themes, name) || lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
       tickets.push(
         ...data.jiraIssues.filter((j) => matchesTheme(j.labels, name) || lc(j.summary).includes(lc(name)) || lc(j.description).includes(lc(name))),

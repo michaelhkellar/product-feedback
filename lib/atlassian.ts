@@ -118,10 +118,13 @@ async function atlFetch(url: string, auth: ResolvedAuth, method = "GET", body?: 
     const res = await fetch(url, opts);
     if (!res.ok) {
       const raw = await res.text().catch(() => "");
+      if (raw) console.warn(`atlassian ${res.status} body:`, sanitizeErrorBody(raw));
       let hint = "";
-      if (res.status === 401 || res.status === 403) hint = " — Check token permissions/scopes.";
-      if (res.status === 410) hint = " — Endpoint deprecated.";
-      return { data: null, error: `${res.status} ${res.statusText}${hint} — ${sanitizeErrorBody(raw)}`, status: res.status };
+      if (res.status === 401 || res.status === 403) hint = " — check token permissions";
+      if (res.status === 404) hint = " — resource not found (check filters)";
+      if (res.status === 410) hint = " — endpoint deprecated";
+      if (res.status === 429) hint = " — rate limited";
+      return { data: null, error: `${res.status} ${res.statusText}${hint}`, status: res.status };
     }
     return { data: await res.json(), error: null, status: res.status };
   } catch (err) {

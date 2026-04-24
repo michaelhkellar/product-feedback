@@ -25,6 +25,7 @@ import {
   ChevronUp,
   Globe,
   Pencil,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -36,6 +37,8 @@ import { TraceModal } from "./trace-modal";
 import { useFilters, timeRangeToNL } from "./filter-provider";
 import { ThreadMenu } from "./thread-menu";
 import { saveThread, generateThreadTitle, Thread } from "@/lib/threads";
+import { clearFocus } from "@/lib/conversation-state";
+import type { ThreadState } from "@/lib/conversation-state";
 import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
 
 const SUMMARIZE_QUERIES = [
@@ -654,7 +657,16 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [mode, setMode] = useState<InteractionMode>("summarize");
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
-  const threadStateRef = useRef<import("@/lib/conversation-state").ThreadState | undefined>(undefined);
+  const threadStateRef = useRef<ThreadState | undefined>(undefined);
+  const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
+
+  const syncFocalLabel = useCallback((state: ThreadState | undefined) => {
+    const companies = state?.focalCompanies ?? [];
+    setFocalContextLabel(companies.length > 0
+      ? companies.slice(0, 2).join(", ") + (companies.length > 2 ? ` +${companies.length - 2}` : "")
+      : null
+    );
+  }, []);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -815,6 +827,7 @@ Try one of the suggested queries below to get started.`;
     setMode(thread.mode);
     setCurrentThreadId(thread.id);
     threadStateRef.current = thread.state;
+    syncFocalLabel(thread.state);
     setShowSuggestions(false);
   }, []);
 
@@ -823,6 +836,7 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
     threadStateRef.current = undefined;
+    syncFocalLabel(undefined);
     setShowSuggestions(true);
   }, [mode]);
 
@@ -951,7 +965,7 @@ Try one of the suggested queries below to get started.`;
                   trace?: ChatMessage["trace"];
                   tokenEstimate?: { input: number; output: number; total: number };
                   followupSuggestions?: FollowupSuggestion[];
-                  updatedState?: import("@/lib/conversation-state").ThreadState;
+                  updatedState?: ThreadState;
                 };
                 if (event.type === "delta" && event.text) {
                   deltaBufferRef.current += event.text;
@@ -978,7 +992,7 @@ Try one of the suggested queries below to get started.`;
                   deltaBufferRef.current = "";
                   streamingIdRef.current = null;
 
-                  if (event.updatedState) threadStateRef.current = event.updatedState;
+                  if (event.updatedState) { threadStateRef.current = event.updatedState; syncFocalLabel(event.updatedState); }
 
                   if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
                     setSessionTokens((prev) => prev + event.tokenEstimate!.total);
@@ -1036,10 +1050,10 @@ Try one of the suggested queries below to get started.`;
           sources?: ChatMessage["sources"];
           trace?: ChatMessage["trace"];
           tokenEstimate?: { input: number; output: number; total: number };
-          updatedState?: import("@/lib/conversation-state").ThreadState;
+          updatedState?: ThreadState;
         };
 
-        if (data.updatedState) threadStateRef.current = data.updatedState;
+        if (data.updatedState) { threadStateRef.current = data.updatedState; syncFocalLabel(data.updatedState); }
 
         if (data.tokenEstimate?.total && data.tokenEstimate.total > 0) {
           setSessionTokens((prev) => prev + data.tokenEstimate!.total);
@@ -1373,6 +1387,21 @@ Try one of the suggested queries below to get started.`;
                 : "Full context"
               }
             </span>
+            {focalContextLabel && (
+              <button
+                onClick={() => {
+                  if (threadStateRef.current) {
+                    threadStateRef.current = clearFocus(threadStateRef.current);
+                    syncFocalLabel(threadStateRef.current);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                title="Clear focused context"
+              >
+                <X className="w-2.5 h-2.5" />
+                {focalContextLabel}
+              </button>
+            )}
             {sessionTokens > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-muted font-mono">
                 ~{sessionTokens > 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens this session

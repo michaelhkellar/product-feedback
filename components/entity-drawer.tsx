@@ -83,6 +83,15 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
     }
   }, [entity, fetchData]);
 
+  // Auto-switch to first populated tab if quotes tab is empty after load
+  useEffect(() => {
+    if (!data || loading) return;
+    if (tab === "quotes" && data.feedback.length === 0) {
+      if (data.calls.length > 0) setTab("calls");
+      else if (data.tickets.length > 0) setTab("tickets");
+    }
+  }, [data, loading, tab]);
+
   if (!entity) return null;
 
   const kindLabel = entity.kind.charAt(0).toUpperCase() + entity.kind.slice(1);

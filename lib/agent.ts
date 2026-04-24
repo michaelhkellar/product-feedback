@@ -111,7 +111,7 @@ function dataFingerprint(data: AgentData, embedderId: string): string {
   return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}`;
 }
 
-async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
+async function buildStore(data: AgentData, keys?: AgentKeys, analyticsDays?: number): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
   const embedder = keys ? pickEmbedder(keys) : null;
   const fp = dataFingerprint(data, embedder?.id || "none");
 
@@ -153,9 +153,11 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
 
   // Step 2b: synthesize analytics docs so events/pages are semantically searchable
   if (enrichedData.analyticsOverview) {
+    const analyticsWindow = analyticsDays ? `last ${analyticsDays} days` : "recent activity";
     const analyticsDocs = synthesizeAnalyticsDocs(
       enrichedData.analyticsOverview,
-      enrichedData.analyticsOverview.provider
+      enrichedData.analyticsOverview.provider,
+      analyticsWindow
     );
     store.addAnalytics(analyticsDocs);
   }
@@ -163,8 +165,11 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   store.buildIndex();
 
   // Step 3: apply signal scores to all search-candidate documents
+  // For feedback docs, pass raw content so FILLER_PATTERN anchors work on item text, not the concatenated doc string
+  const feedbackContentMap = new Map(enrichedData.feedback.map((f) => [f.id, `${f.title} ${f.content}`]));
   for (const doc of store.getAllDocuments()) {
-    doc.signalScore = scoreDoc({ text: doc.text, sourceType: doc.type as Parameters<typeof scoreDoc>[0]["sourceType"] });
+    const rawContent = doc.type === "feedback" ? feedbackContentMap.get(doc.id) : undefined;
+    doc.signalScore = scoreDoc({ text: doc.text, rawContent, sourceType: doc.type as Parameters<typeof scoreDoc>[0]["sourceType"] });
   }
 
   // Step 4: compute embeddings for ALL store documents (including chunks)
@@ -1558,19 +1563,26 @@ export async function chat(
   incomingState?: ThreadState
 ): Promise<ChatResult> {
   const timeRange = extractTimeRange(userMessage, clientTz);
-  // Fall back to persisted time window from conversation state when no explicit range in message
+  // Fall back to persisted time window from conversation state when no explicit range in message,
+  // but only if the state is fresh (< 24h) to avoid silently filtering on stale windows.
+  const STATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  const stateAgeMs = incomingState ? Date.now() - new Date(incomingState.updatedAt).getTime() : Infinity;
+  const windowUsable = incomingState?.timeWindow && stateAgeMs < STATE_MAX_AGE_MS;
   const _rawScopedData = timeRange
     ? filterByTimeRange(data, timeRange)
-    : incomingState?.timeWindow
+    : windowUsable
       ? filterByTimeRange(data, {
-          start: new Date(incomingState.timeWindow.start),
-          end: new Date(incomingState.timeWindow.end),
-          label: incomingState.timeWindow.label,
+          start: new Date(incomingState!.timeWindow!.start),
+          end: new Date(incomingState!.timeWindow!.end),
+          label: incomingState!.timeWindow!.label,
         })
       : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
-  const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys);
+  const _analyticsDays = timeRange
+    ? Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000)
+    : undefined;
+  const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys, _analyticsDays);
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
@@ -1587,15 +1599,13 @@ export async function chat(
   // Use a wider search limit for pivot queries so we get enough non-excluded results
   const searchLimit = wideQuery || pivot.isPivot ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
   const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage), pivot);
-  // Boost focal companies from conversation state (append as extra queries if not already present)
+  // Boost focal companies from conversation state — per-company so mentioning one doesn't suppress boosts for others
   if (incomingState?.focalCompanies?.length) {
     const msgLower = userMessage.toLowerCase();
-    const alreadyMentioned = incomingState.focalCompanies.every((c) => msgLower.includes(c.toLowerCase()));
-    if (!alreadyMentioned) {
-      for (const company of incomingState.focalCompanies) {
-        const boost = `${userMessage} ${company}`;
-        if (!searchQueries.includes(boost)) searchQueries.push(boost);
-      }
+    for (const company of incomingState.focalCompanies) {
+      if (msgLower.includes(company.toLowerCase())) continue;
+      const boost = `${userMessage} ${company}`;
+      if (!searchQueries.includes(boost)) searchQueries.push(boost);
     }
   }
 
@@ -1616,7 +1626,7 @@ export async function chat(
   // Detect urgency/actionability intent for optional retrieval filters
   const urgencyFilter = detectUrgencyFilter(userMessage);
 
-  const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
+  const merged = new Map<string, ReturnType<InMemoryVectorStore["search"]>[number]>();
   for (const q of searchQueries) {
     for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
@@ -1709,7 +1719,12 @@ export async function chat(
   for (const r of results) {
     const doc = r.document;
     const details = lookupDetails([doc.id], scopedData, detailed, keys);
-    if (details.length > 0) searchParts.push(details[0]);
+    if (details.length > 0) {
+      const detail = r.highlightSpan
+        ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
+        : details[0];
+      searchParts.push(detail);
+    }
     recentItemIds.add(doc.id);
 
     let title = doc.id;
@@ -1744,6 +1759,8 @@ export async function chat(
       } else if (featureName && GENERIC_TITLE_RE.test(rawTitle)) {
         identity = `feedback on: ${featureName}`;
       }
+      // Skip unattributable portal votes — no featureName, no customer; raw title would mislead.
+      if (!identity && GENERIC_TITLE_RE.test(rawTitle)) continue;
       const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
       const coNote = coCount >= 2 ? ` (${coCount} items)` : "";
       const core = fb ? cleanFeedbackTitle(fb) : doc.id;
@@ -1754,10 +1771,14 @@ export async function chat(
       if (fb) when = shortDate(fb as unknown as Record<string, unknown>);
     } else if (doc.type === "feature") {
       const feat = scopedData.features.find((f) => f.id === doc.id);
-      title = feat?.name || title;
-      // Features have no createdAt/updatedAt in our type; surface the newest
-      // related-feedback date as the ground-truth When so rows don't stay blank.
       if (feat) {
+        const statusLabel = feat.status === "in_progress" ? "in progress" : feat.status;
+        const voteStr = feat.votes > 0 ? `${feat.votes} votes` : "";
+        const reqStr = feat.customerRequests > 0 ? `${feat.customerRequests} requests` : "";
+        const meta = [voteStr, reqStr, statusLabel].filter(Boolean).join(" · ");
+        title = meta ? `${feat.name} (${meta})` : feat.name;
+        // Features have no createdAt/updatedAt in our type; surface the newest
+        // related-feedback date as the ground-truth When so rows don't stay blank.
         const related = scopedData.feedback
           .filter((fb) => fb.themes?.some((t) => feat.themes?.includes(t)))
           .map((fb) => fb as unknown as Record<string, unknown>);
@@ -2011,14 +2032,27 @@ ${formatInstructions}`;
           : "conversational";
 
   // Compute structured conversation state for this turn (persisted back by the client)
-  const retrievedCompanies = Array.from(new Set(
-    results
+  const retrievedCompanies = Array.from(new Set([
+    ...results
       .filter((r) => r.document.type === "feedback")
       .flatMap((r) => {
         const fb = scopedData.feedback.find((f) => f.id === r.document.id);
         return fb?.company ? [fb.company] : [];
-      })
-  )).slice(0, 5);
+      }),
+    // Also extract company-like tokens from call participants (domain-part of emails)
+    ...results
+      .filter((r) => r.document.type === "call")
+      .flatMap((r) => {
+        const c = scopedData.calls.find((ca) => ca.id === r.document.id);
+        return (c?.participants ?? [])
+          .map((p) => {
+            const atIdx = p.indexOf("@");
+            if (atIdx > 0) return p.slice(atIdx + 1).split(".")[0];
+            return "";
+          })
+          .filter((s) => s.length > 2);
+      }),
+  ])).slice(0, 5);
   const updatedState = updateState(incomingState, {
     retrievedThemes: detectedThemes,
     retrievedCompanies,
@@ -2083,8 +2117,8 @@ ${formatInstructions}`;
           required: ["query"],
         },
       }] : []),
-      // Multi-hop tools: structured cross-source queries for comparison and causal reasoning
-      ...AGENT_TOOLS,
+      // Multi-hop tools: structured cross-source queries — gated to comparison/causal queries to avoid unnecessary round-trips
+      ...(queryTypeLabel === "comparison" || queryTypeLabel === "detailed" || /\b(why|what caused|what changed|explain|correlate|compared to|vs\.?)\b/i.test(userMessage) ? AGENT_TOOLS : []),
     ];
 
     const webSources: { type: string; id: string; title: string; url?: string }[] = [];
@@ -2135,7 +2169,7 @@ ${formatInstructions}`;
       }
       // Dispatch multi-hop structured tools (findFeedback, compareWindows, findAnalytics, findAccountHistory)
       if (["findFeedback", "compareWindows", "findAnalytics", "findAccountHistory"].includes(name)) {
-        const toolCtx: ToolContext = { data: scopedData, store, queryEmbedding };
+        const toolCtx: ToolContext = { data: scopedData, store };
         const result = await runTool({ id: `tool-${Date.now()}`, name, input }, toolCtx);
         const text = JSON.stringify(result.result);
         const count = Array.isArray((result.result as Record<string, unknown>)?.items)
@@ -2151,8 +2185,11 @@ ${formatInstructions}`;
 
     if (provider.generateWithTools) {
       const toolMessages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: prompt }];
+      const toolCallCache = new Map<string, string>();
+      const MULTI_HOP_DEADLINE_MS = 15_000;
+      const multiHopStart = Date.now();
 
-      for (let round = 0; round < 3; round++) {
+      for (let round = 0; round < 3 && Date.now() - multiHopStart < MULTI_HOP_DEADLINE_MS; round++) {
         const result = await provider.generateWithTools(systemPrompt, toolMessages, agentTools, aiKey, keys.aiModel || undefined);
 
         if (result.toolCalls.length === 0) {
@@ -2162,15 +2199,24 @@ ${formatInstructions}`;
           break;
         }
 
-        // Execute tool calls and record for trace
+        // Execute tool calls, dedup by name+input, record for trace
         toolMessages.push({ role: "assistant", content: result.text || "" });
         const toolResultParts: string[] = [];
         for (const tc of result.toolCalls) {
-          const { text: output, count } = await executeAgentTool(tc.name, tc.input);
+          const cacheKey = `${tc.name}:${JSON.stringify(tc.input)}`;
+          let output: string;
+          let count: number;
+          if (toolCallCache.has(cacheKey)) {
+            output = toolCallCache.get(cacheKey)!;
+            count = 0;
+          } else {
+            ({ text: output, count } = await executeAgentTool(tc.name, tc.input));
+            toolCallCache.set(cacheKey, output);
+          }
           recordedToolCalls.push({
             name: tc.name,
             query: String(tc.input.query || ""),
-            resultCount: count,
+            resultCount: count!,
           });
           toolResultParts.push(`Tool: ${tc.name}\nResult: ${output}`);
         }
@@ -2441,7 +2487,7 @@ What to build, at the right level of abstraction. Be concrete enough that an eng
 CONSTRAINTS: Be concise and actionable. Every acceptance criterion must be testable. Out of Scope and Rabbit Holes must not be empty. Ground priority in customer data. Keep title under 80 characters. Every claim must trace to evidence from the provided data.`;
 
 function generateBuiltInResponse(
-  query: string, context: string,
+  _query: string, context: string,
   sources: { type: string; id: string; title: string }[], data: AgentData
 ): string {
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;

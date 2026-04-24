@@ -24,10 +24,14 @@ type SourceType = "feedback" | "call" | "jira" | "linear" | "confluence" | "feat
 
 export function scoreDoc(params: {
   text: string;
+  /** Raw item content (title + content only) — when provided, filler detection runs on this instead of the concatenated doc text. */
+  rawContent?: string;
   sourceType: SourceType;
 }): number {
-  const { text, sourceType } = params;
+  const { text, rawContent, sourceType } = params;
   if (!text || text.trim().length === 0) return 1.0;
+  // Use raw content for filler/artifact checks to avoid false negatives on concatenated doc text
+  const checkText = rawContent ?? text;
 
   let score = 0;
 
@@ -46,9 +50,9 @@ export function scoreDoc(params: {
   if (sourceType === "call") score += CALL_SOURCE_BONUS;
   if (sourceType === "analytics") score += ANALYTICS_SOURCE_BONUS;
 
-  // Low-signal penalties
-  if (FILLER_PATTERN.test(text.trim())) score += FILLER_PENALTY;
-  if (TEST_ARTIFACT_PATTERN.test(text)) score += TEST_ARTIFACT_PENALTY;
+  // Low-signal penalties — run on raw content when available so anchors work correctly
+  if (FILLER_PATTERN.test(checkText.trim())) score += FILLER_PENALTY;
+  if (TEST_ARTIFACT_PATTERN.test(checkText)) score += TEST_ARTIFACT_PENALTY;
 
   // Map to [0.7, 1.3] around a neutral baseline of 1.0
   return Math.max(0.7, Math.min(1.3, 1.0 + score));
