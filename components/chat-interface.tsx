@@ -1246,6 +1246,21 @@ Try one of the suggested queries below to get started.`;
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {msg.sources.slice(0, 8).map((src, i) => {
                     const label = src.title.length > 40 ? src.title.slice(0, 40) + "…" : src.title;
+                    // Map source types to entity drawer kinds so non-URL badges are clickable
+                    const drawerTarget: { name: string; kind: EntityKind } | null = (() => {
+                      if (src.type === "feature") {
+                        // Strip enrichment parens added in agent.ts (e.g. "Feature (12 votes · new)")
+                        const bareName = src.title.replace(/\s*\([^)]*(?:votes|requests|new|done|planned|in progress)[^)]*\)\s*$/i, "").trim();
+                        return { name: bareName || src.title, kind: "feature" };
+                      }
+                      if (src.type === "feedback") {
+                        // If identity leads with an email or company, route to customer drawer
+                        const identityMatch = src.title.match(/^([^\s—]+@[^\s—]+|[A-Z][\w&.\- ]{1,60}?)(?:\s*\([^)]*\))?\s*—/);
+                        if (identityMatch) return { name: identityMatch[1], kind: "customer" };
+                      }
+                      return null;
+                    })();
+                    const clickable = !!(src.url || drawerTarget);
                     const colorClass = cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
                       src.type === "feedback" && "bg-blue-500/10 text-blue-600",
@@ -1253,19 +1268,31 @@ Try one of the suggested queries below to get started.`;
                       src.type === "call" && "bg-amber-500/10 text-amber-600",
                       src.type === "pendo" && "bg-fuchsia-500/10 text-fuchsia-600",
                       src.type === "amplitude" && "bg-fuchsia-500/10 text-fuchsia-600",
+                      src.type === "analytics" && "bg-fuchsia-500/10 text-fuchsia-600",
                       src.type === "insight" && "bg-purple-500/10 text-purple-600",
                       src.type === "jira" && "bg-orange-500/10 text-orange-600",
                       src.type === "confluence" && "bg-cyan-500/10 text-cyan-600",
-                      src.url && "hover:opacity-80 cursor-pointer"
+                      src.type === "linear" && "bg-violet-500/10 text-violet-600",
+                      clickable && "hover:opacity-80 cursor-pointer"
                     );
-                    return src.url ? (
-                      <a key={i} href={src.url} target="_blank" rel="noopener noreferrer" className={colorClass}>
-                        <ExternalLink className="w-2.5 h-2.5" />
-                        {label}
-                      </a>
-                    ) : (
+                    if (src.url) {
+                      return (
+                        <a key={i} href={src.url} target="_blank" rel="noopener noreferrer" className={colorClass}>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          {label}
+                        </a>
+                      );
+                    }
+                    if (drawerTarget) {
+                      return (
+                        <button key={i} type="button" onClick={() => openEntity(drawerTarget)} className={colorClass} title={`View ${drawerTarget.kind}: ${drawerTarget.name}`}>
+                          <Search className="w-2.5 h-2.5" />
+                          {label}
+                        </button>
+                      );
+                    }
+                    return (
                       <span key={i} className={colorClass}>
-                        <Search className="w-2.5 h-2.5" />
                         {label}
                       </span>
                     );

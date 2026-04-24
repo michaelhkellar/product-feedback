@@ -1746,13 +1746,15 @@ export async function chat(
         identity = person;
       } else if (featureName && /Portal\s*[-–—]\s*vote for/i.test(rawTitle)) {
         identity = `vote: ${featureName}`;
-      } else if (featureName && /^Direct feedback for/i.test(rawTitle)) {
-        identity = `feedback on: ${featureName}`;
-      } else if (featureName && GENERIC_TITLE_RE.test(rawTitle)) {
+      } else if (featureName) {
+        // Any feedback lacking customer attribution but linked to a feature — show the feature
+        // so the Source cell never becomes the ask itself.
         identity = `feedback on: ${featureName}`;
       }
       // Skip unattributable portal votes — no featureName, no customer; raw title would mislead.
       if (!identity && GENERIC_TITLE_RE.test(rawTitle)) continue;
+      // Fallback for generic-attribution feedback: prefer a neutral label over repeating the ask.
+      if (!identity) identity = "anonymous";
       const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
       const coNote = coCount >= 2 ? ` (${coCount} items)` : "";
       const core = fb ? cleanFeedbackTitle(fb) : doc.id;
