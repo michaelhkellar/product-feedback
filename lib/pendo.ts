@@ -1,4 +1,4 @@
-import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsOverviewItem, AnalyticsAccountItem, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
 
 const API_BASE = "https://app.pendo.io/api/v1";
 const OVERVIEW_DAYS = 30;
@@ -131,14 +131,18 @@ async function fetchTaggedObjects(
 
 function sourceRequest(
   sourceName: string,
-  days: number
+  days: number,
+  endDaysAgo = 0
 ): Record<string, unknown> {
+  // endDaysAgo=0 means "through now"; endDaysAgo=N means "the window ends N days ago"
+  // so pair (days=30, endDaysAgo=0) = last 30 days; (days=30, endDaysAgo=30) = 30-60 days ago
+  const first = endDaysAgo === 0 ? "now()" : Date.now() - endDaysAgo * 86400000;
   return {
     source: {
       [sourceName]: null,
       timeSeries: {
         period: "dayRange",
-        first: "now()",
+        first,
         count: -Math.max(1, days),
       },
     },
@@ -152,14 +156,15 @@ async function topUsageForSource(
   names: Map<string, string>,
   days = OVERVIEW_DAYS,
   filter?: string,
-  limit = 10
+  limit = 50,
+  endDaysAgo = 0
 ): Promise<PendoUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
     request: {
-      name: `${sourceName}-top-usage`,
+      name: `${sourceName}-top-usage${endDaysAgo > 0 ? "-prior" : ""}`,
       pipeline: [
-        sourceRequest(sourceName, days),
+        sourceRequest(sourceName, days, endDaysAgo),
         { identified: "visitorId" },
         ...(filter ? [{ filter }] : []),
         {
@@ -194,14 +199,15 @@ async function topUsageForSource(
 async function topAccounts(
   integrationKey: string,
   days = OVERVIEW_DAYS,
-  limit = 10
+  limit = 50,
+  endDaysAgo = 0
 ): Promise<PendoAccountUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
     request: {
-      name: "events-by-account-top-usage",
+      name: `events-by-account-top-usage${endDaysAgo > 0 ? "-prior" : ""}`,
       pipeline: [
-        sourceRequest("events", days),
+        sourceRequest("events", days, endDaysAgo),
         { identified: "visitorId" },
         { filter: "!isNil(accountId) && accountId != ``" },
         {
@@ -467,24 +473,98 @@ export async function getPendoOverview(
       }).catch(() => [] as Record<string, unknown>[]),
     ]);
 
+    // Prior-period fetch (previous equal-length window) — fail soft so current-window data still flows.
+    const [priorPages, priorFeatures, priorAccounts, priorTrackEventRows] = await Promise.all([
+      topUsageForSource(integrationKey, "pageEvents", "pageId", pages, effectiveDays, undefined, 100, effectiveDays).catch(() => []),
+      topUsageForSource(integrationKey, "featureEvents", "featureId", features, effectiveDays, undefined, 100, effectiveDays).catch(() => []),
+      topAccounts(integrationKey, effectiveDays, 100, effectiveDays).catch(() => []),
+      aggregate(integrationKey, {
+        response: { mimeType: "application/json" },
+        request: {
+          name: "trackEvents-top-usage-prior",
+          pipeline: [
+            sourceRequest("trackEvents", effectiveDays, effectiveDays),
+            { identified: "visitorId" },
+            { group: { group: ["type"], fields: [{ totalEvents: { sum: "numEvents" } }] } },
+            { sort: ["-totalEvents"] },
+          ],
+        },
+      }).catch(() => [] as Record<string, unknown>[]),
+    ]);
+
+    const priorPagesById = new Map(priorPages.map((p) => [p.id, p.totalEvents]));
+    const priorFeaturesById = new Map(priorFeatures.map((f) => [f.id, f.totalEvents]));
+    const priorAccountsById = new Map(priorAccounts.map((a) => [a.accountId, a.totalEvents]));
+    const priorEventsByName = new Map<string, number>();
+    for (const row of priorTrackEventRows) {
+      const t = pickString(row, ["type"]);
+      if (t) priorEventsByName.set(t, numericValue(row.totalEvents));
+    }
+
+    const computeDelta = (count: number, prior: number | undefined): { priorCount?: number; deltaPct?: number } => {
+      if (prior === undefined) return {};
+      if (prior === 0 && count === 0) return { priorCount: 0, deltaPct: 0 };
+      if (prior === 0) return { priorCount: 0, deltaPct: 999 }; // new surface, flag as huge climb
+      return { priorCount: prior, deltaPct: Math.round(((count - prior) / prior) * 100) };
+    };
+
     const topEvents = trackEventRows
       .map((row) => {
         const type = pickString(row, ["type"]);
         if (!type) return null;
-        return { id: type, name: type, count: numericValue(row.totalEvents) };
+        const count = numericValue(row.totalEvents);
+        return { id: type, name: type, count, ...computeDelta(count, priorEventsByName.get(type)) };
       })
-      .filter((item): item is { id: string; name: string; count: number } => !!item)
-      .slice(0, 10);
+      .filter((item): item is AnalyticsOverviewItem => !!item)
+      .slice(0, 25);
+
+    const topPages: AnalyticsOverviewItem[] = activePages.map((p) => ({
+      id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes,
+      ...computeDelta(p.totalEvents, priorPagesById.get(p.id)),
+    }));
+    const topFeatures: AnalyticsOverviewItem[] = activeFeatures.map((f) => ({
+      id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes,
+      ...computeDelta(f.totalEvents, priorFeaturesById.get(f.id)),
+    }));
+    const topAccountsWithDelta: AnalyticsAccountItem[] = activeAccounts.map((a) => ({
+      id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes,
+      ...computeDelta(a.totalEvents, priorAccountsById.get(a.accountId)),
+    }));
+
+    const windowLabel = `last ${effectiveDays} days`;
+    const priorWindowLabel = `${effectiveDays}-${effectiveDays * 2} days ago`;
+
+    // Compute risers/fallers across pages, features, events (min volume threshold to filter noise)
+    const VOLUME_FLOOR = 100;
+    const allWithDelta = [
+      ...topPages.filter((p) => (p.count ?? 0) >= VOLUME_FLOOR && p.deltaPct !== undefined && p.deltaPct !== 999).map((p) => ({ ...p, kind: "page" as const })),
+      ...topFeatures.filter((f) => (f.count ?? 0) >= VOLUME_FLOOR && f.deltaPct !== undefined && f.deltaPct !== 999).map((f) => ({ ...f, kind: "feature" as const })),
+      ...topEvents.filter((e) => (e.count ?? 0) >= VOLUME_FLOOR && e.deltaPct !== undefined && e.deltaPct !== 999).map((e) => ({ ...e, kind: "event" as const })),
+    ];
+    const risingItems = [...allWithDelta]
+      .filter((i) => (i.deltaPct ?? 0) >= 20)
+      .sort((a, b) => (b.deltaPct ?? 0) - (a.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
+    const fallingItems = [...allWithDelta]
+      .filter((i) => (i.deltaPct ?? 0) <= -20)
+      .sort((a, b) => (a.deltaPct ?? 0) - (b.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
 
     return {
       provider: "pendo",
-      topPages: activePages.map((p) => ({ id: p.id, name: p.name, count: p.totalEvents, minutes: p.totalMinutes })),
-      topFeatures: activeFeatures.map((f) => ({ id: f.id, name: f.name, count: f.totalEvents, minutes: f.totalMinutes })),
+      topPages,
+      topFeatures,
       topEvents,
-      topAccounts: activeAccounts.map((a) => ({ id: a.accountId, count: a.totalEvents, minutes: a.totalMinutes })),
+      topAccounts: topAccountsWithDelta,
       totalTrackedPages: pages.size,
       totalTrackedFeatures: features.size,
       generatedAt: new Date().toISOString(),
+      windowLabel,
+      priorWindowLabel,
+      risingItems: risingItems.length > 0 ? risingItems : undefined,
+      fallingItems: fallingItems.length > 0 ? fallingItems : undefined,
       allPageNames: Array.from(pages.values()),
       allFeatureNames: Array.from(features.values()),
       allEventNames: topEvents.map((e) => e.name),

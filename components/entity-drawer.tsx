@@ -83,6 +83,15 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
     }
   }, [entity, fetchData]);
 
+  // Auto-switch to first populated tab if quotes tab is empty after load
+  useEffect(() => {
+    if (!data || loading) return;
+    if (tab === "quotes" && data.feedback.length === 0) {
+      if (data.calls.length > 0) setTab("calls");
+      else if (data.tickets.length > 0) setTab("tickets");
+    }
+  }, [data, loading, tab]);
+
   if (!entity) return null;
 
   const kindLabel = entity.kind.charAt(0).toUpperCase() + entity.kind.slice(1);
@@ -95,11 +104,11 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-end overflow-hidden">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeEntity} />
       <div
-        className="relative z-10 w-[420px] max-w-full bg-background border-l border-border shadow-2xl flex flex-col h-full"
+        className="relative z-10 w-[420px] max-w-[100vw] bg-background border-l border-border shadow-2xl flex flex-col h-full overflow-hidden break-words"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

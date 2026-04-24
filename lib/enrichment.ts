@@ -24,7 +24,7 @@ const ENRICHMENT_TTL_MS = 30 * 60 * 1000;
 const ENRICHMENT_CACHE_MAX = 200;
 const BATCH_SIZE = 25;
 const MAX_CONCURRENT_BATCHES = 3;
-const MAX_ENRICH_ITEMS = 75;
+const MAX_ENRICH_ITEMS = 100;
 const TOTAL_ENRICH_TIMEOUT_MS = 60_000;
 
 function enrichCacheSet(k: string, v: CachedEnrichment): void {
@@ -237,7 +237,7 @@ export async function enrichSubset(
   const aiKey = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
   if (!getAIProvider(provider).isConfigured(aiKey)) return feedback;
 
-  const maxItems = opts.maxItems ?? 20;
+  const maxItems = opts.maxItems ?? 25;
   const batchSize = opts.batchSize ?? 15;
   const totalTimeoutMs = opts.totalTimeoutMs ?? 10_000;
 

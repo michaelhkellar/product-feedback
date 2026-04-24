@@ -1,4 +1,19 @@
-import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsOverviewItem, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
+
+/** Compute delta vs prior window; returns {} when prior unavailable. */
+function computeDelta(count: number, prior: number | undefined): { priorCount?: number; deltaPct?: number } {
+  if (prior === undefined) return {};
+  if (prior === 0 && count === 0) return { priorCount: 0, deltaPct: 0 };
+  if (prior === 0) return { priorCount: 0, deltaPct: 999 };
+  return { priorCount: prior, deltaPct: Math.round(((count - prior) / prior) * 100) };
+}
+
+/** yyyymmdd string N days ago (0 = today). */
+function amplitudeDate(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().split("T")[0].replace(/-/g, "");
+}
 
 const API_BASE = "https://amplitude.com/api/2";
 const EU_API_BASE = "https://analytics.eu.amplitude.com/api/2";
@@ -56,47 +71,93 @@ export async function getAmplitudeOverview(
   const effectiveDays = days || 30;
 
   try {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - effectiveDays);
+    // Current window: [today - effectiveDays, today]
+    // Prior window:   [today - 2*effectiveDays, today - effectiveDays]
+    const currEnd = amplitudeDate(0);
+    const currStart = amplitudeDate(effectiveDays);
+    const priorEnd = amplitudeDate(effectiveDays);
+    const priorStart = amplitudeDate(2 * effectiveDays);
 
-    const startStr = start.toISOString().split("T")[0].replace(/-/g, "");
-    const endStr = end.toISOString().split("T")[0].replace(/-/g, "");
+    const activeQuery = encodeURIComponent(JSON.stringify({ event_type: "_active" }));
+    const eventsQuery = encodeURIComponent(JSON.stringify({ event_type: "_all" }));
 
-    const [activeData, eventsData] = await Promise.all([
+    // Fire all four in parallel; fail soft on the prior-window fetches so the current overview still returns.
+    const [activeData, eventsData, priorActiveData, priorEventsData] = await Promise.all([
       amplitudeFetch<Record<string, unknown>>(
-        `/events/segmentation?e=${encodeURIComponent(JSON.stringify({ event_type: "_active" }))}&start=${startStr}&end=${endStr}`,
+        `/events/segmentation?e=${activeQuery}&start=${currStart}&end=${currEnd}`,
         creds.apiKey,
         creds.secretKey
       ),
       amplitudeFetch<Record<string, unknown>>(
-        `/events/segmentation?e=${encodeURIComponent(JSON.stringify({ event_type: "_all" }))}&start=${startStr}&end=${endStr}&m=uniques`,
+        `/events/segmentation?e=${eventsQuery}&start=${currStart}&end=${currEnd}&m=uniques`,
+        creds.apiKey,
+        creds.secretKey
+      ).catch(() => null),
+      amplitudeFetch<Record<string, unknown>>(
+        `/events/segmentation?e=${activeQuery}&start=${priorStart}&end=${priorEnd}`,
+        creds.apiKey,
+        creds.secretKey
+      ).catch(() => null),
+      amplitudeFetch<Record<string, unknown>>(
+        `/events/segmentation?e=${eventsQuery}&start=${priorStart}&end=${priorEnd}&m=uniques`,
         creds.apiKey,
         creds.secretKey
       ).catch(() => null),
     ]);
 
-    const seriesLabels = ((activeData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
-    const series = ((activeData.data as Record<string, unknown>)?.series as number[][]) || [];
+    const sumSeriesByLabel = (d: Record<string, unknown> | null): Map<string, number> => {
+      const labels = ((d?.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
+      const series = ((d?.data as Record<string, unknown>)?.series as number[][]) || [];
+      const m = new Map<string, number>();
+      labels.forEach((l, i) => m.set(l, (series[i] || []).reduce((a, b) => a + b, 0)));
+      return m;
+    };
 
-    const topPages = seriesLabels.slice(0, 10).map((label, i) => ({
-      id: label,
-      name: label,
-      count: (series[i] || []).reduce((a, b) => a + b, 0),
-    }));
+    const currPageCounts = sumSeriesByLabel(activeData);
+    const priorPageCounts = sumSeriesByLabel(priorActiveData);
+    const currEventCounts = sumSeriesByLabel(eventsData);
+    const priorEventCounts = sumSeriesByLabel(priorEventsData);
 
-    let topEvents: AnalyticsOverview["topEvents"] = [];
+    const seriesLabels = Array.from(currPageCounts.keys());
+
+    const topPages: AnalyticsOverviewItem[] = seriesLabels.slice(0, 50).map((label) => {
+      const count = currPageCounts.get(label) || 0;
+      return { id: label, name: label, count, ...computeDelta(count, priorPageCounts.get(label)) };
+    });
+
+    let topEvents: AnalyticsOverviewItem[] = [];
     let allEventNames: string[] = [];
-    if (eventsData) {
-      const eventLabels = ((eventsData.data as Record<string, unknown>)?.seriesLabels as string[]) || [];
-      const eventSeries = ((eventsData.data as Record<string, unknown>)?.series as number[][]) || [];
+    const eventLabels = Array.from(currEventCounts.keys());
+    if (eventLabels.length > 0) {
       allEventNames = eventLabels;
-      topEvents = eventLabels.map((label, i) => ({
-        id: label,
-        name: label,
-        count: (eventSeries[i] || []).reduce((a, b) => a + b, 0),
-      })).sort((a, b) => b.count - a.count).slice(0, 10);
+      topEvents = eventLabels
+        .map((label) => {
+          const count = currEventCounts.get(label) || 0;
+          return { id: label, name: label, count, ...computeDelta(count, priorEventCounts.get(label)) } as AnalyticsOverviewItem;
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 25);
     }
+
+    const windowLabel = `last ${effectiveDays} days`;
+    const priorWindowLabel = `${effectiveDays}-${effectiveDays * 2} days ago`;
+
+    // Risers/fallers across pages + events with volume floor
+    const VOLUME_FLOOR = 100;
+    const all = [
+      ...topPages.filter((p) => (p.count ?? 0) >= VOLUME_FLOOR && p.deltaPct !== undefined && p.deltaPct !== 999).map((p) => ({ ...p, kind: "page" as const })),
+      ...topEvents.filter((e) => (e.count ?? 0) >= VOLUME_FLOOR && e.deltaPct !== undefined && e.deltaPct !== 999).map((e) => ({ ...e, kind: "event" as const })),
+    ];
+    const risingItems = [...all]
+      .filter((i) => (i.deltaPct ?? 0) >= 20)
+      .sort((a, b) => (b.deltaPct ?? 0) - (a.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
+    const fallingItems = [...all]
+      .filter((i) => (i.deltaPct ?? 0) <= -20)
+      .sort((a, b) => (a.deltaPct ?? 0) - (b.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
 
     return {
       provider: "amplitude",
@@ -107,6 +168,10 @@ export async function getAmplitudeOverview(
       totalTrackedPages: seriesLabels.length,
       totalTrackedFeatures: 0,
       generatedAt: new Date().toISOString(),
+      windowLabel,
+      priorWindowLabel,
+      risingItems: risingItems.length > 0 ? risingItems : undefined,
+      fallingItems: fallingItems.length > 0 ? fallingItems : undefined,
       limitations: [
         "Feature-level and account-level analytics require Amplitude Taxonomy add-on",
       ],

@@ -25,6 +25,7 @@ import {
   ChevronUp,
   Globe,
   Pencil,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ReactMarkdown from "react-markdown";
@@ -36,6 +37,8 @@ import { TraceModal } from "./trace-modal";
 import { useFilters, timeRangeToNL } from "./filter-provider";
 import { ThreadMenu } from "./thread-menu";
 import { saveThread, generateThreadTitle, Thread } from "@/lib/threads";
+import { clearFocus } from "@/lib/conversation-state";
+import type { ThreadState } from "@/lib/conversation-state";
 import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
 
 const SUMMARIZE_QUERIES = [
@@ -654,6 +657,17 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [mode, setMode] = useState<InteractionMode>("summarize");
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
+  const threadStateRef = useRef<ThreadState | undefined>(undefined);
+  const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
+
+  const syncFocalLabel = useCallback((state: ThreadState | undefined) => {
+    const companies = state?.focalCompanies ?? [];
+    setFocalContextLabel(companies.length > 0
+      ? companies.slice(0, 2).join(", ") + (companies.length > 2 ? ` +${companies.length - 2}` : "")
+      : null
+    );
+  }, []);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -802,6 +816,7 @@ Try one of the suggested queries below to get started.`;
       mode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(threadStateRef.current ? { state: threadStateRef.current } : {}),
     };
     await saveThread(thread);
     setCurrentThreadId(id);
@@ -812,6 +827,8 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
     setMode(thread.mode);
     setCurrentThreadId(thread.id);
+    threadStateRef.current = thread.state;
+    syncFocalLabel(thread.state);
     setShowSuggestions(false);
   }, []);
 
@@ -819,6 +836,8 @@ Try one of the suggested queries below to get started.`;
     setMessages([]);
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
+    threadStateRef.current = undefined;
+    syncFocalLabel(undefined);
     setShowSuggestions(true);
   }, [mode]);
 
@@ -888,6 +907,7 @@ Try one of the suggested queries below to get started.`;
           contextMode: keys.contextMode || "focused",
           mode,
           accumulatedSourceIds: Array.from(accumulatedSourceIds),
+          threadState: threadStateRef.current ?? null,
         }),
       });
 
@@ -946,6 +966,7 @@ Try one of the suggested queries below to get started.`;
                   trace?: ChatMessage["trace"];
                   tokenEstimate?: { input: number; output: number; total: number };
                   followupSuggestions?: FollowupSuggestion[];
+                  updatedState?: ThreadState;
                 };
                 if (event.type === "delta" && event.text) {
                   deltaBufferRef.current += event.text;
@@ -971,6 +992,8 @@ Try one of the suggested queries below to get started.`;
                   const buffered = deltaBufferRef.current;
                   deltaBufferRef.current = "";
                   streamingIdRef.current = null;
+
+                  if (event.updatedState) { threadStateRef.current = event.updatedState; syncFocalLabel(event.updatedState); }
 
                   if (event.tokenEstimate?.total && event.tokenEstimate.total > 0) {
                     setSessionTokens((prev) => prev + event.tokenEstimate!.total);
@@ -1028,7 +1051,10 @@ Try one of the suggested queries below to get started.`;
           sources?: ChatMessage["sources"];
           trace?: ChatMessage["trace"];
           tokenEstimate?: { input: number; output: number; total: number };
+          updatedState?: ThreadState;
         };
+
+        if (data.updatedState) { threadStateRef.current = data.updatedState; syncFocalLabel(data.updatedState); }
 
         if (data.tokenEstimate?.total && data.tokenEstimate.total > 0) {
           setSessionTokens((prev) => prev + data.tokenEstimate!.total);
@@ -1217,10 +1243,38 @@ Try one of the suggested queries below to get started.`;
               )}
 
               {/* Source badges */}
-              {msg.sources && msg.sources.length > 0 && (
+              {msg.sources && msg.sources.length > 0 && (() => {
+                const expanded = expandedSources.has(msg.id);
+                const visible = expanded ? msg.sources : msg.sources.slice(0, 8);
+                const hiddenCount = msg.sources.length - visible.length;
+                const typeBreakdown = hiddenCount > 0 ? (() => {
+                  const counts: Record<string, number> = {};
+                  for (const s of msg.sources.slice(8)) counts[s.type] = (counts[s.type] || 0) + 1;
+                  return Object.entries(counts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3)
+                    .map(([t, n]) => `${n} ${t}`)
+                    .join(" · ");
+                })() : "";
+                return (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {msg.sources.slice(0, 8).map((src, i) => {
+                  {visible.map((src, i) => {
                     const label = src.title.length > 40 ? src.title.slice(0, 40) + "…" : src.title;
+                    // Map source types to entity drawer kinds so non-URL badges are clickable
+                    const drawerTarget: { name: string; kind: EntityKind } | null = (() => {
+                      if (src.type === "feature") {
+                        // Strip enrichment parens added in agent.ts (e.g. "Feature (12 votes · new)")
+                        const bareName = src.title.replace(/\s*\([^)]*(?:votes|requests|new|done|planned|in progress)[^)]*\)\s*$/i, "").trim();
+                        return { name: bareName || src.title, kind: "feature" };
+                      }
+                      if (src.type === "feedback") {
+                        // If identity leads with an email or company, route to customer drawer
+                        const identityMatch = src.title.match(/^([^\s—]+@[^\s—]+|[A-Z][\w&.\- ]{1,60}?)(?:\s*\([^)]*\))?\s*—/);
+                        if (identityMatch) return { name: identityMatch[1], kind: "customer" };
+                      }
+                      return null;
+                    })();
+                    const clickable = !!(src.url || drawerTarget);
                     const colorClass = cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors",
                       src.type === "feedback" && "bg-blue-500/10 text-blue-600",
@@ -1228,30 +1282,65 @@ Try one of the suggested queries below to get started.`;
                       src.type === "call" && "bg-amber-500/10 text-amber-600",
                       src.type === "pendo" && "bg-fuchsia-500/10 text-fuchsia-600",
                       src.type === "amplitude" && "bg-fuchsia-500/10 text-fuchsia-600",
+                      src.type === "analytics" && "bg-fuchsia-500/10 text-fuchsia-600",
                       src.type === "insight" && "bg-purple-500/10 text-purple-600",
                       src.type === "jira" && "bg-orange-500/10 text-orange-600",
                       src.type === "confluence" && "bg-cyan-500/10 text-cyan-600",
-                      src.url && "hover:opacity-80 cursor-pointer"
+                      src.type === "linear" && "bg-violet-500/10 text-violet-600",
+                      clickable && "hover:opacity-80 cursor-pointer"
                     );
-                    return src.url ? (
-                      <a key={i} href={src.url} target="_blank" rel="noopener noreferrer" className={colorClass}>
-                        <ExternalLink className="w-2.5 h-2.5" />
-                        {label}
-                      </a>
-                    ) : (
+                    if (src.url) {
+                      return (
+                        <a key={i} href={src.url} target="_blank" rel="noopener noreferrer" className={colorClass}>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                          {label}
+                        </a>
+                      );
+                    }
+                    if (drawerTarget) {
+                      return (
+                        <button key={i} type="button" onClick={() => openEntity(drawerTarget)} className={colorClass} title={`View ${drawerTarget.kind}: ${drawerTarget.name}`}>
+                          <Search className="w-2.5 h-2.5" />
+                          {label}
+                        </button>
+                      );
+                    }
+                    return (
                       <span key={i} className={colorClass}>
-                        <Search className="w-2.5 h-2.5" />
                         {label}
                       </span>
                     );
                   })}
                   {msg.sources.length > 8 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">
-                      +{msg.sources.length - 8} more
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedSources((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) next.delete(msg.id);
+                          else next.add(msg.id);
+                          return next;
+                        });
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                      title={expanded ? "Collapse" : typeBreakdown ? `Expand — ${typeBreakdown}` : "Expand"}
+                    >
+                      {expanded ? (
+                        <>
+                          <ChevronUp className="w-2.5 h-2.5" />
+                          Show less
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-2.5 h-2.5" />
+                          +{hiddenCount} more{typeBreakdown ? ` · ${typeBreakdown}` : ""}
+                        </>
+                      )}
+                    </button>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* PRD/Ticket preview actions — available on all non-welcome assistant messages */}
               {msg.role === "assistant" && msg.id !== "welcome" && (
@@ -1362,6 +1451,21 @@ Try one of the suggested queries below to get started.`;
                 : "Full context"
               }
             </span>
+            {focalContextLabel && (
+              <button
+                onClick={() => {
+                  if (threadStateRef.current) {
+                    threadStateRef.current = clearFocus(threadStateRef.current);
+                    syncFocalLabel(threadStateRef.current);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                title="Clear focused context"
+              >
+                <X className="w-2.5 h-2.5" />
+                {focalContextLabel}
+              </button>
+            )}
             {sessionTokens > 0 && (
               <span className="px-1.5 py-0.5 rounded bg-muted font-mono">
                 ~{sessionTokens > 1000 ? `${(sessionTokens / 1000).toFixed(1)}k` : sessionTokens} tokens this session

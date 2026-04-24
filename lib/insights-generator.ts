@@ -254,18 +254,44 @@ function feedbackVolumeInsight(feedback: FeedbackItem[], now: string): Insight[]
     });
   }
 
+  // Time-aware critical-priority insight: only surface when there's an actual
+  // recency shift — the absolute backlog count ("854 high-priority items") is
+  // not an insight, it's just backlog size. Fire when critical arrivals in the
+  // last 14 days exceed the prior 14 days by a meaningful margin.
   const critical = feedback.filter((f) => f.priority === "critical" || f.priority === "high");
-  if (critical.length > 0) {
+  const parseTs = (f: FeedbackItem): number => {
+    const d = f.date ? new Date(f.date).getTime() : NaN;
+    return isNaN(d) ? 0 : d;
+  };
+  const nowMs = Date.now();
+  const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+  const recentCritical = critical.filter((f) => {
+    const t = parseTs(f);
+    return t > 0 && nowMs - t <= fourteenDaysMs;
+  });
+  const priorCritical = critical.filter((f) => {
+    const t = parseTs(f);
+    return t > 0 && nowMs - t > fourteenDaysMs && nowMs - t <= 2 * fourteenDaysMs;
+  });
+  const delta = recentCritical.length - priorCritical.length;
+  const meaningfulShift = recentCritical.length >= 3 && (priorCritical.length === 0 ? true : recentCritical.length / Math.max(priorCritical.length, 1) >= 1.5);
+
+  if (meaningfulShift) {
+    const sortedRecent = [...recentCritical].sort((a, b) => parseTs(b) - parseTs(a));
+    const sign = delta >= 0 ? "+" : "";
+    const trendText = priorCritical.length === 0
+      ? `${recentCritical.length} new in the last 14 days (none in the prior 14)`
+      : `${recentCritical.length} new in the last 14 days, ${sign}${delta} vs prior 14 (${priorCritical.length})`;
     insights.push({
       id: "gen-critical-feedback",
       type: "risk",
-      title: `${critical.length} High/Critical Priority Feedback Items`,
-      description: `${critical.length} items flagged as critical or high priority. Top: ${critical
+      title: `Critical feedback spike: ${recentCritical.length} new in last 14 days`,
+      description: `${trendText}. Top: ${sortedRecent
         .slice(0, 3)
         .map((f) => `"${f.title}" (${f.customer}${f.company ? ` @ ${f.company}` : ""})`)
         .join("; ")}.`,
-      confidence: 0.9,
-      relatedFeedbackIds: critical.slice(0, 10).map((f) => f.id),
+      confidence: 0.85,
+      relatedFeedbackIds: sortedRecent.slice(0, 10).map((f) => f.id),
       themes: ["urgency", "customer-risk"],
       impact: "high",
       createdAt: now,

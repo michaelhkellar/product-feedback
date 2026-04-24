@@ -18,6 +18,10 @@ import { ContextMode } from "./api-keys";
 import { searchWeb } from "./web-search";
 import { enrichSubset } from "./enrichment";
 import { cleanResponseTables } from "./response-cleaner";
+import { synthesizeAnalyticsDocs } from "./analytics-docs";
+import { scoreDoc } from "./signal-score";
+import { ThreadState, updateState } from "./conversation-state";
+import { AGENT_TOOLS, runTool, ToolContext } from "./agent-tools";
 
 export type InteractionMode = "summarize" | "prd" | "ticket";
 
@@ -72,6 +76,7 @@ export interface ChatResult {
   tokenEstimate: { input: number; output: number; total: number };
   trace?: ChatTrace;
   followupSuggestions?: FollowupSuggestion[];
+  updatedState?: ThreadState;
 }
 
 function estimateTokens(text: string): number {
@@ -106,7 +111,7 @@ function dataFingerprint(data: AgentData, embedderId: string): string {
   return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}`;
 }
 
-async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
+async function buildStore(data: AgentData, keys?: AgentKeys, analyticsDays?: number): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
   const embedder = keys ? pickEmbedder(keys) : null;
   const fp = dataFingerprint(data, embedder?.id || "none");
 
@@ -115,41 +120,29 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   }
 
   const store = new InMemoryVectorStore();
-
   let enrichedData = data;
-  const embeddingMap = new Map<string, number[]>();
 
-  if (embedder) {
+  // Step 1: pre-compute feedback embeddings for clustering (must happen before store build)
+  const feedbackEmbMap = new Map<string, number[]>();
+  if (embedder && data.feedback.length > 0) {
     try {
-      // Embed all doc types so RRF fusion works across sources
-      const allItems: { id: string; text: string }[] = [
-        ...data.feedback.map((f) => ({ id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}` })),
-        ...data.features.map((f) => ({ id: f.id, text: `${f.name}. ${f.description.slice(0, 400)}` })),
-        ...data.calls.map((c) => ({ id: c.id, text: `${c.title}. ${c.summary.slice(0, 400)}` })),
-        ...data.jiraIssues.map((j) => ({ id: j.id, text: `${j.summary}. ${j.description.slice(0, 400)}` })),
-        ...data.linearIssues.map((l) => ({ id: l.id, text: `${l.title}. ${l.description.slice(0, 400)}` })),
-        ...data.confluencePages.map((p) => ({ id: p.id, text: `${p.title}. ${p.excerpt.slice(0, 400)}` })),
-      ];
-
+      const feedbackItems = data.feedback.map((f) => ({
+        id: f.id, text: `${f.title}. ${f.content.slice(0, 400)}`,
+      }));
       const EMBED_BATCH = 64;
-      if (allItems.length > 0) {
-        for (let i = 0; i < allItems.length; i += EMBED_BATCH) {
-          const batch = allItems.slice(i, i + EMBED_BATCH);
-          const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
-          if (vecs) {
-            batch.forEach((item, j) => { if (vecs[j]?.length) embeddingMap.set(item.id, vecs[j]); });
-          }
-        }
+      for (let i = 0; i < feedbackItems.length; i += EMBED_BATCH) {
+        const batch = feedbackItems.slice(i, i + EMBED_BATCH);
+        const vecs = await embedder.provider.embed!(batch.map((b) => b.text), embedder.key);
+        if (vecs) batch.forEach((item, j) => { if (vecs[j]?.length) feedbackEmbMap.set(item.id, vecs[j]); });
       }
-
-      if (data.feedback.length > 0 && embeddingMap.size > 0) {
-        const { clusters, clusterMap } = clusterFeedback(data.feedback, embeddingMap);
-        const annotated = annotateClusters(data.feedback, clusterMap, clusters);
-        enrichedData = { ...data, feedback: annotated };
+      if (feedbackEmbMap.size > 0) {
+        const { clusters, clusterMap } = clusterFeedback(data.feedback, feedbackEmbMap);
+        enrichedData = { ...data, feedback: annotateClusters(data.feedback, clusterMap, clusters) };
       }
-    } catch { /* non-fatal: proceed with TF-IDF */ }
+    } catch { /* non-fatal: proceed without cluster annotations */ }
   }
 
+  // Step 2: add all items to store — long docs get chunked into sub-documents
   if (enrichedData.feedback.length) store.addFeedback(enrichedData.feedback);
   if (enrichedData.features.length) store.addFeatures(enrichedData.features);
   if (enrichedData.calls.length) store.addCalls(enrichedData.calls);
@@ -157,9 +150,49 @@ async function buildStore(data: AgentData, keys?: AgentKeys): Promise<{ store: I
   if (enrichedData.jiraIssues.length) store.addJiraIssues(enrichedData.jiraIssues);
   if (enrichedData.linearIssues.length) store.addLinearIssues(enrichedData.linearIssues);
   if (enrichedData.confluencePages.length) store.addConfluencePages(enrichedData.confluencePages);
-  store.buildIndex();
-  if (embeddingMap.size > 0) store.setEmbeddings(embeddingMap);
 
+  // Step 2b: synthesize analytics docs so events/pages are semantically searchable
+  if (enrichedData.analyticsOverview) {
+    const analyticsWindow = analyticsDays ? `last ${analyticsDays} days` : "recent activity";
+    const analyticsDocs = synthesizeAnalyticsDocs(
+      enrichedData.analyticsOverview,
+      enrichedData.analyticsOverview.provider,
+      analyticsWindow
+    );
+    store.addAnalytics(analyticsDocs);
+  }
+
+  store.buildIndex();
+
+  // Step 3: apply signal scores to all search-candidate documents
+  // For feedback docs, pass raw content so FILLER_PATTERN anchors work on item text, not the concatenated doc string
+  const feedbackContentMap = new Map(enrichedData.feedback.map((f) => [f.id, `${f.title} ${f.content}`]));
+  for (const doc of store.getAllDocuments()) {
+    const rawContent = doc.type === "feedback" ? feedbackContentMap.get(doc.id) : undefined;
+    doc.signalScore = scoreDoc({ text: doc.text, rawContent, sourceType: doc.type as Parameters<typeof scoreDoc>[0]["sourceType"] });
+  }
+
+  // Step 4: compute embeddings for ALL store documents (including chunks)
+  const embeddingMap = new Map<string, number[]>();
+  if (embedder) {
+    try {
+      // Reuse feedback embeddings — feedback is never chunked so doc.id == item.id
+      feedbackEmbMap.forEach((vec, id) => embeddingMap.set(id, vec));
+
+      // Embed everything else (chunks from calls/jira/confluence/linear + features + analytics docs)
+      const needsEmbed = store.getAllDocuments().filter((d) => !embeddingMap.has(d.id));
+      const EMBED_BATCH = 64;
+      for (let i = 0; i < needsEmbed.length; i += EMBED_BATCH) {
+        const batch = needsEmbed.slice(i, i + EMBED_BATCH);
+        try {
+          const vecs = await embedder.provider.embed!(batch.map((d) => d.text.slice(0, 512)), embedder.key);
+          if (vecs) batch.forEach((doc, j) => { if (vecs[j]?.length) embeddingMap.set(doc.id, vecs[j]); });
+        } catch { /* non-fatal per-batch; TF-IDF covers missing docs */ }
+      }
+    } catch { /* non-fatal: TF-IDF fallback covers all docs */ }
+  }
+
+  if (embeddingMap.size > 0) store.setEmbeddings(embeddingMap);
   cachedStore = { fingerprint: fp, store, embeddingMap };
   return { store, embeddingMap, enrichedData };
 }
@@ -216,6 +249,62 @@ function cleanFeedbackTitle(fb: FeedbackItem): string {
   const raw = (fb.title || "").replace(/\s+/g, " ").trim();
   const base = !raw || looksLikeOpaqueId(raw) ? snippetFromContent(fb.content) : raw;
   return sanitizeTitleForTable(base);
+}
+
+const GENERIC_TITLE_RE = /^(?:[A-Z][\w ]+ Portal\s*[-–—]\s*vote for |Direct feedback for|Feature Request$|Untitled Note|Note \d+)/i;
+
+/**
+ * Resolve the best-available user-facing identity for a feedback item's Source cell.
+ * Preference order: company > email (any field) > non-email customer name > linked feature
+ * > source integration name > short id. Returns `skip: true` only for truly unattributable
+ * portal-vote rows (generic title AND no feature link AND no other identity).
+ */
+function resolveFeedbackIdentity(fb: FeedbackItem | undefined): { identity: string; skip: boolean } {
+  if (!fb) return { identity: "unknown", skip: false };
+
+  if (fb.company) return { identity: fb.company, skip: false };
+
+  const email = (fb.metadata?.userEmail?.match(EMAIL_RE)?.[0])
+    || (fb.customer?.match(EMAIL_RE)?.[0])
+    || (fb.title?.match(EMAIL_RE)?.[0])
+    || (fb.content?.match(EMAIL_RE)?.[0])
+    || "";
+  if (email) return { identity: email, skip: false };
+
+  const customerName = (fb.customer || "").trim();
+  if (customerName && customerName.toLowerCase() !== "unknown") {
+    return { identity: customerName, skip: false };
+  }
+
+  // Productboard exposes a nested user display name on some note shapes (votes, imports).
+  const metaName = (fb.metadata?.userName || "").trim();
+  if (metaName && metaName.toLowerCase() !== "unknown") {
+    return { identity: metaName, skip: false };
+  }
+
+  const domain = fb.metadata?.companyDomain;
+  const featureName = fb.metadata?.featureName;
+  const rawTitle = fb.title || "";
+  const isPortalVote = /Portal\s*[-–—]\s*vote for/i.test(rawTitle);
+  // For portal votes, prefer "domain · vote: Feature" when a domain is available so the row
+  // attributes the ask to at least a company-level identity instead of an anonymous feature name.
+  if (isPortalVote && featureName) {
+    return { identity: domain ? `${domain} · vote: ${featureName}` : `vote: ${featureName}`, skip: false };
+  }
+  if (domain) return { identity: domain, skip: false };
+  if (featureName) return { identity: `feedback on: ${featureName}`, skip: false };
+
+  // Truly unattributable portal-vote junk (no featureName, no customer) — skip the row entirely.
+  if (GENERIC_TITLE_RE.test(rawTitle)) return { identity: "", skip: true };
+
+  // Last-resort: use the integration name so the Source cell is at least specific.
+  const src = fb.source;
+  if (src && src !== "manual") {
+    return { identity: `via ${src}`, skip: false };
+  }
+
+  // Still no identity — use a short deterministic id so downstream dedup works.
+  return { identity: fb.id ? `note ${fb.id.slice(0, 8)}` : "unknown", skip: false };
 }
 
 function feedbackContactRef(fb: FeedbackItem): string {
@@ -297,6 +386,7 @@ DEPTH DIMENSIONS (consider each; surface the ones the evidence supports):
 - Counter-signals: what evidence disagrees, is isolated, or challenges the dominant pattern? A skeptic's read of the same data.
 - Strategic stance: when the evidence supports it, state an opinionated recommendation — what would you do, with what confidence, and why. Differentiate "here's what the data says" from "here's what I'd do about it."
 - Unmet demand vs noise: distinguish repeat / cross-account signals from one-off requests, and say so.
+- Trend direction: when the analytics context includes "climbing surfaces" or "declining surfaces" OR when an item's evidence carries a ±% vs prior period, PREFER delta language ("MSP Portal up 34% to 9,628 events vs prior 30 days") over snapshot counts. Static counts ("854 high-priority items") are backlog size, not insight — a climb/fall is the insight.
 
 DATA SOURCE RULES:
 - Productboard notes/features = CUSTOMER FEEDBACK. This is the primary voice-of-customer source. Prioritize this.
@@ -711,7 +801,73 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 
 CONSTRAINTS: Focus on what changed, not what stayed the same — unless the thing that stayed the same is itself surprising. 400 words max. No :--- in tables.`;
 
-const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** to draw the reader's eye to 1-3 key data spans (numbers, customer names, product areas, dates). Bolding a short span in the opening sentence is encouraged — that's where the reader looks first. Rules: (1) Bold the data point, not the whole sentence. Good: "**Three enterprise accounts** flagged SSO failures in the last week." Not OK: "**Three enterprise accounts flagged SSO failures in the last week.**" (2) Max 3 bolded spans per response. (3) Never bold an entire clause, sentence, or paragraph. (4) Skip bold entirely if there are no standout data points.`;
+const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** to draw the reader's eye to 1-3 concrete, reader-scannable data spans. Bolding a short span in the opening sentence is encouraged — that's where the reader looks first.
+
+WHAT TO BOLD — the substantive data:
+- Specific counts attached to a specific thing: "**14 customers** requested ..." (not "**three dominant themes**")
+- Customer/company names: "**Prosek Partners**", "**tanthony@nex-tech.com**"
+- Product areas / feature names: "**MSP Portal**", "**Always-On Automated Response**"
+- Dates / recency: "**last 14 days**", "**yesterday**"
+- Absolute metrics: "**54,034 events**", "**$2.3M ARR at risk**"
+
+WHAT NOT TO BOLD — meta-phrases and framing words:
+- NEVER: "**three dominant themes**", "**key findings**", "**major patterns**", "**significant signals**", "**common asks**", "**top insights**" — these are analytical framing, not data.
+- NEVER: whole clauses, sentences, or paragraphs.
+- NEVER: generic adjectives ("**high-priority**", "**critical**") without a specific noun they modify.
+- If the sentence only contains meta-phrases and framing, skip bold entirely.
+
+Rules: (1) Max 3 bolded spans per response. (2) Each bolded span should be ≤4 words and contain either a proper noun or a number. (3) Ask yourself: "Could a reader act on this specific span alone?" If not, don't bold it.`;
+
+const WHAT_COLUMN_RULE = `WHAT COLUMN STYLE: The "What" column in every Source|What|When table must be a SHORT concrete phrase — not a full sentence. Target ≤12 words. Prefer a noun phrase or verb phrase that names the ask or issue. If a verbatim fragment from the evidence is short enough, use it in quotes.
+
+OK (short, specific): "Can't filter findings by severity", "Request: 'go back' button in workflow", "Missing SSO group sync for Okta"
+NOT OK (full sentence, paraphrased): "The customer requires automated monthly usage reports for sub-account billing.", "Needs a single view to see alerts across all customers."
+
+Rules:
+(1) No trailing period on a cell ending in a noun phrase.
+(2) No em-dash narrative — cells are phrases, not paragraphs.
+(3) Keep inline [n] citation at the END of the cell.
+(4) When the evidence has a short verbatim excerpt (≤12 words) that captures the ask, quote it in the cell — this is the most faithful form.
+(5) If the ask genuinely needs a sentence to make sense, write a HEADLINE first (≤12 words) and reserve the long form for the prose/quote block below the table — never put a full sentence in a table cell.
+
+WHEN COLUMN RULE: The "When" column MUST carry a real date for feedback, call, and ticket rows.
+- Feedback / call / Jira / Linear rows: use a short relative ("3d ago", "2w ago", "6mo ago") or a short absolute ("Sep 24", "Mar 13", "Jan 13"). Take the date VERBATIM from the evidence — every numbered evidence item includes a "[timeframe]" or date near the identity. NEVER write "—" for these rows.
+- Analytics rows (Source ends in "(Pendo page)", "(Amplitude event)", "(PostHog event)", etc.): use "—" — analytics signals have no item-level timestamp.
+- Feature rows (Source ends in "(Productboard feature)"): use "—" unless the evidence provides a related-feedback date.
+If you are unsure of a specific row's date, check the evidence list again rather than defaulting to "—".`;
+
+const QUOTES_RULE = `CUSTOMER QUOTES: Include 1-3 verbatim customer quotes in EVERY response that has at least one feedback or call item in the Available Evidence list. Quotes are the most valuable output of this tool — do not skip them when they exist.
+
+STRICT FORMATTING — blockquotes MUST be on their own line:
+- Put a BLANK LINE before the \`>\` character.
+- Put a BLANK LINE after the quote line (before the next paragraph or table).
+- The \`>\` MUST be the first non-whitespace character on its line. NEVER inline "> \\"..."" mid-sentence.
+- One quote per blockquote line; do NOT concatenate multiple quotes on the same line.
+
+Canonical shape (three lines, with the blank lines on either side):
+
+> "[20-45 word verbatim excerpt from evidence]" — [identity] ([short date])
+
+When to include:
+- 1 quote when there are 2-4 feedback/call items in the evidence pack.
+- 2 quotes when there are 5-9 items (pick from different customers/themes).
+- 3 quotes when there are 10+ items and they represent distinct angles.
+- 0 quotes only when the evidence pack contains no feedback/call items (pure analytics answer).
+
+Picking the excerpt:
+- Prefer concrete asks, specific complaints, or numbers over vague praise.
+- Keep 20-45 words; use \`…\` only when trimming from the middle.
+- Verbatim — do not paraphrase, smooth grammar, or change word choice.
+
+Attribution:
+- Use the identity from the Source column verbatim (email, company, "vote: X", etc.).
+- Include a short date in parens: "3d ago", "2w ago", "Sep 24", "Jan 13".
+- Never leave a quote orphaned with no attribution.
+
+Placement:
+- Place quotes immediately after the paragraph that makes the claim they support, OR as a dedicated block before the final table.
+- Do NOT put a quote inside a table cell.
+- Do NOT duplicate text that already appears verbatim in the What column — pick a longer or different excerpt.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -1217,6 +1373,19 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
       parts.push(`${analyticsLabel} tracked event names (${ao.allEventNames.length} — use these ONLY as "<Name> (${analyticsLabel} event)" in Source cells, never the bare platform name): ${ao.allEventNames.map(sp).join(", ")}`);
     }
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
+
+    // Surface period-over-period trends so the model can cite them directly.
+    if (ao.windowLabel && ao.priorWindowLabel) {
+      parts.push(`${analyticsLabel} window: ${ao.windowLabel} vs ${ao.priorWindowLabel}`);
+    }
+    if (ao.risingItems?.length) {
+      const rising = ao.risingItems.map((r) => `${sp(r.name)} (${r.kind}, ${r.count.toLocaleString()} events, +${r.deltaPct}% vs prior)`).join("; ");
+      parts.push(`${analyticsLabel} climbing surfaces: ${rising}`);
+    }
+    if (ao.fallingItems?.length) {
+      const falling = ao.fallingItems.map((f) => `${sp(f.name)} (${f.kind}, ${f.count.toLocaleString()} events, ${f.deltaPct}% vs prior)`).join("; ");
+      parts.push(`${analyticsLabel} declining surfaces: ${falling}`);
+    }
   }
 
   const recentThemes = topThemesRecent(feedback, 14);
@@ -1526,22 +1695,55 @@ export async function chat(
   mode: InteractionMode = "summarize",
   accumulatedSourceIds?: string[],
   onChunk?: (chunk: string) => void,
-  clientTz = "UTC"
+  clientTz = "UTC",
+  incomingState?: ThreadState
 ): Promise<ChatResult> {
   const timeRange = extractTimeRange(userMessage, clientTz);
-  const _rawScopedData = timeRange ? filterByTimeRange(data, timeRange) : data;
+  // Fall back to persisted time window from conversation state when no explicit range in message,
+  // but only if the state is fresh (< 24h) to avoid silently filtering on stale windows.
+  const STATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  const stateAgeMs = incomingState ? Date.now() - new Date(incomingState.updatedAt).getTime() : Infinity;
+  const windowUsable = incomingState?.timeWindow && stateAgeMs < STATE_MAX_AGE_MS;
+  const _rawScopedData = timeRange
+    ? filterByTimeRange(data, timeRange)
+    : windowUsable
+      ? filterByTimeRange(data, {
+          start: new Date(incomingState!.timeWindow!.start),
+          end: new Date(incomingState!.timeWindow!.end),
+          label: incomingState!.timeWindow!.label,
+        })
+      : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
-  const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys);
+  const _analyticsDays = timeRange
+    ? Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000)
+    : undefined;
+  const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys, _analyticsDays);
   const countQuery = wantsCount(userMessage);
   const drilldownQuery = wantsInsightDrilldown(userMessage);
   const deepDiveEarly = wantsDeepDive(userMessage);
   const wideQuery = countQuery || drilldownQuery || isBroadQuery(userMessage) || deepDiveEarly.analytics || deepDiveEarly.data;
-  const pivot = detectPivot(userMessage);
+  const rawPivot = detectPivot(userMessage);
+  // Merge persisted excluded entities from conversation state with current-turn pivot detection
+  const pivot = incomingState?.excludedEntities?.length
+    ? {
+        isPivot: rawPivot.isPivot || incomingState.excludedEntities.length > 0,
+        excluded: Array.from(new Set([...rawPivot.excluded, ...incomingState.excludedEntities])),
+      }
+    : rawPivot;
   const baseSearchLimit = contextMode === "focused" ? 10 : contextMode === "standard" ? 15 : 20;
   // Use a wider search limit for pivot queries so we get enough non-excluded results
   const searchLimit = wideQuery || pivot.isPivot ? Math.max(baseSearchLimit * 5, 50) : baseSearchLimit;
   const searchQueries = buildSearchQueries(userMessage, conversationHistory, wideQuery || isLikelyFollowUp(userMessage), pivot);
+  // Boost focal companies from conversation state — per-company so mentioning one doesn't suppress boosts for others
+  if (incomingState?.focalCompanies?.length) {
+    const msgLower = userMessage.toLowerCase();
+    for (const company of incomingState.focalCompanies) {
+      if (msgLower.includes(company.toLowerCase())) continue;
+      const boost = `${userMessage} ${company}`;
+      if (!searchQueries.includes(boost)) searchQueries.push(boost);
+    }
+  }
 
   // Compute query embedding for semantic search (non-fatal if unavailable)
   let queryEmbedding: number[] | undefined;
@@ -1560,9 +1762,9 @@ export async function chat(
   // Detect urgency/actionability intent for optional retrieval filters
   const urgencyFilter = detectUrgencyFilter(userMessage);
 
-  const merged = new Map<string, { document: (ReturnType<InMemoryVectorStore["search"]>[number])["document"]; score: number }>();
+  const merged = new Map<string, ReturnType<InMemoryVectorStore["search"]>[number]>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, ...urgencyFilter })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -1652,9 +1854,6 @@ export async function chat(
 
   for (const r of results) {
     const doc = r.document;
-    const details = lookupDetails([doc.id], scopedData, detailed, keys);
-    if (details.length > 0) searchParts.push(details[0]);
-    recentItemIds.add(doc.id);
 
     let title = doc.id;
     let url: string | undefined;
@@ -1664,44 +1863,25 @@ export async function chat(
     let when: string | undefined;
     if (doc.type === "feedback") {
       const fb = scopedData.feedback.find((f) => f.id === doc.id);
-      // Five-level identity resolver (preference order):
-      // 1. Company name — best for stakeholder-facing Source cells
-      // 2. Customer email or name
-      // 3. "vote: {FeatureName}" — when the note title is a portal vote with
-      //    no real customer attribution, use the feature name it's linked to
-      // 4. "feedback on: {FeatureName}" — "Direct feedback for a feature" shape
-      // 5. Cleaned feedback title (last resort — can still be generic)
-      const GENERIC_TITLE_RE = /^(?:[A-Z][\w ]+ Portal\s*[-–—]\s*vote for |Direct feedback for|Feature Request$|Untitled Note|Note \d+)/i;
-      const email = fb?.metadata?.userEmail || (fb?.customer && /\S+@\S+/.test(fb.customer) ? fb.customer : "");
-      const person = email || fb?.customer || "";
-      const rawTitle = fb?.title || "";
-      const featureName = fb?.metadata?.featureName || "";
-      let identity = "";
-      if (fb?.company) {
-        identity = fb.company;
-      } else if (person) {
-        identity = person;
-      } else if (featureName && /Portal\s*[-–—]\s*vote for/i.test(rawTitle)) {
-        identity = `vote: ${featureName}`;
-      } else if (featureName && /^Direct feedback for/i.test(rawTitle)) {
-        identity = `feedback on: ${featureName}`;
-      } else if (featureName && GENERIC_TITLE_RE.test(rawTitle)) {
-        identity = `feedback on: ${featureName}`;
-      }
+      const resolved = resolveFeedbackIdentity(fb);
+      if (resolved.skip) continue;
+      const identity = resolved.identity;
       const coCount = fb?.company ? (companyFeedbackCount[fb.company] || 1) : 1;
       const coNote = coCount >= 2 ? ` (${coCount} items)` : "";
       const core = fb ? cleanFeedbackTitle(fb) : doc.id;
-      title = identity
-        ? `${identity}${coNote} — ${core}`
-        : core;
+      title = `${identity}${coNote} — ${core}`;
       if (fb?.metadata?.sourceUrl) url = fb.metadata.sourceUrl;
       if (fb) when = shortDate(fb as unknown as Record<string, unknown>);
     } else if (doc.type === "feature") {
       const feat = scopedData.features.find((f) => f.id === doc.id);
-      title = feat?.name || title;
-      // Features have no createdAt/updatedAt in our type; surface the newest
-      // related-feedback date as the ground-truth When so rows don't stay blank.
       if (feat) {
+        const statusLabel = feat.status === "in_progress" ? "in progress" : feat.status;
+        const voteStr = feat.votes > 0 ? `${feat.votes} votes` : "";
+        const reqStr = feat.customerRequests > 0 ? `${feat.customerRequests} requests` : "";
+        const meta = [voteStr, reqStr, statusLabel].filter(Boolean).join(" · ");
+        title = meta ? `${feat.name} (${meta})` : feat.name;
+        // Features have no createdAt/updatedAt in our type; surface the newest
+        // related-feedback date as the ground-truth When so rows don't stay blank.
         const related = scopedData.feedback
           .filter((fb) => fb.themes?.some((t) => feat.themes?.includes(t)))
           .map((fb) => fb as unknown as Record<string, unknown>);
@@ -1743,6 +1923,11 @@ export async function chat(
         url = l.url;
         when = shortDate(l as unknown as Record<string, unknown>);
       }
+    } else if (doc.type === "analytics") {
+      const label = (doc.metadata?.label as string) || "";
+      if (!label) continue;
+      title = label;
+      when = "—";
     }
     // Fallback: when the lookup failed or returned an empty/UUID-shaped title,
     // give the model a meaningful handle in "<Untitled> (<Source kind>)" form so
@@ -1760,15 +1945,26 @@ export async function chat(
       };
       title = `Untitled (${typeLabel[doc.type] || doc.type})`;
     }
+    // Only add context + source row for items that survived identity resolution.
+    const details = lookupDetails([doc.id], scopedData, detailed, keys);
+    if (details.length > 0) {
+      const detail = r.highlightSpan
+        ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
+        : details[0];
+      searchParts.push(detail);
+    }
+    recentItemIds.add(doc.id);
     sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
   }
 
   if (analyticsLookup?.sources.length) {
+    const existingIds = new Set(sources.map((s) => s.id));
+    const existingTitles = new Set(sources.filter((s) => s.type === "analytics").map((s) => s.title));
     for (const source of analyticsLookup.sources) {
-      // Analytics signals have no item-level timestamp; mark when as "—" so
-      // the cleaner can overwrite any hallucinated date the model writes
-      // for an analytics row.
-      sources.push({ ...source, title: sanitizeTitleForTable(source.title), when: "—" });
+      const cleanTitle = sanitizeTitleForTable(source.title);
+      // Dedup against analytics docs already added via the main results loop
+      if (existingIds.has(source.id) || existingTitles.has(cleanTitle)) continue;
+      sources.push({ ...source, title: cleanTitle, when: "—" });
     }
   }
 
@@ -1954,6 +2150,36 @@ ${formatInstructions}`;
           ? "detailed"
           : "conversational";
 
+  // Compute structured conversation state for this turn (persisted back by the client)
+  const retrievedCompanies = Array.from(new Set([
+    ...results
+      .filter((r) => r.document.type === "feedback")
+      .flatMap((r) => {
+        const fb = scopedData.feedback.find((f) => f.id === r.document.id);
+        return fb?.company ? [fb.company] : [];
+      }),
+    // Also extract company-like tokens from call participants (domain-part of emails)
+    ...results
+      .filter((r) => r.document.type === "call")
+      .flatMap((r) => {
+        const c = scopedData.calls.find((ca) => ca.id === r.document.id);
+        return (c?.participants ?? [])
+          .map((p) => {
+            const atIdx = p.indexOf("@");
+            if (atIdx > 0) return p.slice(atIdx + 1).split(".")[0];
+            return "";
+          })
+          .filter((s) => s.length > 2);
+      }),
+  ])).slice(0, 5);
+  const updatedState = updateState(incomingState, {
+    retrievedThemes: detectedThemes,
+    retrievedCompanies,
+    extractedTimeRange: timeRange,
+    pivotExcluded: rawPivot.excluded,
+    mode,
+  });
+
   const trace: ChatTrace = {
     detectedIntent: mode as "summarize" | "prd" | "ticket",
     queryType: queryTypeLabel,
@@ -2010,6 +2236,8 @@ ${formatInstructions}`;
           required: ["query"],
         },
       }] : []),
+      // Multi-hop tools: structured cross-source queries — gated to comparison/causal queries to avoid unnecessary round-trips
+      ...(queryTypeLabel === "comparison" || queryTypeLabel === "detailed" || /\b(why|what caused|what changed|explain|correlate|compared to|vs\.?)\b/i.test(userMessage) ? AGENT_TOOLS : []),
     ];
 
     const webSources: { type: string; id: string; title: string; url?: string }[] = [];
@@ -2058,6 +2286,16 @@ ${formatInstructions}`;
           count: results.length,
         };
       }
+      // Dispatch multi-hop structured tools (findFeedback, compareWindows, findAnalytics, findAccountHistory)
+      if (["findFeedback", "compareWindows", "findAnalytics", "findAccountHistory"].includes(name)) {
+        const toolCtx: ToolContext = { data: scopedData, store };
+        const result = await runTool({ id: `tool-${Date.now()}`, name, input }, toolCtx);
+        const text = JSON.stringify(result.result);
+        const count = Array.isArray((result.result as Record<string, unknown>)?.items)
+          ? ((result.result as Record<string, unknown>).items as unknown[]).length
+          : 1;
+        return { text: text.slice(0, 2000), count };
+      }
       return { text: "Unknown tool.", count: 0 };
     };
 
@@ -2066,8 +2304,11 @@ ${formatInstructions}`;
 
     if (provider.generateWithTools) {
       const toolMessages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: prompt }];
+      const toolCallCache = new Map<string, string>();
+      const MULTI_HOP_DEADLINE_MS = 15_000;
+      const multiHopStart = Date.now();
 
-      for (let round = 0; round < 3; round++) {
+      for (let round = 0; round < 3 && Date.now() - multiHopStart < MULTI_HOP_DEADLINE_MS; round++) {
         const result = await provider.generateWithTools(systemPrompt, toolMessages, agentTools, aiKey, keys.aiModel || undefined);
 
         if (result.toolCalls.length === 0) {
@@ -2077,15 +2318,24 @@ ${formatInstructions}`;
           break;
         }
 
-        // Execute tool calls and record for trace
+        // Execute tool calls, dedup by name+input, record for trace
         toolMessages.push({ role: "assistant", content: result.text || "" });
         const toolResultParts: string[] = [];
         for (const tc of result.toolCalls) {
-          const { text: output, count } = await executeAgentTool(tc.name, tc.input);
+          const cacheKey = `${tc.name}:${JSON.stringify(tc.input)}`;
+          let output: string;
+          let count: number;
+          if (toolCallCache.has(cacheKey)) {
+            output = toolCallCache.get(cacheKey)!;
+            count = 0;
+          } else {
+            ({ text: output, count } = await executeAgentTool(tc.name, tc.input));
+            toolCallCache.set(cacheKey, output);
+          }
           recordedToolCalls.push({
             name: tc.name,
             query: String(tc.input.query || ""),
-            resultCount: count,
+            resultCount: count!,
           });
           toolResultParts.push(`Tool: ${tc.name}\nResult: ${output}`);
         }
@@ -2146,6 +2396,7 @@ ${formatInstructions}`;
         tokenEstimate: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },
         trace: finalTrace,
         ...(followupSuggestions.length > 0 ? { followupSuggestions } : {}),
+        updatedState,
       };
     }
     aiAttemptedButFailed = true;
@@ -2216,19 +2467,19 @@ function getFormatInstructions(
     // table. This keeps "Pendo" out of the Source column and gives the model a
     // shape that fits product-usage data instead of customer-source data.
     if (isAnalyticsQuery(message)) {
-      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
     // Theme/pattern queries always get the detailed format regardless of qType,
     // because a conversational route gives a thin 300-word response.
     if (qType === "conversational" && isThemeQuery(message)) {
-      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
     switch (qType) {
-      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}`;
-      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}`;
-      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
+      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
+      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
       case "count": return SUMMARIZE_FORMAT;
-      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
   }
   return SUMMARIZE_FORMAT;
@@ -2355,7 +2606,7 @@ What to build, at the right level of abstraction. Be concrete enough that an eng
 CONSTRAINTS: Be concise and actionable. Every acceptance criterion must be testable. Out of Scope and Rabbit Holes must not be empty. Ground priority in customer data. Keep title under 80 characters. Every claim must trace to evidence from the provided data.`;
 
 function generateBuiltInResponse(
-  query: string, context: string,
+  _query: string, context: string,
   sources: { type: string; id: string; title: string }[], data: AgentData
 ): string {
   const total = data.feedback.length + data.features.length + data.calls.length + data.insights.length + data.jiraIssues.length + data.confluencePages.length + data.linearIssues.length;

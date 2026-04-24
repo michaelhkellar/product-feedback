@@ -253,6 +253,93 @@ function normalizeNumberedListItems(text: string): string {
  * ensure there's a blank line between a heading and any immediately-following
  * pipe-table row.
  */
+// The citation-marker component only recognizes single-number brackets like [5].
+// Models frequently emit multi-number citations like [7, 11, 18] which render as
+// raw text. Expand those into individual markers so each one becomes clickable.
+function expandMultiCitations(text: string): string {
+  // Table pipe-separators look like `|---|---|` — don't touch them. Only match
+  // [digit, digit, ...] where at least two comma-separated numbers are inside.
+  return text.replace(/\[\s*(\d+(?:\s*,\s*\d+)+)\s*\]/g, (_match, inner) => {
+    const nums = (inner as string).split(/\s*,\s*/).map((n: string) => n.trim()).filter(Boolean);
+    return nums.map((n: string) => `[${n}]`).join("");
+  });
+}
+
+// When the model writes `> "quote"` mid-line instead of on its own line, the
+// markdown blockquote syntax fails and the reader sees a literal ">". Move any
+// such inline `> "..."` span onto its own line with surrounding blank lines.
+// Also handles: multiple quotes stacked on one line, and a trailing `### Heading`
+// after an attribution close-paren — both have been observed in real output.
+function normalizeInlineBlockquotes(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+
+  const splitInlineQuotes = (rawLine: string): string[] => {
+    // Split on every `>` that isn't already at line start. Keep the `>` with each fragment.
+    // Example: `foo. > "q1" — a (3d ago) > "q2" — b (Jan 1) ### Heading`
+    //   → ["foo.", `> "q1" — a (3d ago)`, `> "q2" — b (Jan 1)`, "### Heading"]
+    const parts: string[] = [];
+    let remaining = rawLine;
+    // First, split off any heading that was smashed onto the end of the line after `)`
+    const headingMatch = remaining.match(/^(.*?\))\s+(#{1,6}\s+\S.*)$/);
+    if (headingMatch) {
+      remaining = headingMatch[1];
+      parts.push("__HEADING__" + headingMatch[2]);
+    }
+    // Split on runs like ` > "..."` (space + caret-angle + quote). Keep the prefix and each quote block.
+    const QUOTE_SPLIT_RE = /\s+(?=>\s*")/g;
+    const segments = remaining.split(QUOTE_SPLIT_RE);
+    // First segment is pre-quote prose; the rest each start with `>`.
+    const result: string[] = [];
+    if (segments[0] && !segments[0].trimStart().startsWith(">")) {
+      result.push(segments[0].trimEnd());
+    }
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg && seg.trimStart().startsWith(">")) result.push(seg.trim());
+    }
+    // Re-append the heading if we stashed one
+    if (parts.length) result.push(parts[0].replace(/^__HEADING__/, ""));
+    return result;
+  };
+
+  for (const line of lines) {
+    // Already a properly-formatted blockquote line — may still contain stacked quotes.
+    if (/^\s*>/.test(line)) {
+      // Split stacked quotes inside a single blockquote line: `> "q1" — a (3d) > "q2" — b (Jan)`
+      if (/>\s*"[^"]{4,}".{0,200}?>\s*"/.test(line)) {
+        const parts = splitInlineQuotes(line);
+        let first = true;
+        for (const p of parts) {
+          if (!first) out.push("");
+          out.push(p.trimStart().startsWith(">") ? p : `> ${p}`);
+          first = false;
+        }
+        out.push("");
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+    // Look for inline `> "..."` in otherwise-prose lines.
+    if (/>\s*"[^"]{10,}"/.test(line)) {
+      const parts = splitInlineQuotes(line);
+      if (parts.length > 1) {
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          // Blank line before every blockquote or heading
+          if ((p.startsWith(">") || /^#{1,6}\s/.test(p)) && out.length && out[out.length - 1] !== "") out.push("");
+          out.push(p);
+          if (p.startsWith(">") || /^#{1,6}\s/.test(p)) out.push("");
+        }
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 function normalizeHeadingPlacement(text: string): string {
   // Split inline headings like "text. ## Heading more" into their own lines
   const INLINE_HEADING_RE = /^(.+?[.!?])\s+(#{1,6}\s+.+)$/;
@@ -465,6 +552,8 @@ export function cleanResponseTables(text: string, sources: SourceRef[]): string 
   // rendering bugs regardless of whether tables follow.
   text = normalizeNumberedListItems(text);
   text = normalizeHeadingPlacement(text);
+  text = normalizeInlineBlockquotes(text);
+  text = expandMultiCitations(text);
 
   if (!text.includes("|")) return text;
 

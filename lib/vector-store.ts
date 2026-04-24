@@ -2,10 +2,56 @@ import { FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, C
 
 export interface VectorDocument {
   id: string;
-  type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | "linear";
+  type: "feedback" | "feature" | "call" | "insight" | "jira" | "confluence" | "linear" | "analytics";
   text: string;
   themes: string[];
   metadata: Record<string, string>;
+  // Chunking fields: set on chunk documents; absent on short/standalone docs.
+  parentId?: string;
+  chunkIndex?: number;
+  signalScore?: number;
+}
+
+// Sentence-split text into ~maxLen char windows with overlap.
+// Returns [text] unchanged if text.length <= CHUNK_THRESHOLD.
+const CHUNK_THRESHOLD = 600;
+const CHUNK_MAX = 280;
+const CHUNK_OVERLAP = 60;
+const CHUNK_CAP = 50;
+
+function chunkText(text: string, maxLen = CHUNK_MAX, overlap = CHUNK_OVERLAP): string[] {
+  if (text.length <= CHUNK_THRESHOLD) return [text];
+
+  // Split on sentence boundaries first
+  const sentenceRe = /(?<=[.!?])\s+/;
+  const rawSentences = text.split(sentenceRe).filter((s) => s.length > 0);
+
+  const windows: string[] = [];
+  let current = "";
+
+  for (const sentence of rawSentences) {
+    // If a single sentence is too long, sub-split on commas then whitespace
+    const parts: string[] = sentence.length > maxLen
+      ? sentence.split(/,\s*/).flatMap((p) =>
+          p.length > maxLen ? p.match(new RegExp(`.{1,${maxLen}}`, "g")) ?? [p] : [p]
+        )
+      : [sentence];
+
+    for (const part of parts) {
+      if ((current + " " + part).trim().length <= maxLen) {
+        current = current ? current + " " + part : part;
+      } else {
+        if (current) windows.push(current.trim());
+        // Carry overlap from end of previous window
+        const tail = current.slice(-overlap);
+        current = tail ? tail + " " + part : part;
+      }
+    }
+  }
+  if (current.trim()) windows.push(current.trim());
+
+  // Cap to CHUNK_CAP windows
+  return windows.slice(0, CHUNK_CAP);
 }
 
 function tokenize(text: string): string[] {
@@ -38,15 +84,50 @@ function cosineSim(a: number[], b: number[]): number {
 }
 
 export class InMemoryVectorStore {
+  // Search candidates: chunks + short standalone docs (no parent docs)
   private documents: VectorDocument[] = [];
+  // Parent docs for long sources — used for result hydration after chunk aggregation
+  private parentDocs: Map<string, VectorDocument> = new Map();
   private idf: Map<string, number> = new Map();
   private tfidf: Map<string, Map<string, number>> = new Map();
   private docById: Map<string, VectorDocument> = new Map();
   private embeddings: Map<string, number[]> = new Map();
 
+  private addDoc(doc: VectorDocument): void {
+    this.documents.push(doc);
+    this.docById.set(doc.id, doc);
+  }
+
+  private addChunked(
+    item: { id: string },
+    fullText: string,
+    parentDoc: Omit<VectorDocument, "id" | "text" | "parentId" | "chunkIndex">
+  ): void {
+    const chunks = chunkText(fullText);
+    if (chunks.length === 1) {
+      // Short enough to keep as a single document
+      this.addDoc({ ...parentDoc, id: item.id, text: chunks[0] });
+    } else {
+      // Store the parent doc for hydration; add chunks to search index
+      const parent: VectorDocument = { ...parentDoc, id: item.id, text: fullText };
+      this.parentDocs.set(item.id, parent);
+      this.docById.set(item.id, parent);
+      for (let i = 0; i < chunks.length; i++) {
+        this.addDoc({
+          ...parentDoc,
+          id: `${item.id}#c${i}`,
+          text: chunks[i],
+          parentId: item.id,
+          chunkIndex: i,
+        });
+      }
+    }
+  }
+
   addFeedback(items: FeedbackItem[]) {
     for (const item of items) {
-      this.documents.push({
+      // Feedback items are short by design; never chunk — clustering depends on item-level granularity.
+      this.addDoc({
         id: item.id,
         type: "feedback",
         text: `${item.title} ${item.content} ${item.themes.join(" ")} ${item.customer} ${item.company || ""}`,
@@ -67,7 +148,7 @@ export class InMemoryVectorStore {
 
   addFeatures(features: ProductboardFeature[]) {
     for (const f of features) {
-      this.documents.push({
+      this.addDoc({
         id: f.id,
         type: "feature",
         text: `${f.name} ${f.description} ${f.themes.join(" ")}`,
@@ -80,10 +161,9 @@ export class InMemoryVectorStore {
   addCalls(calls: AttentionCall[]) {
     for (const c of calls) {
       const moments = c.keyMoments.map((m) => m.text).join(" ");
-      this.documents.push({
-        id: c.id,
+      const fullText = `${c.title} ${c.summary} ${moments} ${c.actionItems.join(" ")} ${c.themes.join(" ")}`;
+      this.addChunked(c, fullText, {
         type: "call",
-        text: `${c.title} ${c.summary} ${moments} ${c.actionItems.join(" ")} ${c.themes.join(" ")}`,
         themes: c.themes,
         metadata: { date: c.date, participants: c.participants.join(", ") },
       });
@@ -92,7 +172,7 @@ export class InMemoryVectorStore {
 
   addInsights(insights: Insight[]) {
     for (const i of insights) {
-      this.documents.push({
+      this.addDoc({
         id: i.id,
         type: "insight",
         text: `${i.title} ${i.description} ${i.themes.join(" ")}`,
@@ -104,10 +184,9 @@ export class InMemoryVectorStore {
 
   addJiraIssues(issues: JiraIssue[]) {
     for (const issue of issues) {
-      this.documents.push({
-        id: issue.id,
+      const fullText = `${issue.key} ${issue.summary} ${issue.description} ${issue.labels.join(" ")} ${issue.project} ${issue.issueType} ${issue.status}`;
+      this.addChunked(issue, fullText, {
         type: "jira",
-        text: `${issue.key} ${issue.summary} ${issue.description} ${issue.labels.join(" ")} ${issue.project} ${issue.issueType} ${issue.status}`,
         themes: issue.labels,
         metadata: {
           key: issue.key,
@@ -123,10 +202,9 @@ export class InMemoryVectorStore {
 
   addLinearIssues(issues: LinearIssue[]) {
     for (const issue of issues) {
-      this.documents.push({
-        id: issue.id,
+      const fullText = `${issue.identifier} ${issue.title} ${issue.description} ${issue.labels.join(" ")} ${issue.team} ${issue.status}`;
+      this.addChunked(issue, fullText, {
         type: "linear",
-        text: `${issue.identifier} ${issue.title} ${issue.description} ${issue.labels.join(" ")} ${issue.team} ${issue.status}`,
         themes: issue.labels,
         metadata: {
           key: issue.identifier,
@@ -142,10 +220,10 @@ export class InMemoryVectorStore {
 
   addConfluencePages(pages: ConfluencePage[]) {
     for (const page of pages) {
-      this.documents.push({
-        id: page.id,
+      // Excerpt may already be truncated by the API; treat defensively with chunkText.
+      const fullText = `${page.title} ${page.excerpt} ${page.space}`;
+      this.addChunked(page, fullText, {
         type: "confluence",
-        text: `${page.title} ${page.excerpt} ${page.space}`,
         themes: [],
         metadata: {
           space: page.space,
@@ -153,6 +231,12 @@ export class InMemoryVectorStore {
           url: page.url,
         },
       });
+    }
+  }
+
+  addAnalytics(docs: VectorDocument[]) {
+    for (const doc of docs) {
+      this.addDoc(doc);
     }
   }
 
@@ -179,11 +263,10 @@ export class InMemoryVectorStore {
         vec.set(token, tfVal * (this.idf.get(token) || 0));
       });
       this.tfidf.set(doc.id, vec);
-      this.docById.set(doc.id, doc);
     }
   }
 
-  /** Supply pre-computed embeddings keyed by document id. Call after buildIndex(). */
+  /** Supply pre-computed embeddings keyed by document id (including chunk ids). */
   setEmbeddings(embeddings: Map<string, number[]>) {
     this.embeddings = embeddings;
   }
@@ -204,6 +287,11 @@ export class InMemoryVectorStore {
     }
   }
 
+  /** Return all search-candidate documents (chunks + standalone). Used to get chunk IDs for external embedding. */
+  getAllDocuments(): VectorDocument[] {
+    return this.documents;
+  }
+
   search(
     query: string,
     options?: {
@@ -213,8 +301,9 @@ export class InMemoryVectorStore {
       queryEmbedding?: number[];
       minUrgency?: "high" | "medium" | "low";
       requireActionable?: boolean;
+      applySignalBoost?: boolean;
     }
-  ): { document: VectorDocument; score: number }[] {
+  ): { document: VectorDocument; score: number; highlightSpan?: string }[] {
     const limit = options?.limit || 8;
     const K = 60; // RRF constant
     const URGENCY_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
@@ -234,7 +323,6 @@ export class InMemoryVectorStore {
       if (options?.themes?.length) {
         if (!doc.themes.some((t) => options.themes!.includes(t))) return false;
       }
-      // Urgency/actionability filters apply only to feedback docs (others have no such metadata)
       if (doc.type === "feedback") {
         if (minUrgencyRank > 0) {
           const docUrgencyRank = URGENCY_RANK[doc.metadata.urgency] || 0;
@@ -245,7 +333,7 @@ export class InMemoryVectorStore {
       return true;
     });
 
-    // TF-IDF pass: score all candidates
+    // TF-IDF pass
     const tfidfScored: { id: string; score: number }[] = [];
     const tfidfScoreMap = new Map<string, number>();
     for (const doc of candidates) {
@@ -261,9 +349,7 @@ export class InMemoryVectorStore {
     const tfidfRankMap = new Map<string, number>();
     tfidfScored.forEach(({ id }, i) => tfidfRankMap.set(id, i));
 
-    // Embedding pass: cosine score for docs that have embeddings
-    // Threshold at 0.2 to avoid dragging in weak semantic matches (cosine on 768-dim text embeddings
-    // typically lands 0.3+ for meaningful matches, <0.2 is near-random).
+    // Embedding pass
     const useEmbeddings = !!options?.queryEmbedding && this.embeddings.size > 0;
     const embRankMap = new Map<string, number>();
     if (useEmbeddings) {
@@ -279,12 +365,12 @@ export class InMemoryVectorStore {
       embScored.forEach(({ id }, i) => embRankMap.set(id, i));
     }
 
-    // RRF fusion: union of TF-IDF and embedding result sets
+    // RRF fusion over chunk/standalone doc ids
     const allIds = new Set<string>([...Array.from(tfidfRankMap.keys()), ...Array.from(embRankMap.keys())]);
     const worstTfidf = tfidfScored.length;
     const worstEmb = embRankMap.size;
 
-    const results: { document: VectorDocument; score: number }[] = [];
+    const chunkResults: { id: string; score: number; doc: VectorDocument }[] = [];
     for (const id of Array.from(allIds)) {
       const doc = this.docById.get(id);
       if (!doc) continue;
@@ -298,9 +384,32 @@ export class InMemoryVectorStore {
         score = tfidfScoreMap.get(id) || 0;
       }
 
-      results.push({ document: doc, score });
+      // Apply signal boost (multiplicative, non-suppressive) except for count queries
+      if (options?.applySignalBoost && doc.signalScore !== undefined) {
+        score *= doc.signalScore;
+      }
+
+      chunkResults.push({ id, score, doc });
+    }
+    chunkResults.sort((a, b) => b.score - a.score);
+
+    // Aggregate chunks → parent docs
+    const byParent = new Map<string, { document: VectorDocument; score: number; highlightSpan?: string }>();
+    for (const { doc, score } of chunkResults) {
+      const parentId = doc.parentId ?? doc.id;
+      const existing = byParent.get(parentId);
+      if (!existing || score > existing.score) {
+        // Hydrate to parent doc if this is a chunk
+        const parentDoc = doc.parentId ? (this.parentDocs.get(doc.parentId) ?? doc) : doc;
+        byParent.set(parentId, {
+          document: parentDoc,
+          score,
+          highlightSpan: doc.parentId ? doc.text : undefined,
+        });
+      }
     }
 
+    const results = Array.from(byParent.values());
     results.sort((a, b) => b.score - a.score);
     return results.slice(0, limit);
   }
@@ -332,6 +441,7 @@ export class InMemoryVectorStore {
       insights: this.documents.filter((d) => d.type === "insight").length,
       jira: this.documents.filter((d) => d.type === "jira").length,
       confluence: this.documents.filter((d) => d.type === "confluence").length,
+      analytics: this.documents.filter((d) => d.type === "analytics").length,
     };
   }
 }

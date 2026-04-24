@@ -1,4 +1,11 @@
-import { FeedbackItem, AnalyticsOverview, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
+import { FeedbackItem, AnalyticsOverview, AnalyticsOverviewItem, AnalyticsLookupContext, FullAnalyticsResult } from "./types";
+
+function computeDelta(count: number, prior: number | undefined): { priorCount?: number; deltaPct?: number } {
+  if (prior === undefined) return {};
+  if (prior === 0 && count === 0) return { priorCount: 0, deltaPct: 0 };
+  if (prior === 0) return { priorCount: 0, deltaPct: 999 };
+  return { priorCount: prior, deltaPct: Math.round(((count - prior) / prior) * 100) };
+}
 
 const DEFAULT_HOST = "https://app.posthog.com";
 
@@ -72,56 +79,77 @@ export async function getPostHogOverview(
   const host = resolveHost(overrideHost);
 
   try {
-    const [pageData, eventData] = await Promise.all([
-      posthogFetch<Record<string, unknown>>(
-        `/api/projects/${creds.projectId}/query/`,
-        creds.apiKey,
-        host,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            query: {
-              kind: "HogQLQuery",
-              query: `SELECT properties.$current_url AS page, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 200`,
-            },
-          }),
-        }
-      ),
-      posthogFetch<Record<string, unknown>>(
-        `/api/projects/${creds.projectId}/query/`,
-        creds.apiKey,
-        host,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            query: {
-              kind: "HogQLQuery",
-              query: `SELECT event, count() AS events, uniq(distinct_id) AS users FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 200`,
-            },
-          }),
-        }
-      ).catch(() => null),
+    // Current window: events in the last N days.
+    // Prior window:   events in N..2N days ago — same query shape with an extra lower bound.
+    const runHogQL = (query: string) => posthogFetch<Record<string, unknown>>(
+      `/api/projects/${creds.projectId}/query/`,
+      creds.apiKey,
+      host,
+      { method: "POST", body: JSON.stringify({ query: { kind: "HogQLQuery", query } }) }
+    );
+    const pagesCurrentSQL = `SELECT properties.$current_url AS page, count() AS events FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 200`;
+    const pagesPriorSQL = `SELECT properties.$current_url AS page, count() AS events FROM events WHERE timestamp >= now() - interval ${effectiveDays * 2} day AND timestamp < now() - interval ${effectiveDays} day AND event = '$pageview' GROUP BY page ORDER BY events DESC LIMIT 500`;
+    const eventsCurrentSQL = `SELECT event, count() AS events FROM events WHERE timestamp >= now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 200`;
+    const eventsPriorSQL = `SELECT event, count() AS events FROM events WHERE timestamp >= now() - interval ${effectiveDays * 2} day AND timestamp < now() - interval ${effectiveDays} day AND event NOT LIKE '$%' GROUP BY event ORDER BY events DESC LIMIT 500`;
+
+    const [pageData, eventData, priorPageData, priorEventData] = await Promise.all([
+      runHogQL(pagesCurrentSQL),
+      runHogQL(eventsCurrentSQL).catch(() => null),
+      runHogQL(pagesPriorSQL).catch(() => null),
+      runHogQL(eventsPriorSQL).catch(() => null),
     ]);
 
+    const countsByFirstCol = (d: Record<string, unknown> | null): Map<string, number> => {
+      const rows = ((d?.results || []) as unknown[][]);
+      const m = new Map<string, number>();
+      for (const row of rows) {
+        const key = String(row[0] || "");
+        if (key) m.set(key, Number(row[1]) || 0);
+      }
+      return m;
+    };
+
+    const priorPageMap = countsByFirstCol(priorPageData);
+    const priorEventMap = countsByFirstCol(priorEventData);
+
     const pageResults = ((pageData.results || []) as unknown[][]);
-    const topPages = pageResults.slice(0, 10).map((row, i) => ({
-      id: String(row[0] || `page-${i}`),
-      name: String(row[0] || `Page ${i + 1}`),
-      count: Number(row[1]) || 0,
-    }));
+    const topPages: AnalyticsOverviewItem[] = pageResults.slice(0, 50).map((row, i) => {
+      const name = String(row[0] || `Page ${i + 1}`);
+      const count = Number(row[1]) || 0;
+      return { id: String(row[0] || `page-${i}`), name, count, ...computeDelta(count, priorPageMap.get(name)) };
+    });
 
     const allPageNames = pageResults.map((row) => String(row[0] || ""));
-    let topEvents: AnalyticsOverview["topEvents"] = [];
+    let topEvents: AnalyticsOverviewItem[] = [];
     let allEventNames: string[] = [];
     if (eventData) {
       const eventResults = ((eventData.results || []) as unknown[][]);
       allEventNames = eventResults.map((row) => String(row[0] || ""));
-      topEvents = eventResults.slice(0, 10).map((row, i) => ({
-        id: String(row[0] || `event-${i}`),
-        name: String(row[0] || `Event ${i + 1}`),
-        count: Number(row[1]) || 0,
-      }));
+      topEvents = eventResults.slice(0, 25).map((row, i) => {
+        const name = String(row[0] || `Event ${i + 1}`);
+        const count = Number(row[1]) || 0;
+        return { id: String(row[0] || `event-${i}`), name, count, ...computeDelta(count, priorEventMap.get(name)) };
+      });
     }
+
+    const windowLabel = `last ${effectiveDays} days`;
+    const priorWindowLabel = `${effectiveDays}-${effectiveDays * 2} days ago`;
+
+    const VOLUME_FLOOR = 100;
+    const all = [
+      ...topPages.filter((p) => p.count >= VOLUME_FLOOR && p.deltaPct !== undefined && p.deltaPct !== 999).map((p) => ({ ...p, kind: "page" as const })),
+      ...topEvents.filter((e) => e.count >= VOLUME_FLOOR && e.deltaPct !== undefined && e.deltaPct !== 999).map((e) => ({ ...e, kind: "event" as const })),
+    ];
+    const risingItems = [...all]
+      .filter((i) => (i.deltaPct ?? 0) >= 20)
+      .sort((a, b) => (b.deltaPct ?? 0) - (a.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
+    const fallingItems = [...all]
+      .filter((i) => (i.deltaPct ?? 0) <= -20)
+      .sort((a, b) => (a.deltaPct ?? 0) - (b.deltaPct ?? 0))
+      .slice(0, 5)
+      .map((i) => ({ name: i.name, kind: i.kind, count: i.count, priorCount: i.priorCount!, deltaPct: i.deltaPct! }));
 
     return {
       provider: "posthog",
@@ -132,6 +160,10 @@ export async function getPostHogOverview(
       totalTrackedPages: pageResults.length,
       totalTrackedFeatures: 0,
       generatedAt: new Date().toISOString(),
+      windowLabel,
+      priorWindowLabel,
+      risingItems: risingItems.length > 0 ? risingItems : undefined,
+      fallingItems: fallingItems.length > 0 ? fallingItems : undefined,
       limitations: [
         "Feature tagging requires PostHog feature flags integration",
       ],
