@@ -659,6 +659,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const threadStateRef = useRef<ThreadState | undefined>(undefined);
   const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
+  const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
 
   const syncFocalLabel = useCallback((state: ThreadState | undefined) => {
     const companies = state?.focalCompanies ?? [];
@@ -1242,9 +1243,22 @@ Try one of the suggested queries below to get started.`;
               )}
 
               {/* Source badges */}
-              {msg.sources && msg.sources.length > 0 && (
+              {msg.sources && msg.sources.length > 0 && (() => {
+                const expanded = expandedSources.has(msg.id);
+                const visible = expanded ? msg.sources : msg.sources.slice(0, 8);
+                const hiddenCount = msg.sources.length - visible.length;
+                const typeBreakdown = hiddenCount > 0 ? (() => {
+                  const counts: Record<string, number> = {};
+                  for (const s of msg.sources.slice(8)) counts[s.type] = (counts[s.type] || 0) + 1;
+                  return Object.entries(counts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3)
+                    .map(([t, n]) => `${n} ${t}`)
+                    .join(" · ");
+                })() : "";
+                return (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {msg.sources.slice(0, 8).map((src, i) => {
+                  {visible.map((src, i) => {
                     const label = src.title.length > 40 ? src.title.slice(0, 40) + "…" : src.title;
                     // Map source types to entity drawer kinds so non-URL badges are clickable
                     const drawerTarget: { name: string; kind: EntityKind } | null = (() => {
@@ -1298,12 +1312,35 @@ Try one of the suggested queries below to get started.`;
                     );
                   })}
                   {msg.sources.length > 8 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">
-                      +{msg.sources.length - 8} more
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedSources((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) next.delete(msg.id);
+                          else next.add(msg.id);
+                          return next;
+                        });
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                      title={expanded ? "Collapse" : typeBreakdown ? `Expand — ${typeBreakdown}` : "Expand"}
+                    >
+                      {expanded ? (
+                        <>
+                          <ChevronUp className="w-2.5 h-2.5" />
+                          Show less
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-2.5 h-2.5" />
+                          +{hiddenCount} more{typeBreakdown ? ` · ${typeBreakdown}` : ""}
+                        </>
+                      )}
+                    </button>
                   )}
                 </div>
-              )}
+                );
+              })()}
 
               {/* PRD/Ticket preview actions — available on all non-welcome assistant messages */}
               {msg.role === "assistant" && msg.id !== "welcome" && (

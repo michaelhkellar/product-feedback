@@ -817,13 +817,50 @@ WHAT NOT TO BOLD — meta-phrases and framing words:
 
 Rules: (1) Max 3 bolded spans per response. (2) Each bolded span should be ≤4 words and contain either a proper noun or a number. (3) Ask yourself: "Could a reader act on this specific span alone?" If not, don't bold it.`;
 
-const QUOTES_RULE = `CUSTOMER QUOTES: When the Available Evidence list includes verbatim content from a customer (anything in quotes after "content:" or appearing as direct feedback text), INCLUDE at least one quote in the response when the evidence pack has ≥2 relevant feedback items.
+const WHAT_COLUMN_RULE = `WHAT COLUMN STYLE: The "What" column in every Source|What|When table must be a SHORT concrete phrase — not a full sentence. Target ≤12 words. Prefer a noun phrase or verb phrase that names the ask or issue. If a verbatim fragment from the evidence is short enough, use it in quotes.
 
-Format — use a markdown blockquote on its own line, with a blank line before and after:
+OK (short, specific): "Can't filter findings by severity", "Request: 'go back' button in workflow", "Missing SSO group sync for Okta"
+NOT OK (full sentence, paraphrased): "The customer requires automated monthly usage reports for sub-account billing.", "Needs a single view to see alerts across all customers."
 
-> "[20-45 word excerpt, verbatim from evidence]" — [identity from the Source cell] ([short date like 3d ago or 2w ago])
+Rules:
+(1) No trailing period on a cell ending in a noun phrase.
+(2) No em-dash narrative — cells are phrases, not paragraphs.
+(3) Keep inline [n] citation at the END of the cell.
+(4) When the evidence has a short verbatim excerpt (≤12 words) that captures the ask, quote it in the cell — this is the most faithful form.
+(5) If the ask genuinely needs a sentence to make sense, write a HEADLINE first (≤12 words) and reserve the long form for the prose/quote block below the table — never put a full sentence in a table cell.`;
 
-Rules: (1) Quote verbatim — do not paraphrase or smooth out grammar. (2) Trim to 20-45 words; use ellipsis only when cutting from the middle. (3) Always attribute — never an orphan quote. (4) Prefer quotes with a specific ask, complaint, or number over vague praise. (5) Skip quotes entirely if no feedback evidence is present (analytics-only answers don't need a quote). (6) Do NOT duplicate a quote that's already visible in the Source/What table — pick a different item or a longer excerpt than what appears in the table cell.`;
+const QUOTES_RULE = `CUSTOMER QUOTES: Include 1-3 verbatim customer quotes in EVERY response that has at least one feedback or call item in the Available Evidence list. Quotes are the most valuable output of this tool — do not skip them when they exist.
+
+STRICT FORMATTING — blockquotes MUST be on their own line:
+- Put a BLANK LINE before the \`>\` character.
+- Put a BLANK LINE after the quote line (before the next paragraph or table).
+- The \`>\` MUST be the first non-whitespace character on its line. NEVER inline "> \\"..."" mid-sentence.
+- One quote per blockquote line; do NOT concatenate multiple quotes on the same line.
+
+Canonical shape (three lines, with the blank lines on either side):
+
+> "[20-45 word verbatim excerpt from evidence]" — [identity] ([short date])
+
+When to include:
+- 1 quote when there are 2-4 feedback/call items in the evidence pack.
+- 2 quotes when there are 5-9 items (pick from different customers/themes).
+- 3 quotes when there are 10+ items and they represent distinct angles.
+- 0 quotes only when the evidence pack contains no feedback/call items (pure analytics answer).
+
+Picking the excerpt:
+- Prefer concrete asks, specific complaints, or numbers over vague praise.
+- Keep 20-45 words; use \`…\` only when trimming from the middle.
+- Verbatim — do not paraphrase, smooth grammar, or change word choice.
+
+Attribution:
+- Use the identity from the Source column verbatim (email, company, "vote: X", etc.).
+- Include a short date in parens: "3d ago", "2w ago", "Sep 24", "Jan 13".
+- Never leave a quote orphaned with no attribution.
+
+Placement:
+- Place quotes immediately after the paragraph that makes the claim they support, OR as a dedicated block before the final table.
+- Do NOT put a quote inside a table cell.
+- Do NOT duplicate text that already appears verbatim in the What column — pick a longer or different excerpt.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -2410,19 +2447,19 @@ function getFormatInstructions(
     // table. This keeps "Pendo" out of the Source column and gives the model a
     // shape that fits product-usage data instead of customer-source data.
     if (isAnalyticsQuery(message)) {
-      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
     // Theme/pattern queries always get the detailed format regardless of qType,
     // because a conversational route gives a thin 300-word response.
     if (qType === "conversational" && isThemeQuery(message)) {
-      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
     switch (qType) {
-      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
-      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
-      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
+      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
+      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
       case "count": return SUMMARIZE_FORMAT;
-      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${WHAT_COLUMN_RULE}\n\n${QUOTES_RULE}`;
     }
   }
   return SUMMARIZE_FORMAT;

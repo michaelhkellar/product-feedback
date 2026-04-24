@@ -253,6 +253,29 @@ function normalizeNumberedListItems(text: string): string {
  * ensure there's a blank line between a heading and any immediately-following
  * pipe-table row.
  */
+// When the model writes `> "quote"` mid-line instead of on its own line, the
+// markdown blockquote syntax fails and the reader sees a literal ">". Move any
+// such inline `> "..."` span onto its own line with surrounding blank lines.
+function normalizeInlineBlockquotes(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    // Already a properly-formatted blockquote line — pass through.
+    if (/^\s*>/.test(line)) { out.push(line); continue; }
+    // Look for an inline "> \"..." span preceded by other content.
+    const m = line.match(/^(.+?[.!?])\s+(>\s*"[^"]{10,}".*)$/);
+    if (m) {
+      out.push(m[1]);
+      out.push("");
+      out.push(m[2].trim());
+      out.push("");
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\n");
+}
+
 function normalizeHeadingPlacement(text: string): string {
   // Split inline headings like "text. ## Heading more" into their own lines
   const INLINE_HEADING_RE = /^(.+?[.!?])\s+(#{1,6}\s+.+)$/;
@@ -465,6 +488,7 @@ export function cleanResponseTables(text: string, sources: SourceRef[]): string 
   // rendering bugs regardless of whether tables follow.
   text = normalizeNumberedListItems(text);
   text = normalizeHeadingPlacement(text);
+  text = normalizeInlineBlockquotes(text);
 
   if (!text.includes("|")) return text;
 
