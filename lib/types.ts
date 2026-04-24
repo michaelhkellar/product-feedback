@@ -100,12 +100,18 @@ export interface AnalyticsOverviewItem {
   name: string;
   count: number;
   minutes?: number;
+  /** Count from the immediately-preceding equal-length window, when trend data is available. */
+  priorCount?: number;
+  /** Signed percentage change vs priorCount; undefined when no prior data. */
+  deltaPct?: number;
 }
 
 export interface AnalyticsAccountItem {
   id: string;
   count: number;
   minutes?: number;
+  priorCount?: number;
+  deltaPct?: number;
 }
 
 export interface AnalyticsOverview {
@@ -121,6 +127,14 @@ export interface AnalyticsOverview {
   allPageNames?: string[];
   allFeatureNames?: string[];
   allEventNames?: string[];
+  /** Window used for the primary (current) period — e.g. "last 30 days" */
+  windowLabel?: string;
+  /** Window used for comparison — e.g. "30 days prior" — populated when trends computed */
+  priorWindowLabel?: string;
+  /** Biggest climbers by deltaPct (filtered to items with meaningful volume) */
+  risingItems?: { name: string; kind: "page" | "feature" | "event"; count: number; priorCount: number; deltaPct: number }[];
+  /** Biggest decliners */
+  fallingItems?: { name: string; kind: "page" | "feature" | "event"; count: number; priorCount: number; deltaPct: number }[];
 }
 
 export interface LinearIssue {

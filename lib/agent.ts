@@ -386,6 +386,7 @@ DEPTH DIMENSIONS (consider each; surface the ones the evidence supports):
 - Counter-signals: what evidence disagrees, is isolated, or challenges the dominant pattern? A skeptic's read of the same data.
 - Strategic stance: when the evidence supports it, state an opinionated recommendation — what would you do, with what confidence, and why. Differentiate "here's what the data says" from "here's what I'd do about it."
 - Unmet demand vs noise: distinguish repeat / cross-account signals from one-off requests, and say so.
+- Trend direction: when the analytics context includes "climbing surfaces" or "declining surfaces" OR when an item's evidence carries a ±% vs prior period, PREFER delta language ("MSP Portal up 34% to 9,628 events vs prior 30 days") over snapshot counts. Static counts ("854 high-priority items") are backlog size, not insight — a climb/fall is the insight.
 
 DATA SOURCE RULES:
 - Productboard notes/features = CUSTOMER FEEDBACK. This is the primary voice-of-customer source. Prioritize this.
@@ -827,7 +828,13 @@ Rules:
 (2) No em-dash narrative — cells are phrases, not paragraphs.
 (3) Keep inline [n] citation at the END of the cell.
 (4) When the evidence has a short verbatim excerpt (≤12 words) that captures the ask, quote it in the cell — this is the most faithful form.
-(5) If the ask genuinely needs a sentence to make sense, write a HEADLINE first (≤12 words) and reserve the long form for the prose/quote block below the table — never put a full sentence in a table cell.`;
+(5) If the ask genuinely needs a sentence to make sense, write a HEADLINE first (≤12 words) and reserve the long form for the prose/quote block below the table — never put a full sentence in a table cell.
+
+WHEN COLUMN RULE: The "When" column MUST carry a real date for feedback, call, and ticket rows.
+- Feedback / call / Jira / Linear rows: use a short relative ("3d ago", "2w ago", "6mo ago") or a short absolute ("Sep 24", "Mar 13", "Jan 13"). Take the date VERBATIM from the evidence — every numbered evidence item includes a "[timeframe]" or date near the identity. NEVER write "—" for these rows.
+- Analytics rows (Source ends in "(Pendo page)", "(Amplitude event)", "(PostHog event)", etc.): use "—" — analytics signals have no item-level timestamp.
+- Feature rows (Source ends in "(Productboard feature)"): use "—" unless the evidence provides a related-feedback date.
+If you are unsure of a specific row's date, check the evidence list again rather than defaulting to "—".`;
 
 const QUOTES_RULE = `CUSTOMER QUOTES: Include 1-3 verbatim customer quotes in EVERY response that has at least one feedback or call item in the Available Evidence list. Quotes are the most valuable output of this tool — do not skip them when they exist.
 
@@ -1366,6 +1373,19 @@ function buildStatsHeader(data: AgentData, analyticsLabel = "Analytics"): string
       parts.push(`${analyticsLabel} tracked event names (${ao.allEventNames.length} — use these ONLY as "<Name> (${analyticsLabel} event)" in Source cells, never the bare platform name): ${ao.allEventNames.map(sp).join(", ")}`);
     }
     if (ao.limitations?.length) parts.push(`${analyticsLabel} note: ${ao.limitations.join(". ")}`);
+
+    // Surface period-over-period trends so the model can cite them directly.
+    if (ao.windowLabel && ao.priorWindowLabel) {
+      parts.push(`${analyticsLabel} window: ${ao.windowLabel} vs ${ao.priorWindowLabel}`);
+    }
+    if (ao.risingItems?.length) {
+      const rising = ao.risingItems.map((r) => `${sp(r.name)} (${r.kind}, ${r.count.toLocaleString()} events, +${r.deltaPct}% vs prior)`).join("; ");
+      parts.push(`${analyticsLabel} climbing surfaces: ${rising}`);
+    }
+    if (ao.fallingItems?.length) {
+      const falling = ao.fallingItems.map((f) => `${sp(f.name)} (${f.kind}, ${f.count.toLocaleString()} events, ${f.deltaPct}% vs prior)`).join("; ");
+      parts.push(`${analyticsLabel} declining surfaces: ${falling}`);
+    }
   }
 
   const recentThemes = topThemesRecent(feedback, 14);

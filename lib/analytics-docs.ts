@@ -19,6 +19,12 @@ function renderItem(
   if (item.minutes !== undefined && item.minutes > 0) {
     parts.push(`${item.minutes.toFixed(0)} avg minutes`);
   }
+  if (item.deltaPct !== undefined && item.priorCount !== undefined && item.deltaPct !== 999) {
+    const sign = item.deltaPct >= 0 ? "+" : "";
+    parts.push(`${sign}${item.deltaPct}% vs prior period (${item.priorCount.toLocaleString()})`);
+  } else if (item.deltaPct === 999) {
+    parts.push(`new this period (no prior activity)`);
+  }
   return parts.join(", ") + ".";
 }
 

@@ -104,11 +104,11 @@ export function EntityDrawer({ onQueryEntity }: { onQueryEntity?: (q: string) =>
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-end">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-end overflow-hidden">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeEntity} />
       <div
-        className="relative z-10 w-[420px] max-w-full bg-background border-l border-border shadow-2xl flex flex-col h-full"
+        className="relative z-10 w-[420px] max-w-[100vw] bg-background border-l border-border shadow-2xl flex flex-col h-full overflow-hidden break-words"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
