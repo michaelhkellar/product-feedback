@@ -152,7 +152,7 @@ async function topUsageForSource(
   names: Map<string, string>,
   days = OVERVIEW_DAYS,
   filter?: string,
-  limit = 10
+  limit = 50
 ): Promise<PendoUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
@@ -194,7 +194,7 @@ async function topUsageForSource(
 async function topAccounts(
   integrationKey: string,
   days = OVERVIEW_DAYS,
-  limit = 10
+  limit = 50
 ): Promise<PendoAccountUsageItem[]> {
   const rows = await aggregate(integrationKey, {
     response: { mimeType: "application/json" },
@@ -474,7 +474,7 @@ export async function getPendoOverview(
         return { id: type, name: type, count: numericValue(row.totalEvents) };
       })
       .filter((item): item is { id: string; name: string; count: number } => !!item)
-      .slice(0, 10);
+      .slice(0, 25);
 
     return {
       provider: "pendo",

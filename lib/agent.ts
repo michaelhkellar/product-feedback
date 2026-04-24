@@ -276,15 +276,23 @@ function resolveFeedbackIdentity(fb: FeedbackItem | undefined): { identity: stri
     return { identity: customerName, skip: false };
   }
 
-  const domain = fb.metadata?.companyDomain;
-  if (domain) return { identity: domain, skip: false };
+  // Productboard exposes a nested user display name on some note shapes (votes, imports).
+  const metaName = (fb.metadata?.userName || "").trim();
+  if (metaName && metaName.toLowerCase() !== "unknown") {
+    return { identity: metaName, skip: false };
+  }
 
+  const domain = fb.metadata?.companyDomain;
   const featureName = fb.metadata?.featureName;
   const rawTitle = fb.title || "";
-  if (featureName) {
-    const isPortalVote = /Portal\s*[-–—]\s*vote for/i.test(rawTitle);
-    return { identity: isPortalVote ? `vote: ${featureName}` : `feedback on: ${featureName}`, skip: false };
+  const isPortalVote = /Portal\s*[-–—]\s*vote for/i.test(rawTitle);
+  // For portal votes, prefer "domain · vote: Feature" when a domain is available so the row
+  // attributes the ask to at least a company-level identity instead of an anonymous feature name.
+  if (isPortalVote && featureName) {
+    return { identity: domain ? `${domain} · vote: ${featureName}` : `vote: ${featureName}`, skip: false };
   }
+  if (domain) return { identity: domain, skip: false };
+  if (featureName) return { identity: `feedback on: ${featureName}`, skip: false };
 
   // Truly unattributable portal-vote junk (no featureName, no customer) — skip the row entirely.
   if (GENERIC_TITLE_RE.test(rawTitle)) return { identity: "", skip: true };
@@ -792,7 +800,30 @@ const COMPARISON_FORMAT = `Structure the response as a comparison:
 
 CONSTRAINTS: Focus on what changed, not what stayed the same — unless the thing that stayed the same is itself surprising. 400 words max. No :--- in tables.`;
 
-const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** to draw the reader's eye to 1-3 key data spans (numbers, customer names, product areas, dates). Bolding a short span in the opening sentence is encouraged — that's where the reader looks first. Rules: (1) Bold the data point, not the whole sentence. Good: "**Three enterprise accounts** flagged SSO failures in the last week." Not OK: "**Three enterprise accounts flagged SSO failures in the last week.**" (2) Max 3 bolded spans per response. (3) Never bold an entire clause, sentence, or paragraph. (4) Skip bold entirely if there are no standout data points.`;
+const HIGHLIGHT_RULE = `HIGHLIGHTS: Use inline **bold** to draw the reader's eye to 1-3 concrete, reader-scannable data spans. Bolding a short span in the opening sentence is encouraged — that's where the reader looks first.
+
+WHAT TO BOLD — the substantive data:
+- Specific counts attached to a specific thing: "**14 customers** requested ..." (not "**three dominant themes**")
+- Customer/company names: "**Prosek Partners**", "**tanthony@nex-tech.com**"
+- Product areas / feature names: "**MSP Portal**", "**Always-On Automated Response**"
+- Dates / recency: "**last 14 days**", "**yesterday**"
+- Absolute metrics: "**54,034 events**", "**$2.3M ARR at risk**"
+
+WHAT NOT TO BOLD — meta-phrases and framing words:
+- NEVER: "**three dominant themes**", "**key findings**", "**major patterns**", "**significant signals**", "**common asks**", "**top insights**" — these are analytical framing, not data.
+- NEVER: whole clauses, sentences, or paragraphs.
+- NEVER: generic adjectives ("**high-priority**", "**critical**") without a specific noun they modify.
+- If the sentence only contains meta-phrases and framing, skip bold entirely.
+
+Rules: (1) Max 3 bolded spans per response. (2) Each bolded span should be ≤4 words and contain either a proper noun or a number. (3) Ask yourself: "Could a reader act on this specific span alone?" If not, don't bold it.`;
+
+const QUOTES_RULE = `CUSTOMER QUOTES: When the Available Evidence list includes verbatim content from a customer (anything in quotes after "content:" or appearing as direct feedback text), INCLUDE at least one quote in the response when the evidence pack has ≥2 relevant feedback items.
+
+Format — use a markdown blockquote on its own line, with a blank line before and after:
+
+> "[20-45 word excerpt, verbatim from evidence]" — [identity from the Source cell] ([short date like 3d ago or 2w ago])
+
+Rules: (1) Quote verbatim — do not paraphrase or smooth out grammar. (2) Trim to 20-45 words; use ellipsis only when cutting from the middle. (3) Always attribute — never an orphan quote. (4) Prefer quotes with a specific ask, complaint, or number over vague praise. (5) Skip quotes entirely if no feedback evidence is present (analytics-only answers don't need a quote). (6) Do NOT duplicate a quote that's already visible in the Source/What table — pick a different item or a longer excerpt than what appears in the table cell.`;
 
 function isBroadQuery(query: string): boolean {
   const q = query.toLowerCase();
@@ -2379,19 +2410,19 @@ function getFormatInstructions(
     // table. This keeps "Pendo" out of the Source column and gives the model a
     // shape that fits product-usage data instead of customer-source data.
     if (isAnalyticsQuery(message)) {
-      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      return `${ANALYTICS_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
     }
     // Theme/pattern queries always get the detailed format regardless of qType,
     // because a conversational route gives a thin 300-word response.
     if (qType === "conversational" && isThemeQuery(message)) {
-      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
     }
     switch (qType) {
-      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}`;
-      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}`;
-      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      case "comparison": return `${COMPARISON_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      case "list": return `${LIST_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
+      case "conversational": return `${CONVERSATIONAL_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
       case "count": return SUMMARIZE_FORMAT;
-      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}`;
+      default: return `${DETAILED_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${QUOTES_RULE}`;
     }
   }
   return SUMMARIZE_FORMAT;

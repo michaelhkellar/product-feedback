@@ -211,7 +211,31 @@ function buildNoteMetadata(n: Record<string, unknown>): Record<string, string> {
   if (n.source_id) meta.sourceId = n.source_id as string;
   if (n.state) meta.state = n.state as string;
   if (n.company_domain) meta.companyDomain = n.company_domain as string;
-  if (n.user_email) meta.userEmail = n.user_email as string;
+
+  // Voter/author email: Productboard carries this under many shapes depending on integration
+  // (portal vote notes often nest user in owner/user/createdBy rather than a flat user_email).
+  const owner = n.owner as Record<string, unknown> | undefined;
+  const user = n.user as Record<string, unknown> | undefined;
+  const createdBy = (n.createdBy || n.created_by) as Record<string, unknown> | undefined;
+  const author = n.author as Record<string, unknown> | undefined;
+  const userEmail =
+    (typeof n.user_email === "string" && n.user_email) ||
+    (typeof user?.email === "string" && user.email) ||
+    (typeof owner?.email === "string" && owner.email) ||
+    (typeof createdBy?.email === "string" && createdBy.email) ||
+    (typeof author?.email === "string" && author.email) ||
+    "";
+  if (userEmail) meta.userEmail = userEmail;
+
+  // Also capture a display name when the email isn't available — portal votes often carry
+  // a userName we can use as an identity in the Source cell.
+  const userName =
+    (typeof user?.name === "string" && user.name) ||
+    (typeof owner?.name === "string" && owner.name) ||
+    (typeof createdBy?.name === "string" && createdBy.name) ||
+    (typeof author?.name === "string" && author.name) ||
+    "";
+  if (userName) meta.userName = userName;
 
   // Capture the name of the feature this note is attached to. Notes with
   // generic titles like "Blumira Portal - vote for X" or "Direct feedback for

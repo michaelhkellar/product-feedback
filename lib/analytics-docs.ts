@@ -1,10 +1,9 @@
 import { AnalyticsOverview, AnalyticsOverviewItem } from "./types";
 import { VectorDocument } from "./vector-store";
 
-const MAX_EVENTS = 20;
-const MAX_PAGES = 20;
-const MAX_FEATURES = 20;
-const MAX_FUNNELS = 5;
+const MAX_EVENTS = 50;
+const MAX_PAGES = 50;
+const MAX_FEATURES = 50;
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");

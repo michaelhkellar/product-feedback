@@ -3,7 +3,7 @@ import { DEMO_ATTENTION_CALLS } from "./demo-data";
 
 const API_BASE = "https://api.grain.com";
 const API_VERSION = "2025-10-31";
-const MAX_ITEMS = 200;
+const MAX_ITEMS = 500;
 const TRANSCRIPT_CONCURRENCY = 5;
 
 interface GrainRecording {
