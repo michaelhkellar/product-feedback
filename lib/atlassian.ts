@@ -301,13 +301,16 @@ export async function getConfluencePages(
 
   const auth = await resolveAuth(rawAuth);
   const v2Base = confluenceV2Base(auth);
+  const v1Base = confluenceV1Base(auth);
   const spaces = parseFilterList(spaceFilter);
   const allPages: ConfluencePage[] = [];
   let lastError: string | null = null;
+  let v2Available = true;
 
-  let spaceIdMap: Record<string, string> = {};
+  const spaceIdMap: Record<string, string> = {};
   if (spaces.length > 0) {
-    const { data } = await atlFetch(`${v2Base}/spaces?limit=200`, auth);
+    const { data, status } = await atlFetch(`${v2Base}/spaces?limit=200`, auth);
+    if (status === 404) v2Available = false;
     if (data) {
       for (const s of ((data as Record<string, unknown>).results || []) as Record<string, unknown>[]) {
         const key = ((s.key as string) || "").toUpperCase();
@@ -318,12 +321,13 @@ export async function getConfluencePages(
     }
   }
 
-  async function fetchPages(spaceId?: string) {
+  async function fetchPagesV2(spaceId?: string) {
     let cursor: string | null = null;
     const sp = spaceId ? `&space-id=${spaceId}` : "";
     for (let page = 0; allPages.length < 500 && page < 20; page++) {
       const cp = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
-      const { data, error } = await atlFetch(`${v2Base}/pages?limit=50&sort=-modified-date${sp}${cp}&body-format=storage`, auth);
+      const { data, error, status } = await atlFetch(`${v2Base}/pages?limit=50&sort=-modified-date${sp}${cp}&body-format=storage`, auth);
+      if (status === 404) { v2Available = false; return; }
       if (error) { lastError = error; return; }
       const results = ((data as Record<string, unknown>)?.results || []) as Record<string, unknown>[];
       if (results.length === 0) break;
@@ -334,15 +338,37 @@ export async function getConfluencePages(
     }
   }
 
+  async function fetchPagesV1(spaceKey?: string) {
+    let start = 0;
+    for (let page = 0; allPages.length < 500 && page < 20; page++) {
+      const spParam = spaceKey ? `&spaceKey=${encodeURIComponent(spaceKey)}` : "";
+      const url = `${v1Base}/content?limit=50&orderby=history.lastUpdated+desc&expand=body.storage,space,history,version${spParam}&start=${start}`;
+      const { data, error } = await atlFetch(url, auth);
+      if (error) { lastError = error; return; }
+      const results = ((data as Record<string, unknown>)?.results || []) as Record<string, unknown>[];
+      if (results.length === 0) break;
+      for (const p of results) addPageV1(allPages, p, auth.domain);
+      if (results.length < 50) break;
+      start += results.length;
+    }
+  }
+
   if (spaces.length > 0) {
     for (const space of spaces) {
-      const id = spaceIdMap[space.toUpperCase()] || spaceIdMap[space.toLowerCase()];
-      if (id) await fetchPages(id);
-      else await fetchPages();
+      if (v2Available) {
+        const id = spaceIdMap[space.toUpperCase()] || spaceIdMap[space.toLowerCase()];
+        if (id) await fetchPagesV2(id);
+        else await fetchPagesV2();
+      }
+      if (!v2Available) await fetchPagesV1(space);
     }
   } else {
-    await fetchPages();
+    if (v2Available) await fetchPagesV2();
+    if (!v2Available) await fetchPagesV1();
   }
+  // If v2 failed partway (mix of success + error), the v1 fallback will not run.
+  // When v2 is available, a v1 rerun would duplicate results, so we only fall back when v2 was never reachable.
+  if (!v2Available && lastError) lastError = null; // clear v2 error once v1 succeeded or was attempted
 
   console.log(`Confluence: ${allPages.length} pages${spaceFilter ? ` (${spaceFilter})` : ""}${lastError ? " [err]" : ""}`);
   return { data: allPages, isDemo: false, error: lastError || undefined };
@@ -358,6 +384,25 @@ function addPage(pages: ConfluencePage[], p: Record<string, unknown>, domain: st
     lastModified: (version?.createdAt as string) || (p.createdAt as string) || "",
     author: (version?.authorId as string) || "",
     url: `https://${domain}.atlassian.net/wiki${((p._links as Record<string, unknown>)?.webui as string) || ""}`,
+  });
+}
+
+function addPageV1(pages: ConfluencePage[], p: Record<string, unknown>, domain: string) {
+  const body = p.body as Record<string, unknown> | undefined;
+  const storage = body?.storage as Record<string, unknown> | undefined;
+  const bodyVal = (storage?.value as string) || "";
+  const excerpt = bodyVal.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 500);
+  const spaceObj = p.space as Record<string, unknown> | undefined;
+  const space = (spaceObj?.key as string) || "";
+  const version = p.version as Record<string, unknown> | undefined;
+  const history = p.history as Record<string, unknown> | undefined;
+  const createdBy = history?.createdBy as Record<string, unknown> | undefined;
+  const webui = ((p._links as Record<string, unknown>)?.webui as string) || "";
+  pages.push({
+    id: String(p.id || ""), title: (p.title as string) || "Untitled", excerpt, space,
+    lastModified: (version?.when as string) || (history?.lastUpdated as string) || "",
+    author: (createdBy?.displayName as string) || (createdBy?.accountId as string) || "",
+    url: `https://${domain}.atlassian.net/wiki${webui}`,
   });
 }
 

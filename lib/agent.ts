@@ -1718,14 +1718,6 @@ export async function chat(
 
   for (const r of results) {
     const doc = r.document;
-    const details = lookupDetails([doc.id], scopedData, detailed, keys);
-    if (details.length > 0) {
-      const detail = r.highlightSpan
-        ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
-        : details[0];
-      searchParts.push(detail);
-    }
-    recentItemIds.add(doc.id);
 
     let title = doc.id;
     let url: string | undefined;
@@ -1820,6 +1812,11 @@ export async function chat(
         url = l.url;
         when = shortDate(l as unknown as Record<string, unknown>);
       }
+    } else if (doc.type === "analytics") {
+      const label = (doc.metadata?.label as string) || "";
+      if (!label) continue;
+      title = label;
+      when = "—";
     }
     // Fallback: when the lookup failed or returned an empty/UUID-shaped title,
     // give the model a meaningful handle in "<Untitled> (<Source kind>)" form so
@@ -1837,15 +1834,26 @@ export async function chat(
       };
       title = `Untitled (${typeLabel[doc.type] || doc.type})`;
     }
+    // Only add context + source row for items that survived identity resolution.
+    const details = lookupDetails([doc.id], scopedData, detailed, keys);
+    if (details.length > 0) {
+      const detail = r.highlightSpan
+        ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
+        : details[0];
+      searchParts.push(detail);
+    }
+    recentItemIds.add(doc.id);
     sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
   }
 
   if (analyticsLookup?.sources.length) {
+    const existingIds = new Set(sources.map((s) => s.id));
+    const existingTitles = new Set(sources.filter((s) => s.type === "analytics").map((s) => s.title));
     for (const source of analyticsLookup.sources) {
-      // Analytics signals have no item-level timestamp; mark when as "—" so
-      // the cleaner can overwrite any hallucinated date the model writes
-      // for an analytics row.
-      sources.push({ ...source, title: sanitizeTitleForTable(source.title), when: "—" });
+      const cleanTitle = sanitizeTitleForTable(source.title);
+      // Dedup against analytics docs already added via the main results loop
+      if (existingIds.has(source.id) || existingTitles.has(cleanTitle)) continue;
+      sources.push({ ...source, title: cleanTitle, when: "—" });
     }
   }
 
