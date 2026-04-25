@@ -24,6 +24,7 @@ import {
   PinOff,
   Rocket,
   Users,
+  Scale,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +43,7 @@ const INSIGHT_CONFIG: Record<
   anomaly: { icon: Zap, color: "text-purple-500", bg: "bg-purple-500/10" },
   opportunity: { icon: Rocket, color: "text-cyan-500", bg: "bg-cyan-500/10" },
   segment: { icon: Users, color: "text-indigo-500", bg: "bg-indigo-500/10" },
+  contradiction: { icon: Scale, color: "text-orange-500", bg: "bg-orange-500/10" },
 };
 
 interface InsightsPanelProps {
@@ -82,8 +84,9 @@ export function InsightsPanel({
         const themeFreq: ThemeFrequency[] = Object.entries(
           rawInsights.flatMap((i) => i.themes).reduce((acc: Record<string, number>, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {})
         ).map(([theme, count]) => ({ theme, count }));
-        await Promise.all([saveSnapshot(rawInsights), saveThemeSnapshot(themeFreq)]);
-        const yesterday = await loadYesterdaySnapshot();
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        await Promise.all([saveSnapshot(rawInsights, tz), saveThemeSnapshot(themeFreq, tz)]);
+        const yesterday = await loadYesterdaySnapshot(tz);
         if (yesterday) {
           const tagged = diffInsights(rawInsights, yesterday.insights);
           setInsights(tagged);
@@ -161,6 +164,7 @@ export function InsightsPanel({
             { key: "recommendation", label: "Recs" },
             { key: "theme", label: "Themes" },
             { key: "anomaly", label: "Anomalies" },
+            { key: "contradiction", label: "Contradictions" },
             { key: "pinned", label: `Pinned${pinnedIds.size > 0 ? ` (${pinnedIds.size})` : ""}` },
           ].map((f) => (
             <button

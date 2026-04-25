@@ -8,7 +8,8 @@ export type InsightType =
   | "recommendation"
   | "risk"
   | "opportunity"
-  | "segment";
+  | "segment"
+  | "contradiction";
 
 export interface FeedbackItem {
   id: string;

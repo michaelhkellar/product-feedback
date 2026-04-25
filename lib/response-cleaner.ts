@@ -359,6 +359,33 @@ function normalizeHeadingPlacement(text: string): string {
     .map((line) => (/^\s*#{1,6}\s+/.test(line) ? line.replace(/\*\*/g, "") : line))
     .join("\n");
 
+  // Step 2.5 — promote known learn-mode section labels wrapped in **...** or
+  // __...__ to ## headings. The model sometimes emits the entire section as
+  // `**What's new <body>**` or `**What's new** <body>` instead of using `##`.
+  // Pattern A: full line is **Label <body>** or __Label <body>__ (greedy so
+  //   trailing anchor lands on last ** / __, allowing inline bold spans in body).
+  // Pattern B: standalone **Label** or __Label__ with optional body after.
+  // Case-insensitive in case the model varies capitalisation.
+  {
+    const SECTION_LABELS = [
+      "What's new", "What changed", "What's contradicting", "What to watch next",
+    ];
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const alt = SECTION_LABELS.map(esc).join("|");
+    const fullWrapBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]+(.+)\\*\\*[ \\t]*$`, "gmi");
+    const fullWrapUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${alt})[ \\t]+(.+)__[ \\t]*$`, "gmi");
+    const labelOnlyBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]*\\*\\*[ \\t]*(.*)$`, "gmi");
+    const labelOnlyUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${alt})[ \\t]*__[ \\t]*(.*)$`, "gmi");
+    const promote = (_m: string, indent: string, label: string, body: string) =>
+      `${indent}## ${label}\n\n${body.trim()}`;
+    const promoteLabel = (_m: string, indent: string, label: string, rest: string) => {
+      const body = rest.trim();
+      return body ? `${indent}## ${label}\n\n${body}` : `${indent}## ${label}`;
+    };
+    out = out.replace(fullWrapBold, promote).replace(fullWrapUnder, promote);
+    out = out.replace(labelOnlyBold, promoteLabel).replace(labelOnlyUnder, promoteLabel);
+  }
+
   // Step 3 — unwrap oversized bold paragraphs. When the model wraps a full
   // prose block in **...**, strip the outer markers. Short spans like
   // "**14 customers**" are left alone.

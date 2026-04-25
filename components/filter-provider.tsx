@@ -4,6 +4,17 @@ import { createContext, useContext, useState, useCallback, useEffect, ReactNode 
 
 export type TimeRangeOption = "7d" | "14d" | "30d" | "90d" | "all";
 
+export type SourceTabKey =
+  | "sources"
+  | "feedback"
+  | "features"
+  | "calls"
+  | "pendo"
+  | "amplitude"
+  | "posthog"
+  | "jira"
+  | "confluence";
+
 export interface GlobalFilters {
   timeRange: TimeRangeOption;
   themes: string[];
@@ -12,10 +23,12 @@ export interface GlobalFilters {
 interface FilterContextValue {
   filters: GlobalFilters;
   filtersVisible: boolean;
+  activeSourceTab: SourceTabKey;
   toggleFiltersVisible: () => void;
   setTimeRange: (v: TimeRangeOption) => void;
   toggleTheme: (t: string) => void;
   clearFilters: () => void;
+  setActiveSourceTab: (t: SourceTabKey) => void;
 }
 
 const DEFAULT_FILTERS: GlobalFilters = { timeRange: "all", themes: [] };
@@ -24,10 +37,12 @@ const STORAGE_KEY = "global-filters-v2";
 const FilterContext = createContext<FilterContextValue>({
   filters: DEFAULT_FILTERS,
   filtersVisible: false,
+  activeSourceTab: "sources",
   toggleFiltersVisible: () => {},
   setTimeRange: () => {},
   toggleTheme: () => {},
   clearFilters: () => {},
+  setActiveSourceTab: () => {},
 });
 
 export function FilterProvider({ children }: { children: ReactNode }) {
@@ -52,11 +67,23 @@ export function FilterProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  const [activeSourceTab, setActiveSourceTabState] = useState<SourceTabKey>(() => {
+    if (typeof window === "undefined") return "sources";
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (!stored) return "sources";
+      const val = JSON.parse(stored).activeSourceTab;
+      return typeof val === "string" ? (val as SourceTabKey) : "sources";
+    } catch {
+      return "sources";
+    }
+  });
+
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...filters, filtersVisible }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...filters, filtersVisible, activeSourceTab }));
     } catch {}
-  }, [filters, filtersVisible]);
+  }, [filters, filtersVisible, activeSourceTab]);
 
   const setTimeRange = useCallback((v: TimeRangeOption) => {
     setFilters((f) => ({ ...f, timeRange: v }));
@@ -75,8 +102,12 @@ export function FilterProvider({ children }: { children: ReactNode }) {
 
   const clearFilters = useCallback(() => setFilters(DEFAULT_FILTERS), []);
 
+  const setActiveSourceTab = useCallback((t: SourceTabKey) => {
+    setActiveSourceTabState(t);
+  }, []);
+
   return (
-    <FilterContext.Provider value={{ filters, filtersVisible, toggleFiltersVisible, setTimeRange, toggleTheme, clearFilters }}>
+    <FilterContext.Provider value={{ filters, filtersVisible, activeSourceTab, toggleFiltersVisible, setTimeRange, toggleTheme, clearFilters, setActiveSourceTab }}>
       {children}
     </FilterContext.Provider>
   );

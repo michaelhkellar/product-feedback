@@ -334,29 +334,36 @@ function feedbackSourceRef(fb: FeedbackItem): string {
 function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: AgentKeys = {}): string[] {
   const contentLen = detailed ? 500 : 200;
   const descLen = detailed ? 400 : 0;
+  const fbById = new Map(data.feedback.map((f) => [f.id, f]));
+  const featById = new Map(data.features.map((f) => [f.id, f]));
+  const callById = new Map(data.calls.map((c) => [c.id, c]));
+  const insightById = new Map(data.insights.map((i) => [i.id, i]));
+  const jiraById = new Map(data.jiraIssues.map((j) => [j.id, j]));
+  const linearById = new Map(data.linearIssues.map((l) => [l.id, l]));
+  const pageById = new Map(data.confluencePages.map((p) => [p.id, p]));
   const details: string[] = [];
   for (const id of ids) {
-    const fb = data.feedback.find((f) => f.id === id);
+    const fb = fbById.get(id);
     if (fb) {
       const w = shortDate(fb as unknown as Record<string, unknown>);
       const contact = feedbackContactRef(fb);
       details.push(`[Source: ${feedbackSourceRef(fb)}, ${w}] "${cleanFeedbackTitle(fb)}" — customer: ${contact || "unknown"}${fb.company ? ` @ ${fb.company}` : ""}: "${fb.content.slice(0, contentLen)}"`);
       continue;
     }
-    const feat = data.features.find((f) => f.id === id);
+    const feat = featById.get(id);
     if (feat) {
       const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
       details.push(`(internal roadmap item — do not cite as Source) "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
       continue;
     }
-    const call = data.calls.find((c) => c.id === id);
+    const call = callById.get(id);
     if (call) {
       details.push(`[Call, ${call.date}] ${call.title} — ${call.summary.slice(0, contentLen)}`);
       continue;
     }
-    const insight = data.insights.find((i) => i.id === id);
+    const insight = insightById.get(id);
     if (insight) { details.push(`[Insight] ${insight.title} — ${insight.description.slice(0, contentLen)}`); continue; }
-    const jira = data.jiraIssues.find((j) => j.id === id);
+    const jira = jiraById.get(id);
     if (jira) {
       const w = shortDate(jira as unknown as Record<string, unknown>);
       const link = atlassianIssueUrl(jira.key, keys);
@@ -364,14 +371,14 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
       details.push(`[Jira ${jira.key}${link ? ` (${link})` : ""}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
       continue;
     }
-    const linear = data.linearIssues.find((l) => l.id === id);
+    const linear = linearById.get(id);
     if (linear) {
       const w = shortDate(linear as unknown as Record<string, unknown>);
       const desc = detailed && linear.description ? `\n  Description: "${linear.description.slice(0, descLen)}"` : "";
       details.push(`[Linear ${linear.identifier}, ${w}] ${linear.title} — ${linear.status}/${linear.priority}, assigned: ${linear.assignee}${desc}`);
       continue;
     }
-    const page = data.confluencePages.find((p) => p.id === id);
+    const page = pageById.get(id);
     if (page) {
       const excerpt = detailed && page.excerpt ? `: ${page.excerpt.slice(0, descLen)}` : "";
       const pageLabel = page.space === "Slite" ? "Slite" : "Confluence";
@@ -380,6 +387,13 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
   }
   return details;
 }
+
+const MARKDOWN_FORMATTING_RULES = `MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
+- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
+- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
+- Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
+- Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.
+- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never wrap an entire clause or sentence.`;
 
 const SYSTEM_PROMPT = `You are a senior product intelligence analyst. Synthesize data into insightful, actionable analysis for product managers. Be concise but don't sacrifice depth when the evidence warrants it. Focus on recent changes unless the user asks for historical totals/counts. Be opinionated. Include direct customer quotes when available.
 
@@ -418,16 +432,7 @@ AUTHORING RULES:
 - Counter-signals are valuable, but only when substantive. If a counter-signal is isolated noise, omit it. If it materially challenges the main finding, surface it in a short paragraph or "## Counter-signals" section.
 - Explaining why findings matter is encouraged. Explaining why you chose what to show is not.
 
-MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
-- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
-- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
-- Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
-- Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.`;
-
-const MARKDOWN_FORMATTING_RULES = `MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
-- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
-- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
-- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never wrap an entire clause or sentence.`;
+${MARKDOWN_FORMATTING_RULES}`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];

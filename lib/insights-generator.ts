@@ -1,4 +1,5 @@
 import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue, LinearIssue } from "./types";
+import { findContradictions, Contradiction } from "./contradictions";
 import { AgentData } from "./agent";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 import { INSIGHTS } from "./ai-presets";
@@ -106,6 +107,8 @@ export function generateProgrammaticInsights(data: AgentData): Insight[] {
   if (data.jiraIssues.length > 0 || data.linearIssues.length > 0) {
     insights.push(...staleInsights(data.jiraIssues, data.linearIssues, data.feedback, now));
   }
+
+  insights.push(...contradictionInsights(data, now));
 
   if (data.jiraIssues.length > 0) {
     insights.push(...jiraInsights(data.jiraIssues, now));
@@ -855,4 +858,27 @@ ${summaryParts.join("\n")}`;
     console.error("Failed to parse AI insights response");
     return [];
   }
+}
+
+function contradictionInsights(data: AgentData, now: string): Insight[] {
+  const severityToImpact: Record<Contradiction["severity"], Insight["impact"]> = {
+    high: "high", medium: "medium", low: "low",
+  };
+  const counterSignalByKind: Record<Contradiction["kind"], string> = {
+    "praise-vs-falling-usage": "Usage is falling despite positive feedback",
+    "stale-open-jira": "Engineering ticket is stale while customers keep filing related feedback",
+    "high-vote-no-feature": "Highly-voted request has no engineering ticket",
+  };
+  return findContradictions(data).map((c): Insight => ({
+    id: `contradiction-${c.id}`,
+    type: "contradiction",
+    title: c.title,
+    description: c.evidence.join(" • "),
+    confidence: c.severity === "high" ? 0.85 : c.severity === "medium" ? 0.65 : 0.45,
+    relatedFeedbackIds: c.relatedFeedbackIds,
+    themes: [],
+    impact: severityToImpact[c.severity],
+    createdAt: now,
+    counterSignal: counterSignalByKind[c.kind],
+  }));
 }
