@@ -1,11 +1,16 @@
 # Customer Feedback Intelligence Agent
 
-An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard and Attention — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports three interaction modes: **Insights** (query and analyze feedback), **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
+An AI-powered feedback intelligence platform that aggregates customer feedback from Productboard and Attention — then lets you query it through a conversational agent with built-in RAG (Retrieval-Augmented Generation). Supports four interaction modes: **Insights** (query and analyze feedback), **Catch Up** (review what changed since your last visit), **Write PRDs** (product pitches), and **Write Tickets** — with configurable AI, analytics, and ticket providers. Connects to Pendo, Amplitude, or PostHog for product analytics, and Jira or Linear for issue tracking (read and write).
 
 > Demo data in this repository is synthetic and intentionally fictionalized for safe demos and public code sharing.
 
 ## What's New
 
+- **Catch Up mode** — a dedicated review workflow surfaces what is new, what changed, contradictions, and what to watch next since your last visit or active time filter
+- **Contradiction intelligence** — live insights and Catch Up responses flag disagreement between customer feedback, analytics trends, roadmap status, and stale engineering work
+- **Signal-gap starter prompts** — default suggestions now focus on useful customer-vs-analytics disagreement instead of demo-specific SSO examples
+- **Scoped analytics context** — time filters, thread windows, and Catch Up windows now scope analytics retrieval consistently across chat and live insights
+- **Markdown cleanup for AI responses** — Catch Up sections are normalized into readable headings while preserving short bold highlights for key data spans
 - **Insights mode** — the main chat mode is now called "Insights" (previously "Summarize"), reflecting its broader analytical capability
 - **Evidence confidence** — every response that cites 3+ sources now includes a Confidence block showing sample size, unique account count, newest item age, and a High / Medium / Low rating with a one-phrase reason
 - **Follow-up suggestion chips** — AI responses surface 2–4 clickable follow-up prompts (10x opportunity, counter-signal, gaps analysis, cohort breakdown) so you can keep digging without typing
@@ -85,6 +90,7 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 
 ### Interaction Modes
 - **Insights**: Query and analyze feedback with configurable context depth (quick, balanced, or full). Responses include a structured evidence table, inline citations, a Confidence block (sample size, account count, recency, High/Medium/Low rating), and follow-up suggestion chips
+- **Catch Up**: Review recent changes across feedback, analytics, roadmap items, tickets, and live insights. Catch Up highlights what is new, what shifted, where signals contradict, and the next questions to watch
 - **Write PRD**: Generate product pitches using a blended methodology from Shape Up, Front's 1-Pager, Figma's PRD process, and Cutler's one-pager principles — with preview, edit, copy, download, and Confluence publish
 - **Write Ticket**: Generate structured engineering tickets with problem-first framing, scope boundaries, and rabbit holes — with preview, edit, and creation via Jira or Linear
 
@@ -209,11 +215,17 @@ Once the app is running, try asking the agent:
 ### Insights Mode
 - "What accounts are at risk of churning?"
 - "Show me all feedback from enterprise accounts in the last 30 days"
-- "What's happening with SSO — who's affected and what's the revenue impact?"
+- "Where do customer requests and product analytics disagree?"
 - "Tell me about the AI competitive gap"
 - "Which customers are asking about reporting?"
 - "ConnectWise is in progress — what else do you have?" *(pivot detection)*
 - "Any churn risks I should know about this week?"
+
+### Catch Up Mode
+- "What's new since I last looked?"
+- "Which top themes shifted this week?"
+- "Where do customers and analytics disagree?"
+- "What should I watch next?"
 
 ### Write PRD Mode
 - "Write a PRD for the SSO issues our enterprise customers are facing"
