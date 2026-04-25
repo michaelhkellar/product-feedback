@@ -117,5 +117,6 @@ export function createThread(mode: InteractionMode): Thread {
     mode,
     createdAt: now,
     updatedAt: now,
+    lastOpenedAt: now,
   };
 }

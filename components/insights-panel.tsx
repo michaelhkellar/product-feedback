@@ -5,7 +5,7 @@ import { useApiKeys } from "./api-key-provider";
 import { useEntityDrawer } from "./entity-drawer-provider";
 import { Insight } from "@/lib/types";
 import { DEMO_INSIGHTS } from "@/lib/demo-data";
-import { saveSnapshot, loadYesterdaySnapshot, diffInsights, TaggedInsight } from "@/lib/insight-snapshots";
+import { saveSnapshot, loadYesterdaySnapshot, diffInsights, saveThemeSnapshot, ThemeFrequency, TaggedInsight } from "@/lib/insight-snapshots";
 import { useFilters, filterTimeHeaders } from "./filter-provider";
 import { pinInsight, unpinInsight, listPinnedIds } from "@/lib/pins";
 import {
@@ -79,7 +79,10 @@ export function InsightsPanel({
       const rawInsights: Insight[] = data.insights || [];
       // Save snapshot and diff with yesterday
       if (!useDemoData && rawInsights.length > 0) {
-        await saveSnapshot(rawInsights);
+        const themeFreq: ThemeFrequency[] = Object.entries(
+          rawInsights.flatMap((i) => i.themes).reduce((acc: Record<string, number>, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {})
+        ).map(([theme, count]) => ({ theme, count }));
+        await Promise.all([saveSnapshot(rawInsights), saveThemeSnapshot(themeFreq)]);
         const yesterday = await loadYesterdaySnapshot();
         if (yesterday) {
           const tagged = diffInsights(rawInsights, yesterday.insights);

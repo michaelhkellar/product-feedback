@@ -35,8 +35,10 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { CitationMarker } from "./citation-marker";
 import { TraceModal } from "./trace-modal";
 import { useFilters, timeRangeToNL } from "./filter-provider";
+import { FilterPills } from "./filter-pills";
 import { ThreadMenu } from "./thread-menu";
 import { saveThread, generateThreadTitle, markThreadOpened, Thread } from "@/lib/threads";
+import { loadTodaySnapshot, loadTodayThemeSnapshot, loadYesterdaySnapshot, loadYesterdayThemeSnapshot, diffInsights, diffThemes, ThemeDelta, TaggedInsight } from "@/lib/insight-snapshots";
 import { clearFocus } from "@/lib/conversation-state";
 import type { ThreadState } from "@/lib/conversation-state";
 import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
@@ -101,7 +103,7 @@ const TICKET_QUERIES = [
 const LEARN_QUERIES = [
   {
     icon: Sparkles,
-    label: "Since Last Time",
+    label: "Catch Me Up",
     query: "What's new since I last looked?",
     color: "text-violet-500",
   },
@@ -129,7 +131,7 @@ const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof Message
   summarize: { label: "Insights", icon: MessageSquare, queries: SUMMARIZE_QUERIES },
   prd: { label: "Write PRD", icon: FileText, queries: PRD_QUERIES },
   ticket: { label: "Write Ticket", icon: Ticket, queries: TICKET_QUERIES },
-  learn: { label: "Review", icon: Sparkles, queries: LEARN_QUERIES },
+  learn: { label: "Catch Up", icon: Sparkles, queries: LEARN_QUERIES },
 };
 
 interface ChatInterfaceProps {
@@ -687,6 +689,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const threadStateRef = useRef<ThreadState | undefined>(undefined);
   const learnSinceIsoRef = useRef<string | null>(null);
+  const currentLastOpenedAtRef = useRef<string | null>(null);
   const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
 
@@ -845,16 +848,18 @@ Try one of the suggested queries below to get started.`;
       mode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      lastOpenedAt: currentLastOpenedAtRef.current ?? new Date().toISOString(),
       ...(threadStateRef.current ? { state: threadStateRef.current } : {}),
     };
     await saveThread(thread);
     setCurrentThreadId(id);
   }, [messages, accumulatedSourceIds, mode, currentThreadId]);
 
-  const handleLoadThread = useCallback((thread: Thread) => {
-    // Capture lastOpenedAt before updating it — learn mode uses this as its time anchor
+  const handleLoadThread = useCallback(async (thread: Thread) => {
+    // Capture the previous lastOpenedAt as the learn-mode time anchor, then bump it
     learnSinceIsoRef.current = thread.lastOpenedAt ?? thread.updatedAt ?? null;
-    markThreadOpened(thread.id);
+    await markThreadOpened(thread.id);
+    currentLastOpenedAtRef.current = new Date().toISOString();
     setMessages([...thread.messages]);
     setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
     setMode(thread.mode);
@@ -870,6 +875,7 @@ Try one of the suggested queries below to get started.`;
     setCurrentThreadId(null);
     threadStateRef.current = undefined;
     learnSinceIsoRef.current = null;
+    currentLastOpenedAtRef.current = new Date().toISOString();
     syncFocalLabel(undefined);
     setShowSuggestions(true);
   }, [mode]);
@@ -914,6 +920,25 @@ Try one of the suggested queries below to get started.`;
           content: m.content,
         }));
 
+      let snapshotThemeDeltas: ThemeDelta[] | undefined;
+      let snapshotInsightDeltas: TaggedInsight[] | undefined;
+      if (mode === "learn") {
+        const [todaySnap, todayThemeSnap, yesterdaySnap, yesterdayThemeSnap] = await Promise.all([
+          loadTodaySnapshot(),
+          loadTodayThemeSnapshot(),
+          loadYesterdaySnapshot(),
+          loadYesterdayThemeSnapshot(),
+        ]);
+        if (todaySnap && yesterdaySnap) {
+          snapshotInsightDeltas = diffInsights(todaySnap.insights, yesterdaySnap.insights)
+            .filter((i) => i.isNew || (i.trend && i.trend !== "stable"));
+        }
+        if (todayThemeSnap) {
+          snapshotThemeDeltas = diffThemes(todayThemeSnap.themes, yesterdayThemeSnap)
+            .filter((d) => d.trend !== "stable");
+        }
+      }
+
       const res = await fetch("/api/chat", {
         method: "POST",
         signal: controller.signal,
@@ -933,6 +958,8 @@ Try one of the suggested queries below to get started.`;
           threadState: threadStateRef.current ?? null,
           filters: { timeRange: filters.timeRange, themes: filters.themes },
           learnSinceIso: learnSinceIsoRef.current ?? null,
+          ...(snapshotThemeDeltas !== undefined ? { themeDeltas: snapshotThemeDeltas } : {}),
+          ...(snapshotInsightDeltas !== undefined ? { insightDeltas: snapshotInsightDeltas } : {}),
         }),
       });
 
@@ -1187,6 +1214,8 @@ Try one of the suggested queries below to get started.`;
           })}
         </div>
       </div>
+
+      <FilterPills />
 
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
         {messages.map((msg) => (

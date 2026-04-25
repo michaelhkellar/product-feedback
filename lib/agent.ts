@@ -25,6 +25,7 @@ import { AGENT_TOOLS, runTool, ToolContext } from "./agent-tools";
 import { findContradictions, Contradiction } from "./contradictions";
 import type { ChatFilters } from "./types";
 
+// "learn" is internal — surfaced as "Catch Up" in the UI
 export type InteractionMode = "summarize" | "prd" | "ticket" | "learn";
 
 export interface AgentKeys {
@@ -422,6 +423,11 @@ MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
 - Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
 - Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
 - Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.`;
+
+const MARKDOWN_FORMATTING_RULES = `MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
+- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
+- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
+- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never wrap an entire clause or sentence.`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
@@ -1700,7 +1706,9 @@ export async function chat(
   clientTz = "UTC",
   incomingState?: ThreadState,
   filters?: ChatFilters,
-  learnSinceIso?: string | null
+  learnSinceIso?: string | null,
+  themeDeltas?: { theme: string; count: number; priorCount: number; delta: number; trend: string }[],
+  insightDeltas?: { id: string; title: string; isNew?: boolean; trend?: string }[]
 ): Promise<ChatResult> {
   const isLearn = mode === "learn";
   const timeRange = extractTimeRange(userMessage, clientTz);
@@ -2141,16 +2149,31 @@ export async function chat(
       : "";
   })();
 
-  // Contradiction pre-context for learn mode
+  // Contradiction + delta pre-context for learn mode
   const contradictionBlock = (() => {
     if (!isLearn) return "";
+    const parts: string[] = [];
     const contradictions = findContradictions(data);
-    if (contradictions.length === 0) return "";
-    const lines = contradictions
-      .slice(0, 5)
-      .map((c: Contradiction, i: number) => `${i + 1}. [${c.severity.toUpperCase()}] ${c.title}\n   Evidence: ${c.evidence.slice(0, 2).join(" | ")}`)
-      .join("\n");
-    return `\n## Detected contradictions (pre-computed — reason about these in "What's contradicting"):\n${lines}\n`;
+    if (contradictions.length > 0) {
+      const lines = contradictions
+        .slice(0, 5)
+        .map((c: Contradiction, i: number) => `${i + 1}. [${c.severity.toUpperCase()}] ${c.title}\n   Evidence: ${c.evidence.slice(0, 2).join(" | ")}`)
+        .join("\n");
+      parts.push(`## Detected contradictions (pre-computed — reason about these in "What's contradicting"):\n${lines}`);
+    }
+    if (themeDeltas && themeDeltas.length > 0) {
+      const lines = themeDeltas
+        .map((d) => `  - "${d.theme}": ${d.trend} (${d.count} now, ${d.priorCount} prior, delta ${d.delta > 0 ? "+" : ""}${d.delta})`)
+        .join("\n");
+      parts.push(`## Theme frequency changes (pre-computed — surface in "What changed"):\n${lines}`);
+    }
+    if (insightDeltas && insightDeltas.length > 0) {
+      const lines = insightDeltas
+        .map((i) => `  - "${i.title}": ${i.isNew ? "new" : i.trend}`)
+        .join("\n");
+      parts.push(`## Insight signal changes (pre-computed — surface in "What changed"):\n${lines}`);
+    }
+    return parts.length > 0 ? `\n${parts.join("\n\n")}\n` : "";
   })();
 
   const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
@@ -2514,7 +2537,7 @@ function getFormatInstructions(
 ): string {
   if (mode === "prd") return PRD_FORMAT;
   if (mode === "ticket") return TICKET_FORMAT;
-  if (mode === "learn") return LEARN_FORMAT;
+  if (mode === "learn") return `${LEARN_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${MARKDOWN_FORMATTING_RULES}\n\n${QUOTES_RULE}`;
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
     // Analytics-centric queries get a dedicated format with a Page/Feature
@@ -2582,9 +2605,28 @@ Authoring constraints:
 - Lead with the headline in each section. No "Based on the data..." preambles.
 - Quote customer language directly when it sharpens a point.
 - Do not widen the time window or scope beyond what's filtered without explicitly noting you're doing so.
-- Sections with no signal get one sentence — don't pad them.`;
+- Sections with no signal get one sentence — don't pad them.
+- Format discipline: section headings are markdown ## on their own line. Do not wrap the opening sentence of a section in bold.`;
 
-const LEARN_FORMAT = `Respond with the four sections in order: "## What's new", "## What changed", "## What's contradicting", "## What to watch next". Each section heading must be on its own line with a blank line before and after. Lead each section with the headline finding, not a preamble. Cite sources with [n] markers. Use bullet points for lists within a section. Target 400-700 words total — enough to be actionable, not so much that it requires a review of its own.`;
+const LEARN_FORMAT = `Output the four sections below in this exact order. Each section heading is its own line, surrounded by blank lines.
+
+## What's new
+[1-3 paragraphs OR a short bulleted list of concrete signals from the active time window. Cite [n]. Lead with the most significant find.]
+
+## What changed
+[1-2 paragraphs. Cite specific deltas — confidence shifts on insights, theme frequency moves. If themeDeltas/insightDeltas are in the pre-context, surface them here.]
+
+## What's contradicting
+[1-2 paragraphs OR a numbered list. When the pre-context flagged contradictions, surface the strongest 1-3 with explicit "Source A says X / Source B says Y" framing. If none, write one sentence and move on.]
+
+## What to watch next
+[1-3 short bullets — open questions or follow-up reviews.]
+
+CRITICAL FORMAT RULES:
+- Every "## Heading" is on its OWN LINE with a BLANK LINE before and after. Never "...sentence. ## Heading" or "## Heading content..." — always a hard break.
+- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never an entire clause.
+- Empty sections still render the heading; write "Nothing notable this window" as the body and move on.
+- Target 400-700 words total.`;
 
 const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 

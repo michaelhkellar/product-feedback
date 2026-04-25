@@ -86,6 +86,14 @@ export function useFilters() {
   return useContext(FilterContext);
 }
 
+/** Short label for a time range pill (empty string for "all") */
+export function timeRangeToShort(range: TimeRangeOption): string {
+  const map: Record<TimeRangeOption, string> = {
+    "7d": "7d", "14d": "14d", "30d": "30d", "90d": "90d", "all": "",
+  };
+  return map[range];
+}
+
 /** Convert TimeRangeOption to a natural-language string the agent can parse */
 export function timeRangeToNL(range: TimeRangeOption): string {
   const map: Record<TimeRangeOption, string> = {

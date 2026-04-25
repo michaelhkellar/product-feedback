@@ -145,6 +145,36 @@ export async function loadYesterdayThemeSnapshot(): Promise<ThemeSnapshot | null
   }
 }
 
+export async function loadTodaySnapshot(): Promise<InsightSnapshot | null> {
+  try {
+    const db = await openDB();
+    const today = new Date().toISOString().slice(0, 10);
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get(today);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function loadTodayThemeSnapshot(): Promise<ThemeSnapshot | null> {
+  try {
+    const db = await openDB();
+    const today = new Date().toISOString().slice(0, 10);
+    return new Promise((resolve) => {
+      const tx = db.transaction(THEME_STORE_NAME, "readonly");
+      const req = tx.objectStore(THEME_STORE_NAME).get(today);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function diffThemes(current: ThemeFrequency[], prev: ThemeSnapshot | null): ThemeDelta[] {
   const prevMap = new Map((prev?.themes ?? []).map((t) => [t.theme, t.count]));
   return current.map((t) => {
