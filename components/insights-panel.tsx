@@ -201,6 +201,16 @@ export function InsightsPanel({
           </div>
         )}
 
+        {!loading && insights.length > 0 && filtered.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground px-4">
+            <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+            <p className="text-xs mb-1">No matching insights</p>
+            <p className="text-[10px] leading-relaxed">
+              Try clearing the active type or theme filter.
+            </p>
+          </div>
+        )}
+
         {!loading &&
           filtered.map((insight) => {
             const config =

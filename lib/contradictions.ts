@@ -67,6 +67,11 @@ export function findContradictions(data: AgentData): Contradiction[] {
     if (daysAgo(issue.updated) < STALE_JIRA_DAYS) continue;
     const matchingThemes = issue.labels.filter((l) => allFeedbackThemes.has(normalize(l)));
     if (matchingThemes.length === 0 && !textContains(issue.summary, "feedback")) continue;
+    const relatedFeedback = data.feedback.filter((fb) =>
+      matchingThemes.some((theme) => fb.themes.some((t) => normalize(t) === normalize(theme))) ||
+      textContains(fb.title, issue.summary) ||
+      textContains(issue.summary, fb.title)
+    );
     const severity: Contradiction["severity"] =
       issue.priority.toLowerCase() === "high" || issue.priority.toLowerCase() === "critical" ? "high" : "medium";
     out.push({
@@ -79,8 +84,11 @@ export function findContradictions(data: AgentData): Contradiction[] {
         matchingThemes.length > 0
           ? `Overlapping themes: ${matchingThemes.slice(0, 3).join(", ")}`
           : "Summary overlaps with open feedback",
-      ],
-      relatedFeedbackIds: [],
+        relatedFeedback.length > 0
+          ? `${relatedFeedback.length} related feedback item${relatedFeedback.length !== 1 ? "s" : ""} in the current dataset`
+          : "",
+      ].filter(Boolean),
+      relatedFeedbackIds: relatedFeedback.slice(0, 8).map((fb) => fb.id),
       relatedFeatureNames: [],
       severity,
     });

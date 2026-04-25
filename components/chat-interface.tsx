@@ -49,7 +49,7 @@ const SUMMARIZE_QUERIES: StarterQuery[] = [
   { icon: AlertTriangle, label: "Churn risk", query: "Top churn-risk accounts and revenue impact", color: "text-red-500" },
   { icon: BarChart3, label: "Exec brief", query: "Two-week customer feedback summary", color: "text-blue-500" },
   { icon: Zap, label: "AI signals", query: "What customers say about AI and competitors", color: "text-amber-500" },
-  { icon: MessageSquare, label: "SSO impact", query: "Who's hit by SSO issues and the revenue exposure", color: "text-purple-500" },
+  { icon: MessageSquare, label: "Signal gaps", query: "Where do customer requests and product analytics disagree?", color: "text-purple-500" },
 ];
 
 const PRD_QUERIES: StarterQuery[] = [
