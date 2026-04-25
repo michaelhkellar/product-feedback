@@ -1989,7 +1989,9 @@ export async function chat(
       searchParts.push(detail);
     }
     recentItemIds.add(doc.id);
-    sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
+    if (doc.type !== "insight") {
+      sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
+    }
   }
 
   if (analyticsLookup?.sources.length) {
