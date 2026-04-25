@@ -340,7 +340,21 @@ function normalizeInlineBlockquotes(text: string): string {
   return out.join("\n");
 }
 
+const LEARN_SECTION_LABELS = [
+  "What's new", "What changed", "What's contradicting", "What to watch next",
+];
+
+function looksLikeBroadEmphasis(inner: string): boolean {
+  const plain = inner.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  if (!plain) return false;
+  if (LEARN_SECTION_LABELS.some((label) => plain.toLowerCase().startsWith(label.toLowerCase()))) return true;
+  return plain.length >= 100 && /[.!?]\s+[A-Z]/.test(plain);
+}
+
 function normalizeHeadingPlacement(text: string): string {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sectionAlt = LEARN_SECTION_LABELS.map(esc).join("|");
+
   // Step 1 — split inline headings. Insert a paragraph break before any `##`
   // that isn't at the start of a line. No punctuation requirement. Run up to
   // 4 times to handle multiple headings on a single line.
@@ -359,34 +373,41 @@ function normalizeHeadingPlacement(text: string): string {
     .map((line) => (/^\s*#{1,6}\s+/.test(line) ? line.replace(/\*\*/g, "") : line))
     .join("\n");
 
+  // Step 2.25 — unwrap broad HTML strong tags before markdown parsing. Raw HTML
+  // can otherwise bypass the markdown-only bold cleanup below.
+  out = out.replace(/<strong>([\s\S]*?)<\/strong>/gi, (match, inner: string) =>
+    looksLikeBroadEmphasis(inner) ? inner : match
+  );
+
   // Step 2.5 — promote known learn-mode section labels wrapped in **...** or
   // __...__ to ## headings. The model sometimes emits the entire section as
   // `**What's new <body>**` or `**What's new** <body>` instead of using `##`.
-  // Pattern A: full line is **Label <body>** or __Label <body>__ (greedy so
-  //   trailing anchor lands on last ** / __, allowing inline bold spans in body).
-  // Pattern B: standalone **Label** or __Label__ with optional body after.
-  // Case-insensitive in case the model varies capitalisation.
+  // We first normalize any paragraph-start label, then run stricter full-wrap
+  // fallbacks for hard-wrapped paragraphs.
   {
-    const SECTION_LABELS = [
-      "What's new", "What changed", "What's contradicting", "What to watch next",
-    ];
-    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const alt = SECTION_LABELS.map(esc).join("|");
+    const labelPrefix = new RegExp(
+      `(^|\\n)([ \\t]*)(?:\\*\\*|__)?[ \\t]*(${sectionAlt})(?:[ \\t]*(?:\\*\\*|__))?[ \\t:—-]+`,
+      "gi"
+    );
+    out = out.replace(labelPrefix, (_m, lead: string, indent: string, label: string) =>
+      `${lead}${indent}## ${label}\n\n`
+    );
+
     // Body capture spans multiple hard-wrapped lines within one paragraph — the model
     // emits entire catch-up sections as a single paragraph with internal \n but no
     // blank-line break. `.+` stops at \n and never matches; `[\s\S]+?` does.
     // The (?!\n\n) guard prevents crossing a paragraph boundary, and (?=\n|$) lets
     // the closing marker land at end-of-line without consuming the newline.
     const fullWrapBold = new RegExp(
-      `(^|\\n)([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)\\*\\*[ \\t]*(?=\\n|$)`,
+      `(^|\\n)([ \\t]*)\\*\\*[ \\t]*(${sectionAlt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)\\*\\*[ \\t]*(?=\\n|$)`,
       "gi"
     );
     const fullWrapUnder = new RegExp(
-      `(^|\\n)([ \\t]*)__[ \\t]*(${alt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)__[ \\t]*(?=\\n|$)`,
+      `(^|\\n)([ \\t]*)__[ \\t]*(${sectionAlt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)__[ \\t]*(?=\\n|$)`,
       "gi"
     );
-    const labelOnlyBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]*\\*\\*[ \\t]*(.*)$`, "gmi");
-    const labelOnlyUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${alt})[ \\t]*__[ \\t]*(.*)$`, "gmi");
+    const labelOnlyBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${sectionAlt})[ \\t]*\\*\\*[ \\t]*(.*)$`, "gmi");
+    const labelOnlyUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${sectionAlt})[ \\t]*__[ \\t]*(.*)$`, "gmi");
     const promote = (_m: string, lead: string, indent: string, label: string, body: string) =>
       `${lead}${indent}## ${label}\n\n${body.trim()}`;
     const promoteLabel = (_m: string, indent: string, label: string, rest: string) => {
@@ -407,8 +428,7 @@ function normalizeHeadingPlacement(text: string): string {
       if (!m) return line;
       const inner = m[2];
       if (inner.includes("**")) return line; // mixed nesting — leave it
-      const looksLikeProse = inner.length >= 120 && /[.!?]\s+[A-Z]/.test(inner);
-      return looksLikeProse ? `${m[1]}${inner}${m[3]}` : line;
+      return looksLikeBroadEmphasis(inner) ? `${m[1]}${inner}${m[3]}` : line;
     })
     .join("\n");
 
@@ -418,8 +438,8 @@ function normalizeHeadingPlacement(text: string): string {
     .map((line) => {
       const count = (line.match(/\*\*/g) || []).length;
       if (count % 2 === 0) return line;
-      if (/^\s*\*\*\S/.test(line) && count === 1) return line.replace(/^(\s*)\*\*/, "$1");
-      if (/\*\*\s*$/.test(line) && count === 1) return line.replace(/\*\*(\s*)$/, "$1");
+      if (/^\s*\*\*\S/.test(line)) return line.replace(/^(\s*)\*\*/, "$1");
+      if (/\*\*\s*$/.test(line)) return line.replace(/\*\*(\s*)$/, "$1");
       return line;
     })
     .join("\n");

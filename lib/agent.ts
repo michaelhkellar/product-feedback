@@ -110,13 +110,31 @@ function pickEmbedder(keys: AgentKeys): { provider: ReturnType<typeof getAIProvi
   return null;
 }
 
-function dataFingerprint(data: AgentData, embedderId: string): string {
-  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}`;
+function analyticsFingerprint(data: AgentData, analyticsDays?: number): string {
+  const overview = data.analyticsOverview;
+  if (!overview) return `analytics:none:${analyticsDays || "default"}`;
+  const top = [...overview.topPages, ...overview.topFeatures, ...overview.topEvents, ...overview.topAccounts]
+    .slice(0, 12)
+    .map((item) => `${item.id}:${item.count}:${item.priorCount ?? ""}:${item.deltaPct ?? ""}`)
+    .join(",");
+  return [
+    "analytics",
+    overview.provider,
+    analyticsDays || "default",
+    overview.generatedAt,
+    overview.totalTrackedPages,
+    overview.totalTrackedFeatures,
+    top,
+  ].join(":");
+}
+
+function dataFingerprint(data: AgentData, embedderId: string, analyticsDays?: number): string {
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}:${analyticsFingerprint(data, analyticsDays)}`;
 }
 
 async function buildStore(data: AgentData, keys?: AgentKeys, analyticsDays?: number): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
   const embedder = keys ? pickEmbedder(keys) : null;
-  const fp = dataFingerprint(data, embedder?.id || "none");
+  const fp = dataFingerprint(data, embedder?.id || "none", analyticsDays);
 
   if (cachedStore && cachedStore.fingerprint === fp) {
     return { store: cachedStore.store, embeddingMap: cachedStore.embeddingMap, enrichedData: data };
@@ -1717,7 +1735,7 @@ export async function chat(
 ): Promise<ChatResult> {
   const isLearn = mode === "learn";
   const timeRange = extractTimeRange(userMessage, clientTz);
-  // Fall back in priority order: explicit message time > thread state window > filter bar > learn anchor > no filter
+  // Fall back in priority order: explicit message time > visible filter bar > thread state window > learn anchor > no filter
   const STATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   const stateAgeMs = incomingState ? Date.now() - new Date(incomingState.updatedAt).getTime() : Infinity;
   const windowUsable = incomingState?.timeWindow && stateAgeMs < STATE_MAX_AGE_MS;
@@ -1732,28 +1750,25 @@ export async function chat(
     return { start, end, label: `last ${days} days` };
   })();
 
+  const stateWindow = windowUsable
+    ? {
+        start: new Date(incomingState!.timeWindow!.start),
+        end: new Date(incomingState!.timeWindow!.end),
+        label: incomingState!.timeWindow!.label,
+      }
+    : null;
+
   // For learn mode, default to "since last opened" window when no explicit time in message
-  const learnWindow = isLearn && learnSinceIso && !timeRange && !windowUsable && !filterBarWindow
+  const learnWindow = isLearn && learnSinceIso && !timeRange && !filterBarWindow && !stateWindow
     ? { start: new Date(learnSinceIso), end: new Date(), label: "since last visit" }
     : null;
 
-  const _rawScopedData = timeRange
-    ? filterByTimeRange(data, timeRange)
-    : windowUsable
-      ? filterByTimeRange(data, {
-          start: new Date(incomingState!.timeWindow!.start),
-          end: new Date(incomingState!.timeWindow!.end),
-          label: incomingState!.timeWindow!.label,
-        })
-      : filterBarWindow
-        ? filterByTimeRange(data, filterBarWindow)
-        : learnWindow
-          ? filterByTimeRange(data, learnWindow)
-          : data;
+  const activeTimeRange = timeRange ?? filterBarWindow ?? stateWindow ?? learnWindow;
+  const _rawScopedData = activeTimeRange ? filterByTimeRange(data, activeTimeRange) : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
-  const _analyticsDays = timeRange
-    ? Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000)
+  const _analyticsDays = activeTimeRange
+    ? Math.ceil((activeTimeRange.end.getTime() - activeTimeRange.start.getTime()) / 86400000)
     : undefined;
   const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys, _analyticsDays);
   const countQuery = wantsCount(userMessage);
@@ -1870,7 +1885,7 @@ export async function chat(
   const analyticsProvider = keys.analyticsProvider || "pendo";
   let analyticsLookup: { context: string; sources: { type: string; id: string; title: string }[] } | null = null;
   if (wantsAnalyticsContext(userMessage)) {
-    const lookupDays = timeRange ? Math.min(timeRangeDays(timeRange), 90) : undefined;
+    const lookupDays = activeTimeRange ? Math.min(timeRangeDays(activeTimeRange), 90) : undefined;
     if (analyticsProvider === "amplitude") {
       analyticsLookup = await getRelevantAmplitudeContext(userMessage, relatedFeedback, keys.amplitudeKey, lookupDays);
     } else if (analyticsProvider === "posthog") {
@@ -2084,10 +2099,10 @@ export async function chat(
     default: context = buildFocusedContext(scopedData, searchContext, analyticsLabel);
   }
 
-  if (timeRange) {
+  if (activeTimeRange) {
     const totalItems = data.feedback.length + data.jiraIssues.length + data.calls.length;
     const scopedItems = scopedData.feedback.length + scopedData.jiraIssues.length + scopedData.calls.length;
-    context = `Time scope: ${timeRange.label} (${timeRange.start.toLocaleDateString()} – ${timeRange.end.toLocaleDateString()}). Showing ${scopedItems} of ${totalItems} time-sensitive items in this range.\n\n` + context;
+    context = `Time scope: ${activeTimeRange.label} (${activeTimeRange.start.toLocaleDateString()} – ${activeTimeRange.end.toLocaleDateString()}). Showing ${scopedItems} of ${totalItems} time-sensitive items in this range.\n\n` + context;
   }
 
   if (timeRange?.compare) {
@@ -2152,9 +2167,8 @@ export async function chat(
   // Filter-active note: tell the agent what scope it's operating in when filters are active
   const filterNote = (() => {
     const parts: string[] = [];
-    const activeTimeWindow = learnWindow ?? filterBarWindow;
-    if (activeTimeWindow && !timeRange && !windowUsable) {
-      parts.push(`time=${activeTimeWindow.label}`);
+    if (activeTimeRange && !timeRange) {
+      parts.push(`time=${activeTimeRange.label}`);
     }
     if (filters?.themes?.length) parts.push(`themes=${filters.themes.join(", ")}`);
     return parts.length
@@ -2166,7 +2180,7 @@ export async function chat(
   const contradictionBlock = (() => {
     if (!isLearn) return "";
     const parts: string[] = [];
-    const contradictions = findContradictions(data);
+    const contradictions = findContradictions(scopedData);
     if (contradictions.length > 0) {
       const lines = contradictions
         .slice(0, 5)
@@ -2502,7 +2516,7 @@ ${formatInstructions}`;
   const builtInResponse = aiAttemptedButFailed
     ? `> **Note:** The configured ${aiProvider} provider didn't return a response — check your API key, quota, or network connection. Showing built-in fallback.\n\n${builtIn}`
     : builtIn;
-  return { response: builtInResponse, sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace: { ...trace, aiError: aiAttemptedButFailed } };
+  return { response: cleanResponseTables(builtInResponse, sources), sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace: { ...trace, aiError: aiAttemptedButFailed } };
 }
 
 function getSystemPrompt(mode: InteractionMode): string {
