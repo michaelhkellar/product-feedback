@@ -22,8 +22,11 @@ import { synthesizeAnalyticsDocs } from "./analytics-docs";
 import { scoreDoc } from "./signal-score";
 import { ThreadState, updateState } from "./conversation-state";
 import { AGENT_TOOLS, runTool, ToolContext } from "./agent-tools";
+import { findContradictions, Contradiction } from "./contradictions";
+import type { ChatFilters } from "./types";
 
-export type InteractionMode = "summarize" | "prd" | "ticket";
+// "learn" is internal — surfaced as "Catch Up" in the UI
+export type InteractionMode = "summarize" | "prd" | "ticket" | "learn";
 
 export interface AgentKeys {
   geminiKey?: string;
@@ -107,13 +110,31 @@ function pickEmbedder(keys: AgentKeys): { provider: ReturnType<typeof getAIProvi
   return null;
 }
 
-function dataFingerprint(data: AgentData, embedderId: string): string {
-  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}`;
+function analyticsFingerprint(data: AgentData, analyticsDays?: number): string {
+  const overview = data.analyticsOverview;
+  if (!overview) return `analytics:none:${analyticsDays || "default"}`;
+  const top = [...overview.topPages, ...overview.topFeatures, ...overview.topEvents, ...overview.topAccounts]
+    .slice(0, 12)
+    .map((item) => `${item.id}:${item.count}:${item.priorCount ?? ""}:${item.deltaPct ?? ""}`)
+    .join(",");
+  return [
+    "analytics",
+    overview.provider,
+    analyticsDays || "default",
+    overview.generatedAt,
+    overview.totalTrackedPages,
+    overview.totalTrackedFeatures,
+    top,
+  ].join(":");
+}
+
+function dataFingerprint(data: AgentData, embedderId: string, analyticsDays?: number): string {
+  return `${data.feedback.length}:${data.features.length}:${data.calls.length}:${data.insights.length}:${data.jiraIssues.length}:${data.confluencePages.length}:${data.linearIssues.length}:${data.feedback[0]?.id || ""}:${data.feedback[data.feedback.length - 1]?.id || ""}:${data.jiraIssues[0]?.id || ""}:${embedderId}:${analyticsFingerprint(data, analyticsDays)}`;
 }
 
 async function buildStore(data: AgentData, keys?: AgentKeys, analyticsDays?: number): Promise<{ store: InMemoryVectorStore; embeddingMap: Map<string, number[]>; enrichedData: AgentData }> {
   const embedder = keys ? pickEmbedder(keys) : null;
-  const fp = dataFingerprint(data, embedder?.id || "none");
+  const fp = dataFingerprint(data, embedder?.id || "none", analyticsDays);
 
   if (cachedStore && cachedStore.fingerprint === fp) {
     return { store: cachedStore.store, embeddingMap: cachedStore.embeddingMap, enrichedData: data };
@@ -331,29 +352,36 @@ function feedbackSourceRef(fb: FeedbackItem): string {
 function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: AgentKeys = {}): string[] {
   const contentLen = detailed ? 500 : 200;
   const descLen = detailed ? 400 : 0;
+  const fbById = new Map(data.feedback.map((f) => [f.id, f]));
+  const featById = new Map(data.features.map((f) => [f.id, f]));
+  const callById = new Map(data.calls.map((c) => [c.id, c]));
+  const insightById = new Map(data.insights.map((i) => [i.id, i]));
+  const jiraById = new Map(data.jiraIssues.map((j) => [j.id, j]));
+  const linearById = new Map(data.linearIssues.map((l) => [l.id, l]));
+  const pageById = new Map(data.confluencePages.map((p) => [p.id, p]));
   const details: string[] = [];
   for (const id of ids) {
-    const fb = data.feedback.find((f) => f.id === id);
+    const fb = fbById.get(id);
     if (fb) {
       const w = shortDate(fb as unknown as Record<string, unknown>);
       const contact = feedbackContactRef(fb);
       details.push(`[Source: ${feedbackSourceRef(fb)}, ${w}] "${cleanFeedbackTitle(fb)}" — customer: ${contact || "unknown"}${fb.company ? ` @ ${fb.company}` : ""}: "${fb.content.slice(0, contentLen)}"`);
       continue;
     }
-    const feat = data.features.find((f) => f.id === id);
+    const feat = featById.get(id);
     if (feat) {
       const desc = detailed && feat.description ? `: ${feat.description.slice(0, descLen)}` : "";
       details.push(`(internal roadmap item — do not cite as Source) "${feat.name}" — ${feat.status}, ${feat.votes} votes${desc}`);
       continue;
     }
-    const call = data.calls.find((c) => c.id === id);
+    const call = callById.get(id);
     if (call) {
       details.push(`[Call, ${call.date}] ${call.title} — ${call.summary.slice(0, contentLen)}`);
       continue;
     }
-    const insight = data.insights.find((i) => i.id === id);
+    const insight = insightById.get(id);
     if (insight) { details.push(`[Insight] ${insight.title} — ${insight.description.slice(0, contentLen)}`); continue; }
-    const jira = data.jiraIssues.find((j) => j.id === id);
+    const jira = jiraById.get(id);
     if (jira) {
       const w = shortDate(jira as unknown as Record<string, unknown>);
       const link = atlassianIssueUrl(jira.key, keys);
@@ -361,14 +389,14 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
       details.push(`[Jira ${jira.key}${link ? ` (${link})` : ""}, ${w}] ${jira.summary} — ${jira.status}/${jira.priority}, assigned: ${jira.assignee}${desc}`);
       continue;
     }
-    const linear = data.linearIssues.find((l) => l.id === id);
+    const linear = linearById.get(id);
     if (linear) {
       const w = shortDate(linear as unknown as Record<string, unknown>);
       const desc = detailed && linear.description ? `\n  Description: "${linear.description.slice(0, descLen)}"` : "";
       details.push(`[Linear ${linear.identifier}, ${w}] ${linear.title} — ${linear.status}/${linear.priority}, assigned: ${linear.assignee}${desc}`);
       continue;
     }
-    const page = data.confluencePages.find((p) => p.id === id);
+    const page = pageById.get(id);
     if (page) {
       const excerpt = detailed && page.excerpt ? `: ${page.excerpt.slice(0, descLen)}` : "";
       const pageLabel = page.space === "Slite" ? "Slite" : "Confluence";
@@ -377,6 +405,13 @@ function lookupDetails(ids: string[], data: AgentData, detailed = false, keys: A
   }
   return details;
 }
+
+const MARKDOWN_FORMATTING_RULES = `MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
+- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
+- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
+- Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
+- Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.
+- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never wrap an entire clause or sentence.`;
 
 const SYSTEM_PROMPT = `You are a senior product intelligence analyst. Synthesize data into insightful, actionable analysis for product managers. Be concise but don't sacrifice depth when the evidence warrants it. Focus on recent changes unless the user asks for historical totals/counts. Be opinionated. Include direct customer quotes when available.
 
@@ -415,11 +450,7 @@ AUTHORING RULES:
 - Counter-signals are valuable, but only when substantive. If a counter-signal is isolated noise, omit it. If it materially challenges the main finding, surface it in a short paragraph or "## Counter-signals" section.
 - Explaining why findings matter is encouraged. Explaining why you chose what to show is not.
 
-MARKDOWN FORMATTING RULES (CRITICAL — violations break rendering):
-- Every \`## Heading\` or \`### Heading\` MUST start a new line with a blank line before AND after it. NEVER write "sentence. ## Heading" on the same line — always break.
-- Every table MUST be preceded by a blank line and followed by a blank line before any prose or heading.
-- Table cells MUST NOT contain a raw \`|\` character. If a page/feature name contains \`|\` (e.g. from Pendo hierarchy), write it as \`Findings › Finding Detail Page\` (use \`›\` or \`/\` as the separator) instead.
-- Never embed multi-sentence prose in a Source cell. If there's no valid source for a row, drop the row rather than writing a sentence there.`;
+${MARKDOWN_FORMATTING_RULES}`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
 const CONFLUENCE_KEYWORDS = ["confluence", "docs", "documentation", "guide", "wiki", "internal doc", "runbook", "playbook", "process"];
@@ -1024,7 +1055,7 @@ function verifyCitations(text: string, validCount: number): { cleaned: string; o
     if (idx >= 1 && idx <= validCount) return match;
     orphaned.push(idx);
     return "";
-  }).replace(/\[\s*\]/g, "").replace(/\s{2,}/g, " ").trim();
+  }).replace(/\[\s*\]/g, "").trim();
   return { cleaned, orphaned };
 }
 
@@ -1696,27 +1727,48 @@ export async function chat(
   accumulatedSourceIds?: string[],
   onChunk?: (chunk: string) => void,
   clientTz = "UTC",
-  incomingState?: ThreadState
+  incomingState?: ThreadState,
+  filters?: ChatFilters,
+  learnSinceIso?: string | null,
+  themeDeltas?: { theme: string; count: number; priorCount: number; delta: number; trend: string }[],
+  insightDeltas?: { id: string; title: string; isNew?: boolean; trend?: string }[]
 ): Promise<ChatResult> {
+  const isLearn = mode === "learn";
   const timeRange = extractTimeRange(userMessage, clientTz);
-  // Fall back to persisted time window from conversation state when no explicit range in message,
-  // but only if the state is fresh (< 24h) to avoid silently filtering on stale windows.
+  // Fall back in priority order: explicit message time > visible filter bar > thread state window > learn anchor > no filter
   const STATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   const stateAgeMs = incomingState ? Date.now() - new Date(incomingState.updatedAt).getTime() : Infinity;
   const windowUsable = incomingState?.timeWindow && stateAgeMs < STATE_MAX_AGE_MS;
-  const _rawScopedData = timeRange
-    ? filterByTimeRange(data, timeRange)
-    : windowUsable
-      ? filterByTimeRange(data, {
-          start: new Date(incomingState!.timeWindow!.start),
-          end: new Date(incomingState!.timeWindow!.end),
-          label: incomingState!.timeWindow!.label,
-        })
-      : data;
+
+  // Resolve filter bar time range to a concrete window
+  const filterBarWindow = (() => {
+    if (!filters || filters.timeRange === "all") return null;
+    const days = { "7d": 7, "14d": 14, "30d": 30, "90d": 90 }[filters.timeRange];
+    if (!days) return null;
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    return { start, end, label: `last ${days} days` };
+  })();
+
+  const stateWindow = windowUsable
+    ? {
+        start: new Date(incomingState!.timeWindow!.start),
+        end: new Date(incomingState!.timeWindow!.end),
+        label: incomingState!.timeWindow!.label,
+      }
+    : null;
+
+  // For learn mode, default to "since last opened" window when no explicit time in message
+  const learnWindow = isLearn && learnSinceIso && !timeRange && !filterBarWindow && !stateWindow
+    ? { start: new Date(learnSinceIso), end: new Date(), label: "since last visit" }
+    : null;
+
+  const activeTimeRange = timeRange ?? filterBarWindow ?? stateWindow ?? learnWindow;
+  const _rawScopedData = activeTimeRange ? filterByTimeRange(data, activeTimeRange) : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
-  const _analyticsDays = timeRange
-    ? Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000)
+  const _analyticsDays = activeTimeRange
+    ? Math.ceil((activeTimeRange.end.getTime() - activeTimeRange.start.getTime()) / 86400000)
     : undefined;
   const { store, embeddingMap, enrichedData: scopedData } = await buildStore(_rawScopedData, keys, _analyticsDays);
   const countQuery = wantsCount(userMessage);
@@ -1762,9 +1814,12 @@ export async function chat(
   // Detect urgency/actionability intent for optional retrieval filters
   const urgencyFilter = detectUrgencyFilter(userMessage);
 
+  // Apply theme filter from filter bar when themes are active
+  const themeFilter = filters?.themes?.length ? { themes: filters.themes } : {};
+
   const merged = new Map<string, ReturnType<InMemoryVectorStore["search"]>[number]>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter, ...themeFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -1830,7 +1885,7 @@ export async function chat(
   const analyticsProvider = keys.analyticsProvider || "pendo";
   let analyticsLookup: { context: string; sources: { type: string; id: string; title: string }[] } | null = null;
   if (wantsAnalyticsContext(userMessage)) {
-    const lookupDays = timeRange ? Math.min(timeRangeDays(timeRange), 90) : undefined;
+    const lookupDays = activeTimeRange ? Math.min(timeRangeDays(activeTimeRange), 90) : undefined;
     if (analyticsProvider === "amplitude") {
       analyticsLookup = await getRelevantAmplitudeContext(userMessage, relatedFeedback, keys.amplitudeKey, lookupDays);
     } else if (analyticsProvider === "posthog") {
@@ -1848,7 +1903,7 @@ export async function chat(
   }
 
   const sources: { type: string; id: string; title: string; url?: string; when?: string }[] = [];
-  const searchParts: string[] = [];
+  const searchEntries: { detail: string; score: number }[] = [];
   const recentItemIds = new Set<string>();
   const detailed = wantsDetail(userMessage) || drilldownQuery;
 
@@ -1951,10 +2006,12 @@ export async function chat(
       const detail = r.highlightSpan
         ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
         : details[0];
-      searchParts.push(detail);
+      searchEntries.push({ detail, score: r.score });
     }
     recentItemIds.add(doc.id);
-    sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
+    if (doc.type !== "insight") {
+      sources.push({ type: doc.type, id: doc.id, title: sanitizeTitleForTable(title), url, when });
+    }
   }
 
   if (analyticsLookup?.sources.length) {
@@ -1981,6 +2038,12 @@ export async function chat(
   }
 
   const isPrdOrTicket = mode === "prd" || mode === "ticket";
+
+  // Sort by retrieval score so highest-signal items appear first in the assembled context.
+  // Model attention is biased toward the top, so this improves answer quality without
+  // changing which items are included.
+  searchEntries.sort((a, b) => b.score - a.score);
+  const searchParts: string[] = searchEntries.map((e) => e.detail);
 
   if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
     const uniqueAccIds = accumulatedSourceIds.filter((id) => !recentItemIds.has(id));
@@ -2019,7 +2082,7 @@ export async function chat(
   const analyticsLabel = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
 
   const hasDeepDive = deepDiveEarly.analytics || deepDiveEarly.data;
-  const effectiveContextMode = isPrdOrTicket
+  const effectiveContextMode = isPrdOrTicket || isLearn
     ? "deep"
     : hasDeepDive
       ? "deep"
@@ -2036,10 +2099,10 @@ export async function chat(
     default: context = buildFocusedContext(scopedData, searchContext, analyticsLabel);
   }
 
-  if (timeRange) {
+  if (activeTimeRange) {
     const totalItems = data.feedback.length + data.jiraIssues.length + data.calls.length;
     const scopedItems = scopedData.feedback.length + scopedData.jiraIssues.length + scopedData.calls.length;
-    context = `Time scope: ${timeRange.label} (${timeRange.start.toLocaleDateString()} – ${timeRange.end.toLocaleDateString()}). Showing ${scopedItems} of ${totalItems} time-sensitive items in this range.\n\n` + context;
+    context = `Time scope: ${activeTimeRange.label} (${activeTimeRange.start.toLocaleDateString()} – ${activeTimeRange.end.toLocaleDateString()}). Showing ${scopedItems} of ${totalItems} time-sensitive items in this range.\n\n` + context;
   }
 
   if (timeRange?.compare) {
@@ -2101,6 +2164,45 @@ export async function chat(
     ? `\nPIVOT INSTRUCTION: The user already knows about "${pivot.excluded.join('", "')}". Do NOT summarize, repeat, or elaborate on ${pivot.excluded.map((e) => `"${e}"`).join(" or ")}. Focus ENTIRELY on OTHER topics, accounts, themes, or items found in the evidence above. If the evidence mentions ${pivot.excluded[0]} only incidentally, skip those items and highlight everything else.\n`
     : "";
 
+  // Filter-active note: tell the agent what scope it's operating in when filters are active
+  const filterNote = (() => {
+    const parts: string[] = [];
+    if (activeTimeRange && !timeRange) {
+      parts.push(`time=${activeTimeRange.label}`);
+    }
+    if (filters?.themes?.length) parts.push(`themes=${filters.themes.join(", ")}`);
+    return parts.length
+      ? `\nActive filters: ${parts.join("; ")}. Treat the dataset above as already scoped to this context — do not apologize for missing data outside this scope.\n`
+      : "";
+  })();
+
+  // Contradiction + delta pre-context for learn mode
+  const contradictionBlock = (() => {
+    if (!isLearn) return "";
+    const parts: string[] = [];
+    const contradictions = findContradictions(scopedData);
+    if (contradictions.length > 0) {
+      const lines = contradictions
+        .slice(0, 5)
+        .map((c: Contradiction, i: number) => `${i + 1}. [${c.severity.toUpperCase()}] ${c.title}\n   Evidence: ${c.evidence.slice(0, 2).join(" | ")}`)
+        .join("\n");
+      parts.push(`## Detected contradictions (pre-computed — reason about these in "What's contradicting"):\n${lines}`);
+    }
+    if (themeDeltas && themeDeltas.length > 0) {
+      const lines = themeDeltas
+        .map((d) => `  - "${d.theme}": ${d.trend} (${d.count} now, ${d.priorCount} prior, delta ${d.delta > 0 ? "+" : ""}${d.delta})`)
+        .join("\n");
+      parts.push(`## Theme frequency changes (pre-computed — surface in "What changed"):\n${lines}`);
+    }
+    if (insightDeltas && insightDeltas.length > 0) {
+      const lines = insightDeltas
+        .map((i) => `  - "${i.title}": ${i.isNew ? "new" : i.trend}`)
+        .join("\n");
+      parts.push(`## Insight signal changes (pre-computed — surface in "What changed"):\n${lines}`);
+    }
+    return parts.length > 0 ? `\n${parts.join("\n\n")}\n` : "";
+  })();
+
   const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
   const tenxAddendum = is10xQuery
     ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.
@@ -2115,10 +2217,10 @@ FORMAT RULES (strict):
     ? computeEvidenceFacts(relatedFeedback, sources)
     : "";
 
-  const prompt = `${context}${evidencePack}${factsBlock}
+  const prompt = `${context}${contradictionBlock}${evidencePack}${factsBlock}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
-${pivotAddendum}${tenxAddendum}
+${pivotAddendum}${filterNote}${tenxAddendum}
 ${formatInstructions}`;
 
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(prompt);
@@ -2414,12 +2516,13 @@ ${formatInstructions}`;
   const builtInResponse = aiAttemptedButFailed
     ? `> **Note:** The configured ${aiProvider} provider didn't return a response — check your API key, quota, or network connection. Showing built-in fallback.\n\n${builtIn}`
     : builtIn;
-  return { response: builtInResponse, sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace: { ...trace, aiError: aiAttemptedButFailed } };
+  return { response: cleanResponseTables(builtInResponse, sources), sources, tokenEstimate: { input: 0, output: 0, total: 0 }, trace: { ...trace, aiError: aiAttemptedButFailed } };
 }
 
 function getSystemPrompt(mode: InteractionMode): string {
   if (mode === "prd") return PRD_SYSTEM_PROMPT;
   if (mode === "ticket") return TICKET_SYSTEM_PROMPT;
+  if (mode === "learn") return LEARN_SYSTEM_PROMPT;
   return SYSTEM_PROMPT;
 }
 
@@ -2461,6 +2564,7 @@ function getFormatInstructions(
 ): string {
   if (mode === "prd") return PRD_FORMAT;
   if (mode === "ticket") return TICKET_FORMAT;
+  if (mode === "learn") return `${LEARN_FORMAT}\n\n${HIGHLIGHT_RULE}\n\n${MARKDOWN_FORMATTING_RULES}\n\n${QUOTES_RULE}`;
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
     // Analytics-centric queries get a dedicated format with a Page/Feature
@@ -2507,6 +2611,59 @@ const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concis
 - Keep the title concise and actionable. Describe what changes, not what the feature is called.
 
 Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Be precise and avoid ambiguity.`;
+
+const LEARN_SYSTEM_PROMPT = `You are a senior product intelligence analyst running a regular review for someone catching up after time away.
+
+Your job is to surface what changed — not everything that exists. Structure your response in this exact order:
+
+## What's new
+Concrete signals (feedback, calls, tickets, doc updates) from the active time window. Cite [n]. Lead with the most significant; skip noise. If nothing is meaningfully new, say "Nothing notable this window" and move on.
+
+## What changed
+Insights or themes whose signal shifted — growing, shrinking, or newly appearing. Reference the specific direction and evidence. If the system flagged theme deltas or shifting insight confidence, surface those here. Skip if no meaningful shifts.
+
+## What's contradicting
+When sources disagree: customer praise vs. declining usage, open stale tickets vs. active demand, high-vote features with no engineering traction. Be specific — name the feature and both conflicting signals. If no contradictions were detected, say so briefly.
+
+## What to watch next
+1-3 questions the user should ask on their next review, based on the gaps or open threads in the current data.
+
+Authoring constraints:
+- Lead with the headline in each section. No "Based on the data..." preambles.
+- Quote customer language directly when it sharpens a point.
+- Do not widen the time window or scope beyond what's filtered without explicitly noting you're doing so.
+- Sections with no signal get one sentence — don't pad them.
+- Format discipline: section headings are markdown ## on their own line. Do not wrap the opening sentence of a section in bold.`;
+
+const LEARN_FORMAT = `Output the four sections below in this exact order. Each section heading is its own line, surrounded by blank lines.
+
+## What's new
+[1-3 paragraphs OR a short bulleted list of concrete signals from the active time window. Cite [n]. Lead with the most significant find.]
+
+## What changed
+[1-2 paragraphs. Cite specific deltas — confidence shifts on insights, theme frequency moves. If themeDeltas/insightDeltas are in the pre-context, surface them here.]
+
+## What's contradicting
+[1-2 paragraphs OR a numbered list. When the pre-context flagged contradictions, surface the strongest 1-3 with explicit "Source A says X / Source B says Y" framing. If none, write one sentence and move on.]
+
+## What to watch next
+[1-3 short bullets — open questions or follow-up reviews.]
+
+CRITICAL FORMAT RULES:
+- Every "## Heading" is on its OWN LINE with a BLANK LINE before and after. Never "...sentence. ## Heading" or "## Heading content..." — always a hard break.
+- Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never an entire clause.
+- Empty sections still render the heading; write "Nothing notable this window" as the body and move on.
+- Target 400-700 words total.
+
+EXAMPLE — wrong vs right shape (catch-up sections must follow this):
+
+WRONG (entire section wrapped as one bold paragraph — do not do this):
+**What's new The most significant signal this window is the surge in MSP-portal demand. In the last 14 days, 8 new feedback entries were logged.**
+
+RIGHT (heading and body are separate; bold only on short data spans):
+## What's new
+
+The most significant signal this window is a surge in MSP-portal demand. In the last 14 days, **8 new feedback entries** were logged.`;
 
 const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 

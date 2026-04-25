@@ -1,4 +1,5 @@
 import { Insight, FeedbackItem, ProductboardFeature, AttentionCall, JiraIssue, LinearIssue } from "./types";
+import { findContradictions, Contradiction } from "./contradictions";
 import { AgentData } from "./agent";
 import { getAIProvider, isAnyAIConfigured, resolveAIKey, AIProviderType } from "./ai-provider";
 import { INSIGHTS } from "./ai-presets";
@@ -106,6 +107,8 @@ export function generateProgrammaticInsights(data: AgentData): Insight[] {
   if (data.jiraIssues.length > 0 || data.linearIssues.length > 0) {
     insights.push(...staleInsights(data.jiraIssues, data.linearIssues, data.feedback, now));
   }
+
+  insights.push(...contradictionInsights(data, now));
 
   if (data.jiraIssues.length > 0) {
     insights.push(...jiraInsights(data.jiraIssues, now));
@@ -855,4 +858,50 @@ ${summaryParts.join("\n")}`;
     console.error("Failed to parse AI insights response");
     return [];
   }
+}
+
+function contradictionInsights(data: AgentData, now: string): Insight[] {
+  const severityToImpact: Record<Contradiction["severity"], Insight["impact"]> = {
+    high: "high", medium: "medium", low: "low",
+  };
+  const counterSignalByKind: Record<Contradiction["kind"], string> = {
+    "praise-vs-falling-usage": "Usage is falling despite positive feedback",
+    "stale-open-jira": "Engineering ticket is stale while customers keep filing related feedback",
+    "high-vote-no-feature": "Highly-voted request has no engineering ticket",
+    "high-usage-negative-feedback": "Heavy use coexists with active customer complaints",
+  };
+  const actionByKind: Record<Contradiction["kind"], string> = {
+    "praise-vs-falling-usage": "Compare the praised workflow against recent usage paths to confirm whether demand moved elsewhere.",
+    "stale-open-jira": "Review whether the stale ticket still maps to current feedback, then either revive it with fresh evidence or close it.",
+    "high-vote-no-feature": "Triage the request against current roadmap capacity and create an engineering tracking item if it is still strategically relevant.",
+    "high-usage-negative-feedback": "Inspect the high-usage surface for friction: usage may reflect necessity, not satisfaction.",
+  };
+  return findContradictions(data).map((c): Insight => {
+    const relatedFeedback = data.feedback.filter((fb) => c.relatedFeedbackIds.includes(fb.id));
+    const relatedFeatures = data.features.filter((feature) =>
+      c.relatedFeatureNames.some((name) => normalizeTheme(name) === normalizeTheme(feature.name))
+    );
+    const themes = Array.from(new Set(cleanThemes([
+      ...relatedFeedback.flatMap((fb) => fb.themes),
+      ...relatedFeatures.flatMap((feature) => feature.themes),
+      ...c.relatedFeatureNames,
+      "contradiction",
+    ]))).slice(0, 5);
+    const description = c.evidence.filter(Boolean).join(" • ") ||
+      "A contradiction was detected, but the supporting evidence was incomplete. Review the linked sources before acting.";
+
+    return {
+      id: `contradiction-${c.id}`,
+      type: "contradiction",
+      title: c.title,
+      description,
+      confidence: c.severity === "high" ? 0.85 : c.severity === "medium" ? 0.65 : 0.45,
+      relatedFeedbackIds: c.relatedFeedbackIds,
+      themes,
+      impact: severityToImpact[c.severity],
+      createdAt: now,
+      counterSignal: counterSignalByKind[c.kind],
+      suggestedAction: actionByKind[c.kind],
+    };
+  });
 }

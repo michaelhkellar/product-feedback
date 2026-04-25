@@ -8,7 +8,8 @@ export type InsightType =
   | "recommendation"
   | "risk"
   | "opportunity"
-  | "segment";
+  | "segment"
+  | "contradiction";
 
 export interface FeedbackItem {
   id: string;
@@ -182,6 +183,11 @@ export type FollowupSuggestion = {
   prompt: string;
   kind: "tenx" | "counter" | "gaps" | "cohort" | "custom";
 };
+
+export interface ChatFilters {
+  timeRange: string; // TimeRangeOption: "7d" | "14d" | "30d" | "90d" | "all"
+  themes: string[];
+}
 
 export interface ChatMessage {
   id: string;

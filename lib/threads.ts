@@ -14,11 +14,13 @@ export interface Thread {
   updatedAt: string;
   /** Structured conversation context persisted across turns. Optional — absent on old threads. */
   state?: ThreadState;
+  /** ISO timestamp of the last time this thread was opened. Used by learn mode to anchor "since last time". */
+  lastOpenedAt?: string;
 }
 
 const DB_NAME = "feedback-agent-threads";
-// Version 2: added optional `state` field on Thread (no schema migration needed; field is optional).
-const DB_VERSION = 2;
+// Version 3: added optional `lastOpenedAt` field on Thread (no schema migration needed; field is optional).
+const DB_VERSION = 3;
 const STORE_NAME = "threads";
 
 function openDB(): Promise<IDBDatabase> {
@@ -78,6 +80,26 @@ export async function deleteThread(id: string): Promise<void> {
   } catch {}
 }
 
+export async function markThreadOpened(id: string): Promise<void> {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const getReq = store.get(id);
+      getReq.onsuccess = () => {
+        const thread: Thread | undefined = getReq.result;
+        if (thread) {
+          store.put({ ...thread, lastOpenedAt: new Date().toISOString() });
+        }
+        resolve();
+      };
+      getReq.onerror = () => reject(getReq.error);
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {}
+}
+
 export function generateThreadTitle(messages: ChatMessage[]): string {
   const firstUserMsg = messages.find((m) => m.role === "user");
   if (!firstUserMsg) return "New Thread";
@@ -95,5 +117,6 @@ export function createThread(mode: InteractionMode): Thread {
     mode,
     createdAt: now,
     updatedAt: now,
+    lastOpenedAt: now,
   };
 }

@@ -13,6 +13,12 @@ const CHAT_COOLDOWN_MS = 2_000;
 const CHAT_RATE_TTL_MS = 60_000;
 const chatLastRequest = new Map<string, number>();
 
+function clampAnalyticsDays(start: Date, end: Date): number | undefined {
+  const days = Math.ceil((end.getTime() - start.getTime()) / 86400000);
+  if (!Number.isFinite(days) || days <= 0) return undefined;
+  return Math.min(days, 90);
+}
+
 export async function POST(req: NextRequest) {
   try {
     const clientKey = getClientKey(req);
@@ -21,7 +27,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { message, useDemoData, contextMode, mode: interactionMode, threadState } = body;
+    const { message, useDemoData, contextMode, mode: interactionMode, threadState, filters, learnSinceIso, themeDeltas, insightDeltas } = body;
     let { history, accumulatedSourceIds } = body;
 
     if (!message || typeof message !== "string") {
@@ -76,10 +82,43 @@ export async function POST(req: NextRequest) {
       braveSearchKey,
     };
 
-    const timeRange = extractTimeRange(trimmedMessage, clientTz);
-    const analyticsDays = timeRange
-      ? Math.min(Math.ceil((timeRange.end.getTime() - timeRange.start.getTime()) / 86400000), 90)
+    // Validate and sanitize filters from request body before fetching analytics
+    // so filter-pill and learn windows use the same data scope as the agent.
+    const chatFilters = filters && typeof filters === "object"
+      ? { timeRange: typeof filters.timeRange === "string" ? filters.timeRange : "all", themes: Array.isArray(filters.themes) ? filters.themes.filter((t: unknown) => typeof t === "string") : [] }
       : undefined;
+    const chatLearnSince = typeof learnSinceIso === "string" ? learnSinceIso : undefined;
+
+    const timeRange = extractTimeRange(trimmedMessage, clientTz);
+    const analyticsDays = (() => {
+      if (timeRange) return clampAnalyticsDays(timeRange.start, timeRange.end);
+      const filterDayMap: Record<string, number> = { "7d": 7, "14d": 14, "30d": 30, "90d": 90 };
+      const filterDays = chatFilters?.timeRange
+        ? filterDayMap[chatFilters.timeRange]
+        : undefined;
+      if (filterDays) return filterDays;
+
+      const stateUpdatedAt = typeof threadState?.updatedAt === "string" ? new Date(threadState.updatedAt) : null;
+      const stateWindow = threadState?.timeWindow;
+      if (
+        stateUpdatedAt &&
+        Number.isFinite(stateUpdatedAt.getTime()) &&
+        Date.now() - stateUpdatedAt.getTime() < 24 * 60 * 60 * 1000 &&
+        typeof stateWindow?.start === "string" &&
+        typeof stateWindow?.end === "string"
+      ) {
+        const start = new Date(stateWindow.start);
+        const end = new Date(stateWindow.end);
+        const days = clampAnalyticsDays(start, end);
+        if (days) return days;
+      }
+
+      if (interactionMode === "learn" && chatLearnSince) {
+        const start = new Date(chatLearnSince);
+        if (Number.isFinite(start.getTime())) return clampAnalyticsDays(start, new Date());
+      }
+      return undefined;
+    })();
 
     const data = await getData(
       keys.productboardKey, keys.attentionKey, keys.pendoKey, useDemoData !== false,
@@ -114,7 +153,10 @@ export async function POST(req: NextRequest) {
     const dataWithInsights = { ...data, insights: mergedInsights };
 
     const ctxMode: ContextMode = (contextMode === "standard" || contextMode === "deep") ? contextMode : "focused";
-    const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket") ? interactionMode : "summarize";
+    const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket" || interactionMode === "learn") ? interactionMode : "summarize";
+
+    const chatThemeDeltas = Array.isArray(themeDeltas) ? themeDeltas.filter((d: unknown) => d && typeof d === "object") : undefined;
+    const chatInsightDeltas = Array.isArray(insightDeltas) ? insightDeltas.filter((d: unknown) => d && typeof d === "object") : undefined;
     const sourceIds = Array.isArray(accumulatedSourceIds) ? accumulatedSourceIds : undefined;
 
     const wantStream = req.headers.get("x-stream") === "1";
@@ -135,7 +177,11 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: chunk })}\n\n`));
             },
             clientTz,
-            threadState ?? undefined
+            threadState ?? undefined,
+            chatFilters,
+            chatLearnSince,
+            chatThemeDeltas,
+            chatInsightDeltas
           ).then((result) => {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", ...result })}\n\n`));
             controller.close();
@@ -156,7 +202,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz, threadState ?? undefined);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz, threadState ?? undefined, chatFilters, chatLearnSince, chatThemeDeltas, chatInsightDeltas);
 
     return NextResponse.json(result);
   } catch (error) {

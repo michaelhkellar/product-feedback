@@ -5,7 +5,7 @@ import { useApiKeys } from "./api-key-provider";
 import { useEntityDrawer } from "./entity-drawer-provider";
 import { Insight } from "@/lib/types";
 import { DEMO_INSIGHTS } from "@/lib/demo-data";
-import { saveSnapshot, loadYesterdaySnapshot, diffInsights, TaggedInsight } from "@/lib/insight-snapshots";
+import { saveSnapshot, loadYesterdaySnapshot, diffInsights, saveThemeSnapshot, ThemeFrequency, TaggedInsight } from "@/lib/insight-snapshots";
 import { useFilters, filterTimeHeaders } from "./filter-provider";
 import { pinInsight, unpinInsight, listPinnedIds } from "@/lib/pins";
 import {
@@ -24,6 +24,7 @@ import {
   PinOff,
   Rocket,
   Users,
+  Scale,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +43,7 @@ const INSIGHT_CONFIG: Record<
   anomaly: { icon: Zap, color: "text-purple-500", bg: "bg-purple-500/10" },
   opportunity: { icon: Rocket, color: "text-cyan-500", bg: "bg-cyan-500/10" },
   segment: { icon: Users, color: "text-indigo-500", bg: "bg-indigo-500/10" },
+  contradiction: { icon: Scale, color: "text-orange-500", bg: "bg-orange-500/10" },
 };
 
 interface InsightsPanelProps {
@@ -79,8 +81,12 @@ export function InsightsPanel({
       const rawInsights: Insight[] = data.insights || [];
       // Save snapshot and diff with yesterday
       if (!useDemoData && rawInsights.length > 0) {
-        await saveSnapshot(rawInsights);
-        const yesterday = await loadYesterdaySnapshot();
+        const themeFreq: ThemeFrequency[] = Object.entries(
+          rawInsights.flatMap((i) => i.themes).reduce((acc: Record<string, number>, t) => { acc[t] = (acc[t] ?? 0) + 1; return acc; }, {})
+        ).map(([theme, count]) => ({ theme, count }));
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        await Promise.all([saveSnapshot(rawInsights, tz), saveThemeSnapshot(themeFreq, tz)]);
+        const yesterday = await loadYesterdaySnapshot(tz);
         if (yesterday) {
           const tagged = diffInsights(rawInsights, yesterday.insights);
           setInsights(tagged);
@@ -158,6 +164,7 @@ export function InsightsPanel({
             { key: "recommendation", label: "Recs" },
             { key: "theme", label: "Themes" },
             { key: "anomaly", label: "Anomalies" },
+            { key: "contradiction", label: "Contradictions" },
             { key: "pinned", label: `Pinned${pinnedIds.size > 0 ? ` (${pinnedIds.size})` : ""}` },
           ].map((f) => (
             <button
@@ -190,6 +197,16 @@ export function InsightsPanel({
             <p className="text-xs mb-1">No insights available</p>
             <p className="text-[10px]">
               Connect API keys or enable demo data in Settings
+            </p>
+          </div>
+        )}
+
+        {!loading && insights.length > 0 && filtered.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground px-4">
+            <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
+            <p className="text-xs mb-1">No matching insights</p>
+            <p className="text-[10px] leading-relaxed">
+              Try clearing the active type or theme filter.
             </p>
           </div>
         )}

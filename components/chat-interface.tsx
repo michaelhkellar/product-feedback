@@ -34,74 +34,89 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { CitationMarker } from "./citation-marker";
 import { TraceModal } from "./trace-modal";
-import { useFilters, timeRangeToNL } from "./filter-provider";
+import { useFilters, timeRangeToNL, SourceTabKey } from "./filter-provider";
+import { FilterPills } from "./filter-pills";
 import { ThreadMenu } from "./thread-menu";
-import { saveThread, generateThreadTitle, Thread } from "@/lib/threads";
+import { saveThread, generateThreadTitle, markThreadOpened, Thread } from "@/lib/threads";
+import { loadTodaySnapshot, loadTodayThemeSnapshot, loadYesterdaySnapshot, loadYesterdayThemeSnapshot, diffInsights, diffThemes, ThemeDelta, TaggedInsight } from "@/lib/insight-snapshots";
 import { clearFocus } from "@/lib/conversation-state";
 import type { ThreadState } from "@/lib/conversation-state";
 import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
 
-const SUMMARIZE_QUERIES = [
-  {
-    icon: AlertTriangle,
-    label: "Churn Risks",
-    query: "What accounts are at risk of churning and what's the revenue impact?",
-    color: "text-red-500",
-  },
-  {
-    icon: BarChart3,
-    label: "Executive Brief",
-    query: "Give me an executive summary of all customer feedback from the last 2 weeks",
-    color: "text-blue-500",
-  },
-  {
-    icon: Zap,
-    label: "AI Gap",
-    query: "What are we hearing about AI features and the competitive landscape?",
-    color: "text-amber-500",
-  },
-  {
-    icon: MessageSquare,
-    label: "SSO Issues",
-    query: "Break down the SSO reliability issue — who's affected and what's the revenue impact?",
-    color: "text-purple-500",
-  },
+type StarterQuery = { icon: typeof MessageSquare; label: string; query: string; color: string };
+
+const SUMMARIZE_QUERIES: StarterQuery[] = [
+  { icon: AlertTriangle, label: "Churn risk", query: "Top churn-risk accounts and revenue impact", color: "text-red-500" },
+  { icon: BarChart3, label: "Exec brief", query: "Two-week customer feedback summary", color: "text-blue-500" },
+  { icon: Zap, label: "AI signals", query: "What customers say about AI and competitors", color: "text-amber-500" },
+  { icon: MessageSquare, label: "Signal gaps", query: "Where do customer requests and product analytics disagree?", color: "text-purple-500" },
 ];
 
-const PRD_QUERIES = [
-  {
-    icon: FileText,
-    label: "Top Request PRD",
-    query: "Write a PRD for the most requested feature based on feedback",
-    color: "text-blue-500",
-  },
-  {
-    icon: BarChart3,
-    label: "Pain Point PRD",
-    query: "Write a PRD addressing the biggest customer pain point",
-    color: "text-red-500",
-  },
+const PRD_QUERIES: StarterQuery[] = [
+  { icon: FileText, label: "Top request", query: "Draft a PRD for the most-requested feature", color: "text-blue-500" },
+  { icon: BarChart3, label: "Pain point", query: "Draft a PRD for the loudest customer pain point", color: "text-red-500" },
 ];
 
-const TICKET_QUERIES = [
-  {
-    icon: Ticket,
-    label: "Top Bug Ticket",
-    query: "Create a ticket for the most urgent bug based on recent feedback",
-    color: "text-red-500",
-  },
-  {
-    icon: Zap,
-    label: "Feature Ticket",
-    query: "Create a ticket for the highest-voted feature request",
-    color: "text-amber-500",
-  },
+const TICKET_QUERIES: StarterQuery[] = [
+  { icon: Ticket, label: "Top bug", query: "Open a ticket for the most urgent bug", color: "text-red-500" },
+  { icon: Zap, label: "Top feature", query: "Open a ticket for the highest-voted request", color: "text-amber-500" },
 ];
 
-const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof MessageSquare; queries: typeof SUMMARIZE_QUERIES }> = {
+const LEARN_QUERIES: StarterQuery[] = [
+  { icon: Sparkles, label: "Catch me up", query: "What's new since I last looked?", color: "text-violet-500" },
+  { icon: BarChart3, label: "Theme shifts", query: "Which top themes shifted this week?", color: "text-blue-500" },
+  { icon: AlertTriangle, label: "Contradictions", query: "Where do customers and analytics disagree?", color: "text-amber-500" },
+  { icon: MessageSquare, label: "Recent calls", query: "What did I miss in calls this week?", color: "text-green-500" },
+];
+
+const SOURCE_QUERIES: Partial<Record<SourceTabKey, StarterQuery[]>> = {
+  feedback: [
+    { icon: BarChart3, label: "Top themes", query: "Top feedback themes this month", color: "text-blue-500" },
+    { icon: AlertTriangle, label: "Churn signals", query: "Loudest churn-risk signals in recent feedback", color: "text-red-500" },
+    { icon: MessageSquare, label: "Detractors", query: "What did NPS detractors say recently?", color: "text-orange-500" },
+  ],
+  features: [
+    { icon: Zap, label: "Top unbuilt", query: "Highest-voted feature requests not yet built", color: "text-amber-500" },
+    { icon: BarChart3, label: "Recent ships", query: "Recently shipped features — any feedback yet?", color: "text-blue-500" },
+    { icon: AlertTriangle, label: "Stale planned", query: "Features stuck in 'planned' with no progress", color: "text-red-500" },
+  ],
+  calls: [
+    { icon: MessageSquare, label: "Call themes", query: "Top themes from recent calls and interviews", color: "text-green-500" },
+    { icon: Sparkles, label: "Best quotes", query: "Customer quotes worth pinning from recent calls", color: "text-violet-500" },
+    { icon: AlertTriangle, label: "Open actions", query: "Action items from calls that are still open", color: "text-amber-500" },
+  ],
+  pendo: [
+    { icon: AlertTriangle, label: "Falling usage", query: "Top features falling in usage right now", color: "text-red-500" },
+    { icon: BarChart3, label: "Traffic drops", query: "Pages losing the most traffic this month", color: "text-blue-500" },
+    { icon: Zap, label: "Growing areas", query: "Where is product engagement growing?", color: "text-green-500" },
+  ],
+  amplitude: [
+    { icon: Zap, label: "Top events", query: "Top events trending up in Amplitude", color: "text-amber-500" },
+    { icon: AlertTriangle, label: "Drop-off", query: "Flows with the biggest drop-off in Amplitude", color: "text-red-500" },
+    { icon: BarChart3, label: "Retention", query: "Recent retention shifts in Amplitude", color: "text-blue-500" },
+  ],
+  posthog: [
+    { icon: AlertTriangle, label: "Funnel leaks", query: "Funnels with the worst conversion in PostHog", color: "text-red-500" },
+    { icon: Zap, label: "Top events", query: "Top events trending up in PostHog", color: "text-amber-500" },
+    { icon: BarChart3, label: "Retention", query: "Recent retention shifts in PostHog", color: "text-blue-500" },
+  ],
+  jira: [
+    { icon: AlertTriangle, label: "Stale issues", query: "Open Jira issues untouched for over 30 days", color: "text-red-500" },
+    { icon: BarChart3, label: "Blocking bugs", query: "Bugs blocking active customer feedback themes", color: "text-orange-500" },
+    { icon: MessageSquare, label: "CX tickets", query: "Recent CX-tagged tickets and their status", color: "text-blue-500" },
+  ],
+  confluence: [
+    { icon: FileText, label: "Recent docs", query: "Recently updated Confluence pages", color: "text-blue-500" },
+    { icon: BarChart3, label: "Feature specs", query: "Specs for the top-voted feature requests", color: "text-amber-500" },
+    { icon: MessageSquare, label: "Decision logs", query: "Decision logs and ADRs from this quarter", color: "text-green-500" },
+  ],
+};
+
+const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof MessageSquare; queries: StarterQuery[] }> = {
   summarize: { label: "Insights", icon: MessageSquare, queries: SUMMARIZE_QUERIES },
   prd: { label: "Write PRD", icon: FileText, queries: PRD_QUERIES },
   ticket: { label: "Write Ticket", icon: Ticket, queries: TICKET_QUERIES },
+  learn: { label: "Catch Up", icon: Sparkles, queries: LEARN_QUERIES },
 };
 
 interface ChatInterfaceProps {
@@ -646,7 +661,7 @@ function PrdPreview({
 
 export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>(function ChatInterface({ className }, ref) {
   const { keys, keyHeaders, useDemoData, status, hasAnyKey } = useApiKeys();
-  const { filters } = useFilters();
+  const { filters, activeSourceTab } = useFilters();
   const { openEntity } = useEntityDrawer();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -658,6 +673,8 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const threadStateRef = useRef<ThreadState | undefined>(undefined);
+  const learnSinceIsoRef = useRef<string | null>(null);
+  const currentLastOpenedAtRef = useRef<string | null>(null);
   const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
 
@@ -816,13 +833,18 @@ Try one of the suggested queries below to get started.`;
       mode,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      lastOpenedAt: currentLastOpenedAtRef.current ?? new Date().toISOString(),
       ...(threadStateRef.current ? { state: threadStateRef.current } : {}),
     };
     await saveThread(thread);
     setCurrentThreadId(id);
   }, [messages, accumulatedSourceIds, mode, currentThreadId]);
 
-  const handleLoadThread = useCallback((thread: Thread) => {
+  const handleLoadThread = useCallback(async (thread: Thread) => {
+    // Capture the previous lastOpenedAt as the learn-mode time anchor, then bump it
+    learnSinceIsoRef.current = thread.lastOpenedAt ?? thread.updatedAt ?? null;
+    await markThreadOpened(thread.id);
+    currentLastOpenedAtRef.current = new Date().toISOString();
     setMessages([...thread.messages]);
     setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
     setMode(thread.mode);
@@ -837,6 +859,8 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
     threadStateRef.current = undefined;
+    learnSinceIsoRef.current = null;
+    currentLastOpenedAtRef.current = new Date().toISOString();
     syncFocalLabel(undefined);
     setShowSuggestions(true);
   }, [mode]);
@@ -852,18 +876,8 @@ Try one of the suggested queries below to get started.`;
   useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessageRef.current?.(msg, { skipFilterSuffix: true }) }), []);
 
   async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean; displayContent?: string }) {
-    let content = text || input.trim();
+    const content = text || input.trim();
     if (!content || isLoading) return;
-
-    // Append global time range and theme filters if not overridden
-    if (!opts?.skipFilterSuffix) {
-      const parts: string[] = [];
-      const tlNL = timeRangeToNL(filters.timeRange);
-      const hasTimeKeyword = /\b(day|week|month|last|past|ago|since|today|yesterday|recent|previous|period|compare|versus|\bvs\b)\b/i.test(content);
-      if (tlNL && !hasTimeKeyword) parts.push(`for ${tlNL}`);
-      if (filters.themes.length > 0) parts.push(`focused on ${filters.themes.join(", ")}`);
-      if (parts.length) content = `${content} (${parts.join("; ")})`;
-    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -891,6 +905,26 @@ Try one of the suggested queries below to get started.`;
           content: m.content,
         }));
 
+      let snapshotThemeDeltas: ThemeDelta[] | undefined;
+      let snapshotInsightDeltas: TaggedInsight[] | undefined;
+      if (mode === "learn") {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const [todaySnap, todayThemeSnap, yesterdaySnap, yesterdayThemeSnap] = await Promise.all([
+          loadTodaySnapshot(tz),
+          loadTodayThemeSnapshot(tz),
+          loadYesterdaySnapshot(tz),
+          loadYesterdayThemeSnapshot(tz),
+        ]);
+        if (todaySnap && yesterdaySnap) {
+          snapshotInsightDeltas = diffInsights(todaySnap.insights, yesterdaySnap.insights)
+            .filter((i) => i.isNew || (i.trend && i.trend !== "stable"));
+        }
+        if (todayThemeSnap) {
+          snapshotThemeDeltas = diffThemes(todayThemeSnap.themes, yesterdayThemeSnap)
+            .filter((d) => d.trend !== "stable");
+        }
+      }
+
       const res = await fetch("/api/chat", {
         method: "POST",
         signal: controller.signal,
@@ -908,6 +942,10 @@ Try one of the suggested queries below to get started.`;
           mode,
           accumulatedSourceIds: Array.from(accumulatedSourceIds),
           threadState: threadStateRef.current ?? null,
+          filters: { timeRange: filters.timeRange, themes: filters.themes },
+          learnSinceIso: learnSinceIsoRef.current ?? null,
+          ...(snapshotThemeDeltas !== undefined ? { themeDeltas: snapshotThemeDeltas } : {}),
+          ...(snapshotInsightDeltas !== undefined ? { insightDeltas: snapshotInsightDeltas } : {}),
         }),
       });
 
@@ -1109,7 +1147,7 @@ Try one of the suggested queries below to get started.`;
     }
   }
 
-  const currentQueries = MODE_CONFIG[mode].queries;
+  const currentQueries = SOURCE_QUERIES[activeSourceTab] ?? MODE_CONFIG[mode].queries;
   const hasAtlassian = status.atlassianKey?.configured || false;
   const ticketProvider = keys.ticketProvider || "atlassian";
   const docProvider = keys.docProvider || "atlassian";
@@ -1121,6 +1159,7 @@ Try one of the suggested queries below to get started.`;
     summarize: "Ask about customer feedback, churn risks, feature requests...",
     prd: "Any specific focus or instructions for the PRD?",
     ticket: "Any specific focus or instructions for the ticket?",
+    learn: "What do you want to catch up on?",
   };
 
   return (
@@ -1161,6 +1200,8 @@ Try one of the suggested queries below to get started.`;
           })}
         </div>
       </div>
+
+      <FilterPills />
 
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto scrollbar-thin px-4 py-4 space-y-6">
         {messages.map((msg) => (

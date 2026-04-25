@@ -152,11 +152,7 @@ export function SourcePanel({
 }: SourcePanelProps) {
   const { keys, status, useDemoData, loaded, keyHeaders } = useApiKeys();
   const { openEntity } = useEntityDrawer();
-  const { filters } = useFilters();
-
-  const [activeTab, setActiveTab] = useState<
-    "sources" | "feedback" | "features" | "calls" | "pendo" | "amplitude" | "posthog" | "jira" | "confluence"
-  >("sources");
+  const { filters, activeSourceTab: activeTab, setActiveSourceTab: setActiveTab } = useFilters();
   const [detail, setDetail] = useState<DetailView>(null);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
