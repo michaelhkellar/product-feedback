@@ -1055,7 +1055,7 @@ function verifyCitations(text: string, validCount: number): { cleaned: string; o
     if (idx >= 1 && idx <= validCount) return match;
     orphaned.push(idx);
     return "";
-  }).replace(/\[\s*\]/g, "").replace(/\s{2,}/g, " ").trim();
+  }).replace(/\[\s*\]/g, "").trim();
   return { cleaned, orphaned };
 }
 

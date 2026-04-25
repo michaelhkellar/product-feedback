@@ -351,6 +351,43 @@ function looksLikeBroadEmphasis(inner: string): boolean {
   return plain.length >= 100 && /[.!?]\s+[A-Z]/.test(plain);
 }
 
+function normalizeLearnSectionLabels(text: string, sectionAlt: string): string {
+  let out = text;
+
+  // Provider/citation cleanup can flatten learn-mode answers into
+  // `... **What changed The signal...**`. Split those labels back into real
+  // headings even when they are no longer at the start of a line.
+  const inlineLabel = new RegExp(
+    `(^|\\n|[.!?]\\s+|(?:\\*\\*|__)\\s+)(?:\\*\\*|__)?[ \\t]*(${sectionAlt})(?:[ \\t]*(?:\\*\\*|__))?[ \\t:—-]+`,
+    "gi"
+  );
+  out = out.replace(inlineLabel, (_m, lead: string, label: string) => {
+    const prefix = /^(?:\*\*|__)\s+$/.test(lead) ? "" : lead.trimEnd();
+    return `${prefix}${prefix ? "\n\n" : ""}## ${label}\n\n`;
+  });
+
+  // If a broad section was wrapped as `**...**`, the split above intentionally
+  // consumes the opening/closing markers around labels; remove any matching
+  // orphan marker at line edges without touching intentional inline bold spans.
+  out = out
+    .split("\n")
+    .map((line) => {
+      let next = line;
+      if ((next.match(/\*\*/g) || []).length % 2 === 1) {
+        if (/^\s*\*\*/.test(next)) next = next.replace(/^(\s*)\*\*/, "$1");
+        if (/\*\*\s*$/.test(next)) next = next.replace(/\*\*(\s*)$/, "$1");
+      }
+      if ((next.match(/__/g) || []).length % 2 === 1) {
+        if (/^\s*__/.test(next)) next = next.replace(/^(\s*)__/, "$1");
+        if (/__\s*$/.test(next)) next = next.replace(/__(\s*)$/, "$1");
+      }
+      return next;
+    })
+    .join("\n");
+
+  return out;
+}
+
 function normalizeHeadingPlacement(text: string): string {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const sectionAlt = LEARN_SECTION_LABELS.map(esc).join("|");
@@ -385,6 +422,8 @@ function normalizeHeadingPlacement(text: string): string {
   // We first normalize any paragraph-start label, then run stricter full-wrap
   // fallbacks for hard-wrapped paragraphs.
   {
+    out = normalizeLearnSectionLabels(out, sectionAlt);
+
     const labelPrefix = new RegExp(
       `(^|\\n)([ \\t]*)(?:\\*\\*|__)?[ \\t]*(${sectionAlt})(?:[ \\t]*(?:\\*\\*|__))?[ \\t:—-]+`,
       "gi"
