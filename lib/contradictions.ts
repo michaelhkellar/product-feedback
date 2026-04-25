@@ -2,7 +2,7 @@ import type { AgentData } from "./agent";
 
 export interface Contradiction {
   id: string;
-  kind: "praise-vs-falling-usage" | "stale-open-jira" | "high-vote-no-feature";
+  kind: "praise-vs-falling-usage" | "stale-open-jira" | "high-vote-no-feature" | "high-usage-negative-feedback";
   title: string;
   evidence: string[];
   relatedFeedbackIds: string[];
@@ -108,6 +108,48 @@ export function findContradictions(data: AgentData): Contradiction[] {
           relatedFeedbackIds: [],
           relatedFeatureNames: [feature.name],
           severity: "medium",
+        });
+      }
+    }
+  }
+
+  // Rule 4: high-usage-negative-feedback
+  // Top-volume or rising features/pages that have ≥2 negative-sentiment feedback items
+  // mentioning them by name. Mirror of Rule 1 with sentiment and signal direction flipped.
+  if (data.analyticsOverview) {
+    const hotItems: { name: string; kind: string; count: number; deltaPct?: number }[] = [
+      ...(data.analyticsOverview.risingItems ?? []).filter((r) => r.kind === "feature" || r.kind === "page"),
+      ...data.analyticsOverview.topPages.slice(0, 5).map((p) => ({ name: p.name, kind: "page", count: p.count, deltaPct: p.deltaPct })),
+      ...data.analyticsOverview.topFeatures.slice(0, 5).map((f) => ({ name: f.name, kind: "feature", count: f.count, deltaPct: f.deltaPct })),
+    ];
+    const seen = new Set<string>();
+    const dedup = hotItems.filter((i) => {
+      const key = `${i.kind}:${normalize(i.name)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    for (const item of dedup) {
+      const negativeFeedback = data.feedback.filter(
+        (fb) =>
+          fb.sentiment === "negative" &&
+          (textContains(fb.title, item.name) || textContains(fb.content, item.name))
+      );
+      if (negativeFeedback.length >= 2) {
+        const severity: Contradiction["severity"] =
+          negativeFeedback.length >= 5 ? "high" : "medium";
+        out.push({
+          id: `high-usage-negative-${item.name.replace(/\s+/g, "-").toLowerCase()}`,
+          kind: "high-usage-negative-feedback",
+          title: `Customers complain about "${item.name}" but it's a top ${item.kind === "page" ? "page" : "feature"} by usage (${item.count.toLocaleString()} events)`,
+          evidence: [
+            `${negativeFeedback.length} negative feedback item${negativeFeedback.length > 1 ? "s" : ""} mention "${item.name}"`,
+            `Analytics (${data.analyticsOverview!.provider}): ${item.count.toLocaleString()} events${item.deltaPct !== undefined ? `, ${item.deltaPct >= 0 ? "+" : ""}${Math.round(item.deltaPct)}% vs prior` : ""}`,
+            ...negativeFeedback.slice(0, 2).map((fb) => `"${fb.title}" — ${fb.company || fb.customer}`),
+          ],
+          relatedFeedbackIds: negativeFeedback.map((fb) => fb.id),
+          relatedFeatureNames: [item.name],
+          severity,
         });
       }
     }

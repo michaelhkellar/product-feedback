@@ -1888,7 +1888,7 @@ export async function chat(
   }
 
   const sources: { type: string; id: string; title: string; url?: string; when?: string }[] = [];
-  const searchParts: string[] = [];
+  const searchEntries: { detail: string; score: number }[] = [];
   const recentItemIds = new Set<string>();
   const detailed = wantsDetail(userMessage) || drilldownQuery;
 
@@ -1991,7 +1991,7 @@ export async function chat(
       const detail = r.highlightSpan
         ? `Most relevant excerpt: "${r.highlightSpan}"\n${details[0]}`
         : details[0];
-      searchParts.push(detail);
+      searchEntries.push({ detail, score: r.score });
     }
     recentItemIds.add(doc.id);
     if (doc.type !== "insight") {
@@ -2023,6 +2023,12 @@ export async function chat(
   }
 
   const isPrdOrTicket = mode === "prd" || mode === "ticket";
+
+  // Sort by retrieval score so highest-signal items appear first in the assembled context.
+  // Model attention is biased toward the top, so this improves answer quality without
+  // changing which items are included.
+  searchEntries.sort((a, b) => b.score - a.score);
+  const searchParts: string[] = searchEntries.map((e) => e.detail);
 
   if (isPrdOrTicket && accumulatedSourceIds && accumulatedSourceIds.length > 0) {
     const uniqueAccIds = accumulatedSourceIds.filter((id) => !recentItemIds.has(id));
@@ -2633,7 +2639,17 @@ CRITICAL FORMAT RULES:
 - Every "## Heading" is on its OWN LINE with a BLANK LINE before and after. Never "...sentence. ## Heading" or "## Heading content..." — always a hard break.
 - Section opening sentences are NOT wrapped in bold. Use bold only for short data spans (numbers, account names, feature names) — never an entire clause.
 - Empty sections still render the heading; write "Nothing notable this window" as the body and move on.
-- Target 400-700 words total.`;
+- Target 400-700 words total.
+
+EXAMPLE — wrong vs right shape (catch-up sections must follow this):
+
+WRONG (entire section wrapped as one bold paragraph — do not do this):
+**What's new The most significant signal this window is the surge in MSP-portal demand. In the last 14 days, 8 new feedback entries were logged.**
+
+RIGHT (heading and body are separate; bold only on short data spans):
+## What's new
+
+The most significant signal this window is a surge in MSP-portal demand. In the last 14 days, **8 new feedback entries** were logged.`;
 
 const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 

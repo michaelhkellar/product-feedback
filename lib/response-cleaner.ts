@@ -372,12 +372,23 @@ function normalizeHeadingPlacement(text: string): string {
     ];
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const alt = SECTION_LABELS.map(esc).join("|");
-    const fullWrapBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]+(.+)\\*\\*[ \\t]*$`, "gmi");
-    const fullWrapUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${alt})[ \\t]+(.+)__[ \\t]*$`, "gmi");
+    // Body capture spans multiple hard-wrapped lines within one paragraph — the model
+    // emits entire catch-up sections as a single paragraph with internal \n but no
+    // blank-line break. `.+` stops at \n and never matches; `[\s\S]+?` does.
+    // The (?!\n\n) guard prevents crossing a paragraph boundary, and (?=\n|$) lets
+    // the closing marker land at end-of-line without consuming the newline.
+    const fullWrapBold = new RegExp(
+      `(^|\\n)([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)\\*\\*[ \\t]*(?=\\n|$)`,
+      "gi"
+    );
+    const fullWrapUnder = new RegExp(
+      `(^|\\n)([ \\t]*)__[ \\t]*(${alt})[ \\t]+((?:(?!\\n\\n)[\\s\\S])+?)__[ \\t]*(?=\\n|$)`,
+      "gi"
+    );
     const labelOnlyBold = new RegExp(`^([ \\t]*)\\*\\*[ \\t]*(${alt})[ \\t]*\\*\\*[ \\t]*(.*)$`, "gmi");
     const labelOnlyUnder = new RegExp(`^([ \\t]*)__[ \\t]*(${alt})[ \\t]*__[ \\t]*(.*)$`, "gmi");
-    const promote = (_m: string, indent: string, label: string, body: string) =>
-      `${indent}## ${label}\n\n${body.trim()}`;
+    const promote = (_m: string, lead: string, indent: string, label: string, body: string) =>
+      `${lead}${indent}## ${label}\n\n${body.trim()}`;
     const promoteLabel = (_m: string, indent: string, label: string, rest: string) => {
       const body = rest.trim();
       return body ? `${indent}## ${label}\n\n${body}` : `${indent}## ${label}`;

@@ -868,6 +868,7 @@ function contradictionInsights(data: AgentData, now: string): Insight[] {
     "praise-vs-falling-usage": "Usage is falling despite positive feedback",
     "stale-open-jira": "Engineering ticket is stale while customers keep filing related feedback",
     "high-vote-no-feature": "Highly-voted request has no engineering ticket",
+    "high-usage-negative-feedback": "Heavy use coexists with active customer complaints",
   };
   return findContradictions(data).map((c): Insight => ({
     id: `contradiction-${c.id}`,
