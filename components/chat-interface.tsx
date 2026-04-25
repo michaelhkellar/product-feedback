@@ -36,7 +36,7 @@ import { CitationMarker } from "./citation-marker";
 import { TraceModal } from "./trace-modal";
 import { useFilters, timeRangeToNL } from "./filter-provider";
 import { ThreadMenu } from "./thread-menu";
-import { saveThread, generateThreadTitle, Thread } from "@/lib/threads";
+import { saveThread, generateThreadTitle, markThreadOpened, Thread } from "@/lib/threads";
 import { clearFocus } from "@/lib/conversation-state";
 import type { ThreadState } from "@/lib/conversation-state";
 import { useEntityDrawer, EntityKind } from "./entity-drawer-provider";
@@ -98,10 +98,38 @@ const TICKET_QUERIES = [
   },
 ];
 
+const LEARN_QUERIES = [
+  {
+    icon: Sparkles,
+    label: "Since Last Time",
+    query: "What's new since I last looked?",
+    color: "text-violet-500",
+  },
+  {
+    icon: BarChart3,
+    label: "Theme Changes",
+    query: "What's changed in the top themes this week?",
+    color: "text-blue-500",
+  },
+  {
+    icon: AlertTriangle,
+    label: "Contradictions",
+    query: "Where do customers and analytics disagree?",
+    color: "text-amber-500",
+  },
+  {
+    icon: MessageSquare,
+    label: "Missed Calls",
+    query: "What did I miss in recent calls and interviews?",
+    color: "text-green-500",
+  },
+];
+
 const MODE_CONFIG: Record<InteractionMode, { label: string; icon: typeof MessageSquare; queries: typeof SUMMARIZE_QUERIES }> = {
   summarize: { label: "Insights", icon: MessageSquare, queries: SUMMARIZE_QUERIES },
   prd: { label: "Write PRD", icon: FileText, queries: PRD_QUERIES },
   ticket: { label: "Write Ticket", icon: Ticket, queries: TICKET_QUERIES },
+  learn: { label: "Review", icon: Sparkles, queries: LEARN_QUERIES },
 };
 
 interface ChatInterfaceProps {
@@ -658,6 +686,7 @@ export const ChatInterface = forwardRef<ChatInterfaceHandle, ChatInterfaceProps>
   const [accumulatedSourceIds, setAccumulatedSourceIds] = useState<Set<string>>(new Set());
   const [currentThreadId, setCurrentThreadId] = useState<string | null>(null);
   const threadStateRef = useRef<ThreadState | undefined>(undefined);
+  const learnSinceIsoRef = useRef<string | null>(null);
   const [focalContextLabel, setFocalContextLabel] = useState<string | null>(null);
   const [expandedSources, setExpandedSources] = useState<Set<string>>(new Set());
 
@@ -823,6 +852,9 @@ Try one of the suggested queries below to get started.`;
   }, [messages, accumulatedSourceIds, mode, currentThreadId]);
 
   const handleLoadThread = useCallback((thread: Thread) => {
+    // Capture lastOpenedAt before updating it — learn mode uses this as its time anchor
+    learnSinceIsoRef.current = thread.lastOpenedAt ?? thread.updatedAt ?? null;
+    markThreadOpened(thread.id);
     setMessages([...thread.messages]);
     setAccumulatedSourceIds(new Set(thread.accumulatedSourceIds));
     setMode(thread.mode);
@@ -837,6 +869,7 @@ Try one of the suggested queries below to get started.`;
     setAccumulatedSourceIds(new Set());
     setCurrentThreadId(null);
     threadStateRef.current = undefined;
+    learnSinceIsoRef.current = null;
     syncFocalLabel(undefined);
     setShowSuggestions(true);
   }, [mode]);
@@ -852,18 +885,8 @@ Try one of the suggested queries below to get started.`;
   useImperativeHandle(ref, () => ({ sendMessage: (msg: string) => sendMessageRef.current?.(msg, { skipFilterSuffix: true }) }), []);
 
   async function sendMessage(text?: string, opts?: { skipFilterSuffix?: boolean; displayContent?: string }) {
-    let content = text || input.trim();
+    const content = text || input.trim();
     if (!content || isLoading) return;
-
-    // Append global time range and theme filters if not overridden
-    if (!opts?.skipFilterSuffix) {
-      const parts: string[] = [];
-      const tlNL = timeRangeToNL(filters.timeRange);
-      const hasTimeKeyword = /\b(day|week|month|last|past|ago|since|today|yesterday|recent|previous|period|compare|versus|\bvs\b)\b/i.test(content);
-      if (tlNL && !hasTimeKeyword) parts.push(`for ${tlNL}`);
-      if (filters.themes.length > 0) parts.push(`focused on ${filters.themes.join(", ")}`);
-      if (parts.length) content = `${content} (${parts.join("; ")})`;
-    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -908,6 +931,8 @@ Try one of the suggested queries below to get started.`;
           mode,
           accumulatedSourceIds: Array.from(accumulatedSourceIds),
           threadState: threadStateRef.current ?? null,
+          filters: { timeRange: filters.timeRange, themes: filters.themes },
+          learnSinceIso: learnSinceIsoRef.current ?? null,
         }),
       });
 
@@ -1121,6 +1146,7 @@ Try one of the suggested queries below to get started.`;
     summarize: "Ask about customer feedback, churn risks, feature requests...",
     prd: "Any specific focus or instructions for the PRD?",
     ticket: "Any specific focus or instructions for the ticket?",
+    learn: "What do you want to catch up on?",
   };
 
   return (

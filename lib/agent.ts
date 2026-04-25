@@ -22,8 +22,10 @@ import { synthesizeAnalyticsDocs } from "./analytics-docs";
 import { scoreDoc } from "./signal-score";
 import { ThreadState, updateState } from "./conversation-state";
 import { AGENT_TOOLS, runTool, ToolContext } from "./agent-tools";
+import { findContradictions, Contradiction } from "./contradictions";
+import type { ChatFilters } from "./types";
 
-export type InteractionMode = "summarize" | "prd" | "ticket";
+export type InteractionMode = "summarize" | "prd" | "ticket" | "learn";
 
 export interface AgentKeys {
   geminiKey?: string;
@@ -1696,14 +1698,32 @@ export async function chat(
   accumulatedSourceIds?: string[],
   onChunk?: (chunk: string) => void,
   clientTz = "UTC",
-  incomingState?: ThreadState
+  incomingState?: ThreadState,
+  filters?: ChatFilters,
+  learnSinceIso?: string | null
 ): Promise<ChatResult> {
+  const isLearn = mode === "learn";
   const timeRange = extractTimeRange(userMessage, clientTz);
-  // Fall back to persisted time window from conversation state when no explicit range in message,
-  // but only if the state is fresh (< 24h) to avoid silently filtering on stale windows.
+  // Fall back in priority order: explicit message time > thread state window > filter bar > learn anchor > no filter
   const STATE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   const stateAgeMs = incomingState ? Date.now() - new Date(incomingState.updatedAt).getTime() : Infinity;
   const windowUsable = incomingState?.timeWindow && stateAgeMs < STATE_MAX_AGE_MS;
+
+  // Resolve filter bar time range to a concrete window
+  const filterBarWindow = (() => {
+    if (!filters || filters.timeRange === "all") return null;
+    const days = { "7d": 7, "14d": 14, "30d": 30, "90d": 90 }[filters.timeRange];
+    if (!days) return null;
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+    return { start, end, label: `last ${days} days` };
+  })();
+
+  // For learn mode, default to "since last opened" window when no explicit time in message
+  const learnWindow = isLearn && learnSinceIso && !timeRange && !windowUsable && !filterBarWindow
+    ? { start: new Date(learnSinceIso), end: new Date(), label: "since last visit" }
+    : null;
+
   const _rawScopedData = timeRange
     ? filterByTimeRange(data, timeRange)
     : windowUsable
@@ -1712,7 +1732,11 @@ export async function chat(
           end: new Date(incomingState!.timeWindow!.end),
           label: incomingState!.timeWindow!.label,
         })
-      : data;
+      : filterBarWindow
+        ? filterByTimeRange(data, filterBarWindow)
+        : learnWindow
+          ? filterByTimeRange(data, learnWindow)
+          : data;
 
   // buildStore enriches feedback with cluster annotations and builds embeddings
   const _analyticsDays = timeRange
@@ -1762,9 +1786,12 @@ export async function chat(
   // Detect urgency/actionability intent for optional retrieval filters
   const urgencyFilter = detectUrgencyFilter(userMessage);
 
+  // Apply theme filter from filter bar when themes are active
+  const themeFilter = filters?.themes?.length ? { themes: filters.themes } : {};
+
   const merged = new Map<string, ReturnType<InMemoryVectorStore["search"]>[number]>();
   for (const q of searchQueries) {
-    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter })) {
+    for (const r of store.search(q, { limit: searchLimit, queryEmbedding, applySignalBoost: !countQuery, ...urgencyFilter, ...themeFilter })) {
       const key = `${r.document.type}:${r.document.id}`;
       const existing = merged.get(key);
       if (!existing || r.score > existing.score) merged.set(key, r);
@@ -2019,7 +2046,7 @@ export async function chat(
   const analyticsLabel = analyticsProvider === "amplitude" ? "Amplitude" : analyticsProvider === "posthog" ? "PostHog" : "Pendo";
 
   const hasDeepDive = deepDiveEarly.analytics || deepDiveEarly.data;
-  const effectiveContextMode = isPrdOrTicket
+  const effectiveContextMode = isPrdOrTicket || isLearn
     ? "deep"
     : hasDeepDive
       ? "deep"
@@ -2101,6 +2128,31 @@ export async function chat(
     ? `\nPIVOT INSTRUCTION: The user already knows about "${pivot.excluded.join('", "')}". Do NOT summarize, repeat, or elaborate on ${pivot.excluded.map((e) => `"${e}"`).join(" or ")}. Focus ENTIRELY on OTHER topics, accounts, themes, or items found in the evidence above. If the evidence mentions ${pivot.excluded[0]} only incidentally, skip those items and highlight everything else.\n`
     : "";
 
+  // Filter-active note: tell the agent what scope it's operating in when filters are active
+  const filterNote = (() => {
+    const parts: string[] = [];
+    const activeTimeWindow = learnWindow ?? filterBarWindow;
+    if (activeTimeWindow && !timeRange && !windowUsable) {
+      parts.push(`time=${activeTimeWindow.label}`);
+    }
+    if (filters?.themes?.length) parts.push(`themes=${filters.themes.join(", ")}`);
+    return parts.length
+      ? `\nActive filters: ${parts.join("; ")}. Treat the dataset above as already scoped to this context — do not apologize for missing data outside this scope.\n`
+      : "";
+  })();
+
+  // Contradiction pre-context for learn mode
+  const contradictionBlock = (() => {
+    if (!isLearn) return "";
+    const contradictions = findContradictions(data);
+    if (contradictions.length === 0) return "";
+    const lines = contradictions
+      .slice(0, 5)
+      .map((c: Contradiction, i: number) => `${i + 1}. [${c.severity.toUpperCase()}] ${c.title}\n   Evidence: ${c.evidence.slice(0, 2).join(" | ")}`)
+      .join("\n");
+    return `\n## Detected contradictions (pre-computed — reason about these in "What's contradicting"):\n${lines}\n`;
+  })();
+
   const is10xQuery = /^10x thinking:/i.test(userMessage.trimStart());
   const tenxAddendum = is10xQuery
     ? `\nTHINKING MODE: The user is requesting 10x (order-of-magnitude) thinking — not incremental improvements. Propose bold, ambitious ideas even with limited evidence. For each bet, explicitly state your confidence (e.g. "Weak signal, high upside"). Do not default to safe, obvious recommendations.
@@ -2115,10 +2167,10 @@ FORMAT RULES (strict):
     ? computeEvidenceFacts(relatedFeedback, sources)
     : "";
 
-  const prompt = `${context}${evidencePack}${factsBlock}
+  const prompt = `${context}${contradictionBlock}${evidencePack}${factsBlock}
 ${historyText ? `\nHistory:\n${historyText}\n` : ""}
 Q: ${userMessage}
-${pivotAddendum}${tenxAddendum}
+${pivotAddendum}${filterNote}${tenxAddendum}
 ${formatInstructions}`;
 
   const inputTokens = estimateTokens(systemPrompt) + estimateTokens(prompt);
@@ -2420,6 +2472,7 @@ ${formatInstructions}`;
 function getSystemPrompt(mode: InteractionMode): string {
   if (mode === "prd") return PRD_SYSTEM_PROMPT;
   if (mode === "ticket") return TICKET_SYSTEM_PROMPT;
+  if (mode === "learn") return LEARN_SYSTEM_PROMPT;
   return SYSTEM_PROMPT;
 }
 
@@ -2461,6 +2514,7 @@ function getFormatInstructions(
 ): string {
   if (mode === "prd") return PRD_FORMAT;
   if (mode === "ticket") return TICKET_FORMAT;
+  if (mode === "learn") return LEARN_FORMAT;
   if (message && history) {
     const qType = classifyQueryType(message, history, !!hasComparison);
     // Analytics-centric queries get a dedicated format with a Page/Feature
@@ -2507,6 +2561,30 @@ const TICKET_SYSTEM_PROMPT = `You are a senior product manager drafting a concis
 - Keep the title concise and actionable. Describe what changes, not what the feature is called.
 
 Synthesize the provided feedback data, analytics, and conversation history into a well-structured ticket. Be precise and avoid ambiguity.`;
+
+const LEARN_SYSTEM_PROMPT = `You are a senior product intelligence analyst running a regular review for someone catching up after time away.
+
+Your job is to surface what changed — not everything that exists. Structure your response in this exact order:
+
+## What's new
+Concrete signals (feedback, calls, tickets, doc updates) from the active time window. Cite [n]. Lead with the most significant; skip noise. If nothing is meaningfully new, say "Nothing notable this window" and move on.
+
+## What changed
+Insights or themes whose signal shifted — growing, shrinking, or newly appearing. Reference the specific direction and evidence. If the system flagged theme deltas or shifting insight confidence, surface those here. Skip if no meaningful shifts.
+
+## What's contradicting
+When sources disagree: customer praise vs. declining usage, open stale tickets vs. active demand, high-vote features with no engineering traction. Be specific — name the feature and both conflicting signals. If no contradictions were detected, say so briefly.
+
+## What to watch next
+1-3 questions the user should ask on their next review, based on the gaps or open threads in the current data.
+
+Authoring constraints:
+- Lead with the headline in each section. No "Based on the data..." preambles.
+- Quote customer language directly when it sharpens a point.
+- Do not widen the time window or scope beyond what's filtered without explicitly noting you're doing so.
+- Sections with no signal get one sentence — don't pad them.`;
+
+const LEARN_FORMAT = `Respond with the four sections in order: "## What's new", "## What changed", "## What's contradicting", "## What to watch next". Each section heading must be on its own line with a blank line before and after. Lead each section with the headline finding, not a preamble. Cite sources with [n] markers. Use bullet points for lists within a section. Target 400-700 words total — enough to be actionable, not so much that it requires a review of its own.`;
 
 const SUMMARIZE_FORMAT = `Use this format as a guide. Include sections the evidence supports; omit any that would be empty or forced.
 

@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { message, useDemoData, contextMode, mode: interactionMode, threadState } = body;
+    const { message, useDemoData, contextMode, mode: interactionMode, threadState, filters, learnSinceIso } = body;
     let { history, accumulatedSourceIds } = body;
 
     if (!message || typeof message !== "string") {
@@ -114,7 +114,13 @@ export async function POST(req: NextRequest) {
     const dataWithInsights = { ...data, insights: mergedInsights };
 
     const ctxMode: ContextMode = (contextMode === "standard" || contextMode === "deep") ? contextMode : "focused";
-    const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket") ? interactionMode : "summarize";
+    const chatMode: InteractionMode = (interactionMode === "prd" || interactionMode === "ticket" || interactionMode === "learn") ? interactionMode : "summarize";
+
+    // Validate and sanitize filters from request body
+    const chatFilters = filters && typeof filters === "object"
+      ? { timeRange: typeof filters.timeRange === "string" ? filters.timeRange : "all", themes: Array.isArray(filters.themes) ? filters.themes.filter((t: unknown) => typeof t === "string") : [] }
+      : undefined;
+    const chatLearnSince = typeof learnSinceIso === "string" ? learnSinceIso : undefined;
     const sourceIds = Array.isArray(accumulatedSourceIds) ? accumulatedSourceIds : undefined;
 
     const wantStream = req.headers.get("x-stream") === "1";
@@ -135,7 +141,9 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "delta", text: chunk })}\n\n`));
             },
             clientTz,
-            threadState ?? undefined
+            threadState ?? undefined,
+            chatFilters,
+            chatLearnSince
           ).then((result) => {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done", ...result })}\n\n`));
             controller.close();
@@ -156,7 +164,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz, threadState ?? undefined);
+    const result = await chat(trimmedMessage, Array.isArray(history) ? history : [], dataWithInsights, agentKeys, ctxMode, chatMode, sourceIds, undefined, clientTz, threadState ?? undefined, chatFilters, chatLearnSince);
 
     return NextResponse.json(result);
   } catch (error) {

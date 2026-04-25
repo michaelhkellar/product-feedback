@@ -183,6 +183,11 @@ export type FollowupSuggestion = {
   kind: "tenx" | "counter" | "gaps" | "cohort" | "custom";
 };
 
+export interface ChatFilters {
+  timeRange: string; // TimeRangeOption: "7d" | "14d" | "30d" | "90d" | "all"
+  themes: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
