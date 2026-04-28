@@ -2,7 +2,7 @@ import { AIProviderType } from "./ai-provider";
 
 export type ContextMode = "focused" | "standard" | "deep";
 export type AnalyticsProviderType = "pendo" | "amplitude" | "posthog";
-export type TicketProviderType = "atlassian" | "linear";
+export type TicketProviderType = "atlassian" | "linear" | "";
 export type CallProviderType = "attention" | "grain";
 export type DocProviderType = "atlassian" | "slite";
 
@@ -77,7 +77,7 @@ const EMPTY_KEYS: ApiKeyState = {
   openaiKey: "",
   analyticsProvider: "pendo",
   amplitudeKey: "",
-  ticketProvider: "atlassian",
+  ticketProvider: "",
   linearKey: "",
   posthogKey: "",
   posthogHost: "",
@@ -113,7 +113,7 @@ function normalizeKeys(parsed: Partial<ApiKeyState> | null | undefined): ApiKeyS
     openaiKey: parsed?.openaiKey || "",
     analyticsProvider: (parsed?.analyticsProvider as ApiKeyState["analyticsProvider"]) || "pendo",
     amplitudeKey: parsed?.amplitudeKey || "",
-    ticketProvider: (parsed?.ticketProvider as ApiKeyState["ticketProvider"]) || "atlassian",
+    ticketProvider: (parsed?.ticketProvider as ApiKeyState["ticketProvider"]) || "",
     linearKey: parsed?.linearKey || "",
     posthogKey: parsed?.posthogKey || "",
     posthogHost: parsed?.posthogHost || "",
@@ -153,7 +153,7 @@ function hasStoredValues(keys: ApiKeyState): boolean {
     keys.openaiKey ||
     keys.analyticsProvider !== "pendo" ||
     keys.amplitudeKey ||
-    keys.ticketProvider !== "atlassian" ||
+    (keys.ticketProvider !== "" && keys.ticketProvider !== "atlassian") ||
     keys.linearKey ||
     keys.posthogKey ||
     keys.linearTeamId

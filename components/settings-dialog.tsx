@@ -514,23 +514,33 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <div className="p-3 rounded-xl bg-muted/50 border border-border space-y-3">
             <p className="text-xs font-medium">Ticket Provider</p>
             <div className="flex gap-1.5">
-              {([
-                { key: "atlassian" as const, label: "Atlassian (Jira)" },
-                { key: "linear" as const, label: "Linear" },
-              ]).map((p) => (
-                <button key={p.key}
-                  onClick={() => setKey("ticketProvider", p.key)}
-                  className={cn(
-                    "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
-                    (keys.ticketProvider || "atlassian") === p.key
-                      ? "bg-primary/10 border-primary/30 text-primary"
-                      : "bg-card border-border text-muted-foreground hover:text-foreground"
-                  )}>
-                  <div className="text-[10px] font-medium">{p.label}</div>
-                </button>
-              ))}
+              {(() => {
+                const effectiveTicketProvider =
+                  keys.ticketProvider ||
+                  (status.linearKey?.configured && !status.atlassianKey?.configured
+                    ? "linear"
+                    : "atlassian");
+                return ([
+                  { key: "atlassian" as const, label: "Atlassian (Jira)" },
+                  { key: "linear" as const, label: "Linear" },
+                ]).map((p) => (
+                  <button key={p.key}
+                    onClick={() => setKey("ticketProvider", p.key)}
+                    className={cn(
+                      "flex-1 px-2 py-2 rounded-lg text-center transition-colors border",
+                      effectiveTicketProvider === p.key
+                        ? "bg-primary/10 border-primary/30 text-primary"
+                        : "bg-card border-border text-muted-foreground hover:text-foreground"
+                    )}>
+                    <div className="text-[10px] font-medium">{p.label}</div>
+                  </button>
+                ));
+              })()}
             </div>
-            {(keys.ticketProvider || "atlassian") === "linear" && (
+            {(keys.ticketProvider ||
+              (status.linearKey?.configured && !status.atlassianKey?.configured
+                ? "linear"
+                : "atlassian")) === "linear" && (
               <>
                 {renderKeyField("linearKey", "Linear API Key", "lin_api_...", "Personal API key from Linear Settings > API")}
                 {linearTeams.length > 0 && (
