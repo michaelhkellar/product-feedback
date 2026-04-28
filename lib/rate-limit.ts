@@ -5,7 +5,7 @@ export function getClientKey(req: NextRequest): string {
   if (forwarded) return forwarded.split(",")[0].trim();
   const realIp = req.headers.get("x-real-ip");
   if (realIp) return realIp.trim();
-  return req.ip || "unknown";
+  return "unknown";
 }
 
 export function evictExpired(map: Map<string, number>, ttlMs: number): void {
