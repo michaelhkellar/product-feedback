@@ -1,4 +1,4 @@
-import { FeedbackItem, Sentiment } from "./types";
+import { FeedbackItem, Sentiment, AttentionCall } from "./types";
 import { AIProviderType, getAIProvider, resolveAIKey } from "./ai-provider";
 import { CLASSIFICATION } from "./ai-presets";
 import { isNoiseTheme } from "./theme-utils";
@@ -256,4 +256,170 @@ export async function enrichSubset(
     1,
     totalTimeoutMs
   );
+}
+
+// ---------- Call signal extraction (Grain transcripts → keyMoments + actionItems) ----------
+
+interface CallSignalResult {
+  id: string;
+  actionItems: string[];
+  keyMoments: { timestamp: string; text: string; sentiment: Sentiment }[];
+}
+
+interface CachedCallSignals {
+  results: Map<string, CallSignalResult>;
+  timestamp: number;
+}
+
+const callSignalCache = new Map<string, CachedCallSignals>();
+const CALL_SIGNAL_SCHEMA_VERSION = "v1";
+const CALL_SIGNAL_BATCH_SIZE = 5;
+const CALL_SIGNAL_MAX_CONCURRENT = 3;
+const CALL_SIGNAL_TOTAL_TIMEOUT_MS = 60_000;
+const CALL_SIGNAL_MAX_TRANSCRIPT_CHARS = 6000;
+
+function callSignalCacheKey(ids: string[], modelId: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return createHash("sha256")
+    .update([...ids].sort().join(",") + "|" + modelId + "|" + today + "|" + CALL_SIGNAL_SCHEMA_VERSION)
+    .digest("hex")
+    .slice(0, 20);
+}
+
+function callSignalCacheSet(k: string, v: CachedCallSignals): void {
+  callSignalCache.delete(k);
+  callSignalCache.set(k, v);
+  if (callSignalCache.size > ENRICHMENT_CACHE_MAX) {
+    callSignalCache.delete(callSignalCache.keys().next().value as string);
+  }
+}
+
+async function extractSignalsBatch(
+  calls: AttentionCall[],
+  aiProvider: AIProviderType,
+  aiKey: string | undefined
+): Promise<CallSignalResult[]> {
+  const provider = getAIProvider(aiProvider);
+  const model = CHEAP_MODELS[aiProvider];
+
+  const system =
+    "You extract structured customer signals from sales/CS call transcripts. Respond only with valid JSON — no markdown, no explanation.";
+  const prompt = `For each call transcript, extract action items (commitments / next steps the team owes the customer) and key moments (quoted customer statements with sentiment). Return a JSON array of:
+{"id":"<id>","actionItems":["<short imperative phrase>"],"keyMoments":[{"timestamp":"MM:SS or empty string","text":"<quoted or paraphrased ≤280 chars>","sentiment":"positive|negative|neutral|mixed"}]}
+
+Rules:
+- actionItems: ≤6 entries, each starts with a verb ("Schedule…", "Investigate…", "Send…"). Skip generic items like "follow up".
+- keyMoments: ≤6 entries, only sentiment-bearing customer statements. Skip neutral filler. Prefer pain points, praise, deal-breakers, and quotes that name a feature.
+- timestamp: extract from transcript like "[12:34]" if present, otherwise empty string.
+- If a transcript has no clear actionItems or keyMoments, return them as empty arrays — do not hallucinate.
+
+Transcripts:
+${calls.map((c) => `ID: ${c.id}\nTitle: ${c.title}\nParticipants: ${c.participants.join(", ")}\nTranscript:\n${c.summary.slice(0, CALL_SIGNAL_MAX_TRANSCRIPT_CHARS)}`).join("\n\n---\n\n")}
+
+JSON array:`;
+
+  const response = await provider.generate(system, prompt, aiKey, model, CLASSIFICATION);
+  if (!response) return [];
+
+  try {
+    const cleaned = response.trim().replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
+    const parsed = JSON.parse(cleaned) as {
+      id: string;
+      actionItems?: unknown;
+      keyMoments?: unknown;
+    }[];
+    const validSentiment: Sentiment[] = ["positive", "negative", "neutral", "mixed"];
+    return parsed
+      .filter((r) => typeof r.id === "string")
+      .map((r) => {
+        const actions = Array.isArray(r.actionItems)
+          ? r.actionItems
+              .slice(0, 6)
+              .map((x) => String(x).trim().slice(0, 200))
+              .filter((s) => s.length > 0)
+          : [];
+        const moments = Array.isArray(r.keyMoments)
+          ? r.keyMoments
+              .slice(0, 6)
+              .map((m) => m as { timestamp?: unknown; text?: unknown; sentiment?: unknown })
+              .map((m) => ({
+                timestamp: typeof m.timestamp === "string" ? m.timestamp.slice(0, 12) : "",
+                text: typeof m.text === "string" ? m.text.trim().slice(0, 280) : "",
+                sentiment: (validSentiment.includes(m.sentiment as Sentiment) ? m.sentiment : "neutral") as Sentiment,
+              }))
+              .filter((m) => m.text.length > 0)
+          : [];
+        return { id: r.id, actionItems: actions, keyMoments: moments };
+      });
+  } catch {
+    return [];
+  }
+}
+
+function applyCallSignals(
+  calls: AttentionCall[],
+  results: Map<string, CallSignalResult>
+): AttentionCall[] {
+  return calls.map((c) => {
+    const r = results.get(c.id);
+    if (!r) return c;
+    return { ...c, actionItems: r.actionItems, keyMoments: r.keyMoments };
+  });
+}
+
+export async function extractCallSignals(
+  calls: AttentionCall[],
+  aiProvider: AIProviderType | undefined,
+  geminiKey: string | undefined,
+  anthropicKey: string | undefined,
+  openaiKey: string | undefined
+): Promise<AttentionCall[]> {
+  const provider: AIProviderType = aiProvider || "gemini";
+  const aiKey = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
+  if (!getAIProvider(provider).isConfigured(aiKey)) return calls;
+
+  // Skip calls that already have signals (Attention API path) or have no transcript content.
+  const needsExtraction = calls.filter(
+    (c) =>
+      c.summary.trim().length > 50 &&
+      (c.actionItems?.length ?? 0) === 0 &&
+      (c.keyMoments?.length ?? 0) === 0
+  );
+  if (needsExtraction.length === 0) return calls;
+
+  const key = callSignalCacheKey(needsExtraction.map((c) => c.id), `${provider}:${CHEAP_MODELS[provider]}`);
+  const cached = callSignalCache.get(key);
+  if (cached && Date.now() - cached.timestamp < ENRICHMENT_TTL_MS) {
+    return applyCallSignals(calls, cached.results);
+  }
+
+  const batches: AttentionCall[][] = [];
+  for (let i = 0; i < needsExtraction.length; i += CALL_SIGNAL_BATCH_SIZE) {
+    batches.push(needsExtraction.slice(i, i + CALL_SIGNAL_BATCH_SIZE));
+  }
+
+  console.log(`[call-signals] ${batches.length} batches × ${CALL_SIGNAL_BATCH_SIZE} calls (${needsExtraction.length} total)`);
+  const start = Date.now();
+  const deadline = start + CALL_SIGNAL_TOTAL_TIMEOUT_MS;
+
+  const results = new Map<string, CallSignalResult>();
+  for (let i = 0; i < batches.length; i += CALL_SIGNAL_MAX_CONCURRENT) {
+    if (Date.now() >= deadline) {
+      console.warn(`[call-signals] total deadline reached after ${i} batches — skipping remaining`);
+      break;
+    }
+    const chunk = batches.slice(i, i + CALL_SIGNAL_MAX_CONCURRENT);
+    const settled = await Promise.allSettled(chunk.map((b) => extractSignalsBatch(b, provider, aiKey)));
+    settled.forEach((res, j) => {
+      if (res.status === "fulfilled") {
+        for (const r of res.value) results.set(r.id, r);
+      } else {
+        console.warn(`[call-signals] batch ${i + j + 1} failed:`, res.reason);
+      }
+    });
+  }
+
+  console.log(`[call-signals] done in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  callSignalCacheSet(key, { results, timestamp: Date.now() });
+  return applyCallSignals(calls, results);
 }
