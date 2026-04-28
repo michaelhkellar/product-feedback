@@ -10,7 +10,8 @@ import { getLinearIssues, isLinearConfigured } from "./linear";
 import { getSliteNotes, isSliteConfigured } from "./slite";
 import { AnalyticsProviderType, CallProviderType, DocProviderType } from "./api-keys";
 import { AIProviderType } from "./ai-provider";
-import { enrichFeedback } from "./enrichment";
+import { enrichFeedback, extractCallSignals } from "./enrichment";
+import { callsToFeedback } from "./call-feedback";
 import { createHash } from "crypto";
 import {
   DEMO_FEEDBACK,
@@ -34,6 +35,25 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const inflightFetches = new Map<string, Promise<AgentData>>();
 const bgEnrichmentInflight = new Set<string>();
 
+/**
+ * Synchronously merge call-derived feedback into AgentData.
+ * Idempotent — dedupes by id, so safe to run before AND after AI extraction.
+ * No-op when calls have no actionItems / keyMoments populated.
+ */
+function mergeCallDerivedFeedback(data: AgentData): AgentData {
+  const derived = callsToFeedback(data.calls);
+  if (derived.length === 0) return data;
+  const seen = new Set(data.feedback.map((f) => f.id));
+  const merged = [...data.feedback];
+  for (const item of derived) {
+    if (!seen.has(item.id)) {
+      merged.push(item);
+      seen.add(item.id);
+    }
+  }
+  return { ...data, feedback: merged };
+}
+
 function kickoffBackgroundEnrichment(
   key: string,
   snapshot: CachedData,
@@ -45,14 +65,32 @@ function kickoffBackgroundEnrichment(
   if (snapshot.enriched) return;
   if (bgEnrichmentInflight.has(key)) return;
   bgEnrichmentInflight.add(key);
-  console.log(`[enrichment] starting background enrichment for ${snapshot.data.feedback.length} items`);
+  console.log(`[enrichment] starting background enrichment for ${snapshot.data.feedback.length} feedback items, ${snapshot.data.calls.length} calls`);
 
-  enrichFeedback(snapshot.data.feedback, aiProvider, geminiKey, anthropicKey, openaiKey)
-    .then((enrichedFeedback) => {
+  Promise.allSettled([
+    enrichFeedback(snapshot.data.feedback, aiProvider, geminiKey, anthropicKey, openaiKey),
+    extractCallSignals(snapshot.data.calls, aiProvider, geminiKey, anthropicKey, openaiKey),
+  ])
+    .then(([feedbackRes, callsRes]) => {
+      const enrichedFeedback = feedbackRes.status === "fulfilled" ? feedbackRes.value : snapshot.data.feedback;
+      const enrichedCalls = callsRes.status === "fulfilled" ? callsRes.value : snapshot.data.calls;
+      if (feedbackRes.status === "rejected") console.warn("[enrichment] feedback pass failed:", feedbackRes.reason);
+      if (callsRes.status === "rejected") console.warn("[enrichment] call signals pass failed:", callsRes.reason);
+
       const current = dataCache.get(key);
       if (current && current.timestamp === snapshot.timestamp) {
-        dataCache.set(key, { data: { ...current.data, feedback: enrichedFeedback }, timestamp: current.timestamp, enriched: true });
-        console.log(`[enrichment] background enrichment complete`);
+        const merged = mergeCallDerivedFeedback({
+          ...current.data,
+          feedback: enrichedFeedback,
+          calls: enrichedCalls,
+        });
+        dataCache.set(key, {
+          data: merged,
+          timestamp: current.timestamp,
+          enriched: true,
+        });
+        const fromCalls = merged.feedback.length - enrichedFeedback.length;
+        console.log(`[enrichment] background enrichment complete (${merged.feedback.length} feedback total, +${fromCalls} from calls)`);
       }
     })
     .catch((err) => console.warn(`[enrichment] background enrichment failed:`, err))
@@ -293,7 +331,7 @@ export async function getData(
   const hasSlite = isSliteConfigured(sliteKey);
   const hasAnyLiveKey = hasPb || hasAtt || hasGrain || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear || hasSlite;
 
-  if (!hasAnyLiveKey && useDemoData) return getDemoData();
+  if (!hasAnyLiveKey && useDemoData) return mergeCallDerivedFeedback(getDemoData());
   if (!hasAnyLiveKey && !useDemoData) {
     return { feedback: [], features: [], calls: [], insights: [], jiraIssues: [], confluencePages: [], linearIssues: [], analyticsOverview: null };
   }
@@ -311,7 +349,10 @@ export async function getData(
 
   const fetchPromise = (async (): Promise<AgentData> => {
     try {
-      const raw = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider, sliteKey, docProvider);
+      const fetched = await fetchLiveData(pbKey, attKey, pendoKey, atlDomain, atlEmail, atlToken, useDemoData, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, grainKey, callProvider, sliteKey, docProvider);
+      // Merge any call-derived feedback synchronously (handles the demo case where calls already
+      // have signals; for live data this is a no-op until AI extraction runs in the background).
+      const raw = mergeCallDerivedFeedback(fetched);
 
       const total = raw.feedback.length + raw.features.length + raw.calls.length + raw.insights.length + raw.jiraIssues.length + raw.confluencePages.length + raw.linearIssues.length;
       console.log(`Data loaded: ${total} items (${raw.feedback.length} feedback, ${raw.features.length} features, ${raw.calls.length} calls, ${raw.jiraIssues.length} jira, ${raw.linearIssues.length} linear, ${raw.confluencePages.length} confluence, ${raw.insights.length} insights${raw.analyticsOverview ? ", analytics overview" : ""})`);
