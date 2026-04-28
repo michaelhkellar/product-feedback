@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getData } from "@/lib/data-fetcher";
 import { FeedbackItem, AttentionCall, JiraIssue, LinearIssue } from "@/lib/types";
+import { AIProviderType } from "@/lib/ai-provider";
 import { getRelevantPendoContext } from "@/lib/pendo";
 import { getRelevantAmplitudeContext } from "@/lib/amplitude";
 import { getRelevantPostHogContext } from "@/lib/posthog";
@@ -43,6 +44,14 @@ export async function POST(req: NextRequest) {
     const amplitudeKey = req.headers.get("x-amplitude-key") || undefined;
     const posthogKey = req.headers.get("x-posthog-key") || undefined;
     const posthogHost = req.headers.get("x-posthog-host") || undefined;
+    const aiProvider = (req.headers.get("x-ai-provider") as AIProviderType) || undefined;
+    const geminiKey = req.headers.get("x-gemini-key") || undefined;
+    const anthropicKey = req.headers.get("x-anthropic-key") || undefined;
+    const openaiKey = req.headers.get("x-openai-key") || undefined;
+    const grainKey = req.headers.get("x-grain-key") || undefined;
+    const callProvider = (req.headers.get("x-call-provider") as "attention" | "grain") || undefined;
+    const sliteKey = req.headers.get("x-slite-key") || undefined;
+    const docProvider = (req.headers.get("x-doc-provider") as "atlassian" | "slite") || undefined;
 
     // Global filter headers from the client
     const timeStart = req.headers.get("x-time-start") || undefined;
@@ -54,8 +63,10 @@ export async function POST(req: NextRequest) {
       pbKey, attKey, pendoKey, useDemoData,
       atlDomain, atlEmail, atlToken,
       undefined, undefined,
-      undefined, undefined, undefined, undefined, undefined,
-      linearKey, linearTeamId
+      analyticsProvider, amplitudeKey, posthogKey, undefined, posthogHost,
+      linearKey, linearTeamId,
+      aiProvider, geminiKey, anthropicKey, openaiKey,
+      grainKey, callProvider, sliteKey, docProvider
     );
 
     // Apply time filter to all collections
