@@ -1,5 +1,5 @@
 import { CreateTicketResult } from "./ticket-provider";
-import { LinearIssue } from "./types";
+import { LinearIssue, FeedbackItem, ProductboardFeature } from "./types";
 
 const API_URL = "https://api.linear.app/graphql";
 const MAX_ISSUES = 1000;
@@ -209,4 +209,61 @@ export async function validateLinearKey(overrideKey?: string): Promise<boolean> 
   } catch {
     return false;
   }
+}
+
+const FEATURE_LABELS = ["feature", "epic", "roadmap", "enhancement", "improvement"];
+const FEEDBACK_LABELS = ["customer-request", "feedback", "bug", "support", "user-request", "cx"];
+
+export function isFeatureIssue(i: LinearIssue): boolean {
+  const labels = i.labels.map((l) => l.toLowerCase());
+  return labels.some((l) => FEATURE_LABELS.some((f) => l.includes(f)));
+}
+
+export function isFeedbackIssue(i: LinearIssue): boolean {
+  const labels = i.labels.map((l) => l.toLowerCase());
+  return labels.some((l) => FEEDBACK_LABELS.some((f) => l.includes(f)));
+}
+
+function mapLinearPriorityToFeedback(p: string): FeedbackItem["priority"] {
+  switch (p) {
+    case "Urgent": return "critical";
+    case "High": return "high";
+    case "Medium": return "medium";
+    default: return "low";
+  }
+}
+
+function mapLinearStatusToFeature(s: string): ProductboardFeature["status"] {
+  const v = s.toLowerCase();
+  if (v.includes("done") || v.includes("complete") || v.includes("closed")) return "done";
+  if (v.includes("progress") || v.includes("started")) return "in_progress";
+  if (v.includes("backlog") || v.includes("todo") || v.includes("triage")) return "new";
+  return "planned";
+}
+
+export function linearToFeedback(i: LinearIssue): FeedbackItem {
+  return {
+    id: `linear-${i.id}`,
+    source: "linear",
+    title: i.title,
+    content: i.description ?? "",
+    customer: i.assignee || "Unknown",
+    sentiment: "neutral",
+    themes: i.labels,
+    date: i.created,
+    priority: mapLinearPriorityToFeedback(i.priority),
+    metadata: { linearId: i.identifier, status: i.status, url: i.url },
+  };
+}
+
+export function linearToFeature(i: LinearIssue): ProductboardFeature {
+  return {
+    id: `linear-${i.id}`,
+    name: i.title,
+    description: i.description ?? "",
+    status: mapLinearStatusToFeature(i.status),
+    votes: 0,
+    customerRequests: 0,
+    themes: i.labels,
+  };
 }

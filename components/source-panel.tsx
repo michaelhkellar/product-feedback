@@ -21,6 +21,8 @@ import {
   DataSourceStatus,
 } from "@/lib/types";
 import type { AnalyticsOverview } from "@/lib/types";
+import { isFeatureIssue, isFeedbackIssue, linearToFeature, linearToFeedback } from "@/lib/linear";
+import type { LinearIssue } from "@/lib/types";
 import {
   ClipboardList,
   Phone,
@@ -180,7 +182,13 @@ export function SourcePanel({
 
       const docProvider = keys.docProvider || "atlassian";
       const callProvider = keys.callProvider || "attention";
-      const ticketProvider = keys.ticketProvider || "atlassian";
+      // Honor explicit user choice; otherwise derive from server-side config.
+      // Linear wins when only Linear is configured; Atlassian otherwise.
+      const ticketProvider: "linear" | "atlassian" =
+        (keys.ticketProvider as "linear" | "atlassian") ||
+        (status.linearKey?.configured && !status.atlassianKey?.configured
+          ? "linear"
+          : "atlassian");
       const fetches = [
         fetch("/api/sources/productboard", { headers }).then((r) => r.json()).catch(() => ({ connected: false, features: [], featuresIsDemo: false, notes: [], notesIsDemo: false })),
         callProvider === "grain"
@@ -201,8 +209,16 @@ export function SourcePanel({
       // Discard if a newer fetch has already started
       if (gen !== fetchGenRef.current) return;
 
-      const newFeatures: ProductboardFeature[] = pbRes.features || [];
-      const newFeedback: FeedbackItem[] = pbRes.notes || [];
+      let newFeatures: ProductboardFeature[] = pbRes.features || [];
+      let newFeedback: FeedbackItem[] = pbRes.notes || [];
+
+      // Fallback: if Productboard isn't connected but Linear is, repurpose Linear issues.
+      if (!pbRes.connected && ticketProvider === "linear" && atlRes.connected) {
+        const linearIssues: LinearIssue[] = atlRes.issues || [];
+        newFeatures = linearIssues.filter(isFeatureIssue).map(linearToFeature);
+        newFeedback = linearIssues.filter(isFeedbackIssue).map(linearToFeedback);
+      }
+
       const newCalls: AttentionCall[] = attRes.calls || [];
       const callConnected = attRes.connected === true;
       // Linear returns `issues`; Atlassian returns `jiraIssues`
@@ -345,6 +361,22 @@ export function SourcePanel({
     if (!loaded) return;
     loadData();
   }, [loadData, loaded]);
+
+  // Derive effective ticket provider early so we can use it in the reset useEffect below
+  const effectiveTicketProviderEarly: "linear" | "atlassian" =
+    (keys.ticketProvider as "linear" | "atlassian") ||
+    (status.linearKey?.configured && !status.atlassianKey?.configured ? "linear" : "atlassian");
+
+  const hasFeedbackSourceEarly =
+    status.productboardKey?.configured ||
+    (effectiveTicketProviderEarly === "linear" && status.linearKey?.configured) ||
+    useDemoData;
+  const hasFeaturesSourceEarly = hasFeedbackSourceEarly;
+
+  useEffect(() => {
+    if (activeTab === "feedback" && !hasFeedbackSourceEarly) setActiveTab("sources");
+    if (activeTab === "features" && !hasFeaturesSourceEarly) setActiveTab("sources");
+  }, [activeTab, hasFeedbackSourceEarly, hasFeaturesSourceEarly, setActiveTab]);
 
   const sq = searchQuery.toLowerCase().trim();
 
@@ -500,6 +532,11 @@ export function SourcePanel({
   };
 
   const docProviderLabel = (keys.docProvider || "atlassian") === "slite" ? "Slite" : "Confluence";
+
+  // Re-use the early-computed values for render (avoids duplicate logic)
+  const hasFeedbackSource = hasFeedbackSourceEarly;
+  const hasFeaturesSource = hasFeaturesSourceEarly;
+
   const showSearch = activeTab !== "sources";
 
   return (
@@ -525,13 +562,13 @@ export function SourcePanel({
           {(
             [
               { key: "sources" as const, label: "Sources" },
-              { key: "feedback" as const, label: `Feedback (${feedback.length})` },
-              { key: "features" as const, label: `Features (${features.length})` },
+              ...(hasFeedbackSource ? [{ key: "feedback" as const, label: `Feedback (${feedback.length})` }] : []),
+              ...(hasFeaturesSource ? [{ key: "features" as const, label: `Features (${features.length})` }] : []),
               ...(calls.length > 0 ? [{ key: "calls" as const, label: `Calls (${calls.length})` }] : []),
               ...(pendoFindings.length > 0 || status.pendoKey?.configured ? [{ key: "pendo" as const, label: `Pendo (${pendoFindings.length})` }] : []),
               ...(amplitudeFindings.length > 0 || status.amplitudeKey?.configured ? [{ key: "amplitude" as const, label: `Amplitude (${amplitudeFindings.length})` }] : []),
               ...(posthogFindings.length > 0 || status.posthogKey?.configured ? [{ key: "posthog" as const, label: `PostHog (${posthogFindings.length})` }] : []),
-              ...(jiraIssues.length > 0 || status.atlassianKey?.configured ? [{ key: "jira" as const, label: `Jira (${jiraIssues.length})` }] : []),
+              ...(jiraIssues.length > 0 || status.atlassianKey?.configured || status.linearKey?.configured ? [{ key: "jira" as const, label: `${effectiveTicketProviderEarly === "linear" ? "Linear" : "Jira"} (${jiraIssues.length})` }] : []),
               ...((confluencePages.length > 0 || status.atlassianKey?.configured || status.sliteKey?.configured) ? [{ key: "confluence" as const, label: `${docProviderLabel} (${confluencePages.length})` }] : []),
             ]
           ).map((tab) => (
@@ -694,7 +731,7 @@ export function SourcePanel({
           </div>
         )}
 
-        {!loading && activeTab === "feedback" && (
+        {!loading && hasFeedbackSource && activeTab === "feedback" && (
           <div>
             {sortedFeedback.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
@@ -727,7 +764,7 @@ export function SourcePanel({
           </div>
         )}
 
-        {!loading && activeTab === "features" && (
+        {!loading && hasFeaturesSource && activeTab === "features" && (
           <div>
             {sortedFeatures.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
@@ -890,8 +927,8 @@ export function SourcePanel({
             {sortedJira.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground px-4">
                 <AlertTriangle className="w-5 h-5 mx-auto mb-2 opacity-40" />
-                <p className="text-xs mb-1">{sq ? "No matching issues" : "No Jira issues loaded"}</p>
-                {!sq && status.atlassianKey?.configured && (
+                <p className="text-xs mb-1">{sq ? "No matching issues" : `No ${effectiveTicketProviderEarly === "linear" ? "Linear" : "Jira"} issues loaded`}</p>
+                {!sq && status.atlassianKey?.configured && effectiveTicketProviderEarly !== "linear" && (
                   <p className="text-[10px]">Check your Jira project filter in Settings. Try leaving it blank to fetch all projects, or use exact project keys (e.g. PROD, ENG).</p>
                 )}
               </div>
