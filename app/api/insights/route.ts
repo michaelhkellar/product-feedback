@@ -35,15 +35,21 @@ export async function GET(req: NextRequest) {
     const analyticsProvider = (req.headers.get("x-analytics-provider") as "pendo" | "amplitude" | "posthog") || undefined;
     const linearKey = req.headers.get("x-linear-key") || undefined;
     const linearTeamId = req.headers.get("x-linear-team-id") || undefined;
+    const grainKey = req.headers.get("x-grain-key") || undefined;
+    const callProvider = (req.headers.get("x-call-provider") as "attention" | "grain") || undefined;
+    const sliteKey = req.headers.get("x-slite-key") || undefined;
+    const docProvider = (req.headers.get("x-doc-provider") as "atlassian" | "slite") || undefined;
 
     const hasPb = !!(pbKey || process.env.PRODUCTBOARD_API_TOKEN);
     const hasAtt = !!(attKey || process.env.ATTENTION_API_KEY);
+    const hasGrain = !!(grainKey || process.env.GRAIN_API_KEY);
     const hasPendo = !!(pendoKey || process.env.PENDO_INTEGRATION_KEY);
     const hasAmplitude = !!(amplitudeKey || process.env.AMPLITUDE_API_KEY);
     const hasPostHog = !!(posthogKey || process.env.POSTHOG_API_KEY);
     const hasAtl = !!(atlDomain && atlEmail && atlToken) || !!(process.env.ATLASSIAN_DOMAIN && process.env.ATLASSIAN_EMAIL && process.env.ATLASSIAN_API_TOKEN);
     const hasLinear = !!(linearKey || process.env.LINEAR_API_KEY);
-    const hasAnyLiveKey = hasPb || hasAtt || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear;
+    const hasSlite = !!(sliteKey || process.env.SLITE_API_KEY);
+    const hasAnyLiveKey = hasPb || hasAtt || hasGrain || hasPendo || hasAmplitude || hasPostHog || hasAtl || hasLinear || hasSlite;
 
     if (!hasAnyLiveKey && !useDemoData) {
       return NextResponse.json({ insights: [], isDemo: false });
@@ -65,7 +71,7 @@ export async function GET(req: NextRequest) {
     }
 
     const t0 = Date.now();
-    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, aiProvider, geminiKey, anthropicKey, openaiKey);
+    const data = await getData(pbKey, attKey, pendoKey, useDemoData, atlDomain, atlEmail, atlToken, atlJiraFilter, atlConfluenceFilter, analyticsProvider, amplitudeKey, posthogKey, analyticsDays, posthogHost, linearKey, linearTeamId, aiProvider, geminiKey, anthropicKey, openaiKey, grainKey, callProvider, sliteKey, docProvider);
     console.log(`[insights] getData: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     const t1 = Date.now();

@@ -273,6 +273,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (keyName === "grainKey") {
+      const key = req.headers.get("x-grain-key") || process.env.GRAIN_API_KEY;
+      if (!key) return NextResponse.json({ valid: false, error: "No key provided" });
+      try {
+        const res = await fetch("https://api.grain.com/_/public-api/v2/recordings", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Public-Api-Version": "2025-10-31",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        });
+        if (res.ok) return NextResponse.json({ valid: true });
+        return NextResponse.json({ valid: false, error: `API returned ${res.status}` });
+      } catch (err) {
+        return NextResponse.json({ valid: false, error: sanitizeError(err) });
+      }
+    }
+
     return NextResponse.json({ valid: false, error: "Unknown key name" });
   } catch (error) {
     console.error("Validation error:", error);
