@@ -128,9 +128,11 @@ An AI-powered feedback intelligence platform that aggregates customer feedback f
 - **Smarter Tables**: A Source / What / When table is automatically included whenever an answer enumerates 3+ concrete items — even mid-conversation
 - **Preview & Edit**: All generated PRDs and tickets include a preview step with inline editing before creation
 - **Data Transparency**: Active AI provider and model displayed in the chat interface
-- **v0-Ready**: Built with Next.js 14 + Tailwind + shadcn-style components, designed to run in Vercel's v0
+- **v0-Ready**: Built with Next.js 15 + React 19 + Tailwind + shadcn-style components, designed to run in Vercel's v0
 
 ## Quick Start
+
+Requires Node.js 18.18 or later.
 
 ```bash
 npm install
@@ -191,7 +193,7 @@ All keys can also be configured at runtime through the in-app Settings dialog wi
 
 ## Deploying to v0 / Vercel
 
-This project is structured as a standard Next.js 14 app and can be deployed directly:
+This project is structured as a standard Next.js 15 app and can be deployed directly:
 
 1. Push to GitHub
 2. Import into Vercel (or paste components into v0)
