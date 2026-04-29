@@ -44,6 +44,7 @@ function deriveCustomer(participants: string[]): DerivedCustomer {
   return { customer: cleaned[0] || "Unknown" };
 }
 
+/** Regex-based fallback for the no-AI-key path. Returns a display-friendly capitalized label. */
 function inferCallType(title: string): string | undefined {
   const t = title.toLowerCase();
   if (/\bqbr\b/.test(t)) return "QBR";
@@ -54,6 +55,12 @@ function inferCallType(title: string): string | undefined {
   if (/\bonboard/.test(t)) return "Onboarding";
   if (/\bescalat/.test(t)) return "Escalation";
   return undefined;
+}
+
+/** AI-extracted callType is canonical kebab-case (e.g. "qbr"); falls back to title regex.
+ * Prefers the canonical form when available so downstream filters can match consistently. */
+function effectiveCallType(call: { callType?: string; title: string }): string | undefined {
+  return call.callType || inferCallType(call.title);
 }
 
 function durationMin(duration: string): string | undefined {
@@ -91,7 +98,7 @@ export function callsToFeedback(calls: AttentionCall[]): FeedbackItem[] {
   const out: FeedbackItem[] = [];
   for (const call of calls) {
     const { customer, company } = deriveCustomer(call.participants);
-    const callType = inferCallType(call.title);
+    const callType = effectiveCallType(call);
     const dur = durationMin(call.duration);
     const baseMetadata: Record<string, string> = { callId: call.id };
     if (callType) baseMetadata.callType = callType;

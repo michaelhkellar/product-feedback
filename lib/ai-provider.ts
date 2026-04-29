@@ -13,6 +13,8 @@ export interface GenerateOpts {
   maxOutputTokens?: number;
   /** AbortSignal to cancel the underlying request. */
   signal?: AbortSignal;
+  /** Per-call timeout in ms; overrides the provider default. Ignored when signal is provided. */
+  timeoutMs?: number;
 }
 
 export interface ToolDefinition {
@@ -182,7 +184,7 @@ const anthropicProvider: AIProvider = {
     const client = new Anthropic({ apiKey });
 
     try {
-      const signal = opts?.signal ?? AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+      const timeoutMs = opts?.timeoutMs ?? PROVIDER_TIMEOUT_MS;
       const message = await withRetry(
         () => client.messages.create(
           {
@@ -192,7 +194,7 @@ const anthropicProvider: AIProvider = {
             system: systemPrompt,
             messages: [{ role: "user", content: userPrompt }],
           },
-          { signal }
+          { signal: opts?.signal ?? AbortSignal.timeout(timeoutMs) }
         ),
         "anthropic"
       );

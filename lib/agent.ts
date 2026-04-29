@@ -450,6 +450,11 @@ AUTHORING RULES:
 - Counter-signals are valuable, but only when substantive. If a counter-signal is isolated noise, omit it. If it materially challenges the main finding, surface it in a short paragraph or "## Counter-signals" section.
 - Explaining why findings matter is encouraged. Explaining why you chose what to show is not.
 
+CALL QUOTE RULES:
+- When you quote from a call transcript, prefix the quote with the timestamp from the transcript when one is present (e.g. \`[14:23] "we need SSO reliability"\`).
+- Render the call as a markdown link when the chunk's [Source: URL] anchor is visible: \`[Acme QBR · 14:23](URL)\`. Do not invent URLs — only use the one in the chunk's anchor.
+- Prefer substantive customer statements (pain points, deal-breakers, commitments) over opening pleasantries.
+
 ${MARKDOWN_FORMATTING_RULES}`;
 
 const BROAD_KEYWORDS = ["summary", "overview", "brief", "executive", "all", "comprehensive", "status", "what's happening", "state of", "pulse", "report", "trends", "emerging", "what's new", "what changed"];
@@ -1950,7 +1955,10 @@ export async function chat(
     } else if (doc.type === "call") {
       const c = scopedData.calls.find((c) => c.id === doc.id);
       title = c?.title || title;
-      if (c) when = shortDate(c as unknown as Record<string, unknown>);
+      if (c) {
+        when = shortDate(c as unknown as Record<string, unknown>);
+        if (c.url) url = c.url;
+      }
     } else if (doc.type === "insight") {
       const ins = scopedData.insights.find((i) => i.id === doc.id);
       title = ins?.title || title;
@@ -2633,7 +2641,12 @@ Authoring constraints:
 - Quote customer language directly when it sharpens a point.
 - Do not widen the time window or scope beyond what's filtered without explicitly noting you're doing so.
 - Sections with no signal get one sentence — don't pad them.
-- Format discipline: section headings are markdown ## on their own line. Do not wrap the opening sentence of a section in bold.`;
+- Format discipline: section headings are markdown ## on their own line. Do not wrap the opening sentence of a section in bold.
+
+CALL QUOTE RULES:
+- When you quote from a call transcript, prefix the quote with the timestamp from the transcript when one is present (e.g. \`[14:23] "we need SSO reliability"\`).
+- Render the call as a markdown link when the chunk's [Source: URL] anchor is visible: \`[Acme QBR · 14:23](URL)\`. Do not invent URLs — only use the one in the chunk's anchor.
+- Prefer substantive customer statements (pain points, deal-breakers, commitments) over opening pleasantries.`;
 
 const LEARN_FORMAT = `Output the four sections below in this exact order. Each section heading is its own line, surrounded by blank lines.
 

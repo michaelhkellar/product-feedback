@@ -23,6 +23,7 @@ export const INSIGHTS: GenerateOpts = {
   json: true,
   temperature: 0.2,
   maxOutputTokens: 4096,
+  timeoutMs: 90_000,
 };
 
 /** Agent chat: conversational prose, no JSON mode. */

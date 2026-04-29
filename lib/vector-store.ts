@@ -161,11 +161,22 @@ export class InMemoryVectorStore {
   addCalls(calls: AttentionCall[]) {
     for (const c of calls) {
       const moments = c.keyMoments.map((m) => m.text).join(" ");
-      const fullText = `${c.title} ${c.summary} ${moments} ${c.actionItems.join(" ")} ${c.themes.join(" ")}`;
+      // Prefer the full transcript when available so quotes from the middle and end of calls
+      // are searchable, not just opening pleasantries.
+      const body = c.transcript || c.summary;
+      // Inline source anchor preserved through chunking so excerpts retain a back-pointer
+      // for citation linkbacks. The agent system prompt instructs the model to use these.
+      const sourcePrefix = c.url ? `[Source: ${c.url}]\n` : "";
+      const fullText = `${c.title}\n${sourcePrefix}${body}\n${moments}\n${c.actionItems.join(" ")}\n${c.themes.join(" ")}\n${c.callType || ""}`;
       this.addChunked(c, fullText, {
         type: "call",
         themes: c.themes,
-        metadata: { date: c.date, participants: c.participants.join(", ") },
+        metadata: {
+          date: c.date,
+          participants: c.participants.join(", "),
+          url: c.url || "",
+          callType: c.callType || "",
+        },
       });
     }
   }
