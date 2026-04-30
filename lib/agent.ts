@@ -8,7 +8,7 @@ import { getRelevantAmplitudeContext, getFullAmplitudeAnalytics } from "./amplit
 import { getRelevantPostHogContext, getFullPostHogAnalytics } from "./posthog";
 import {
   DEMO_FEEDBACK, DEMO_PRODUCTBOARD_FEATURES, DEMO_ATTENTION_CALLS, DEMO_INSIGHTS,
-  DEMO_JIRA_ISSUES, DEMO_CONFLUENCE_PAGES, DEMO_PENDO_OVERVIEW,
+  DEMO_JIRA_ISSUES, DEMO_CONFLUENCE_PAGES, DEMO_PENDO_OVERVIEW, DEMO_LINEAR_ISSUES,
 } from "./demo-data";
 import {
   FeedbackItem, ProductboardFeature, AttentionCall, Insight, JiraIssue, ConfluencePage,
@@ -223,7 +223,7 @@ export function getDemoData(): AgentData {
     feedback: DEMO_FEEDBACK, features: DEMO_PRODUCTBOARD_FEATURES,
     calls: DEMO_ATTENTION_CALLS, insights: DEMO_INSIGHTS,
     jiraIssues: DEMO_JIRA_ISSUES, confluencePages: DEMO_CONFLUENCE_PAGES,
-    linearIssues: [],
+    linearIssues: DEMO_LINEAR_ISSUES,
     analyticsOverview: DEMO_PENDO_OVERVIEW,
   };
 }

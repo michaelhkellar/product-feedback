@@ -793,6 +793,12 @@ export const DEMO_JIRA_ISSUES: JiraIssue[] = [
   },
 ];
 
+// Linear demo issues live in lib/linear.ts (existing DEMO_LINEAR_ISSUES with 9
+// security-platform-themed entries). Re-export here so getDemoData() and
+// DEMO_DATA_SOURCES can both reference the same source of truth.
+export { DEMO_LINEAR_ISSUES } from "./linear";
+import { DEMO_LINEAR_ISSUES } from "./linear";
+
 export const DEMO_CONFLUENCE_PAGES: ConfluencePage[] = [
   {
     id: "conf-001",
@@ -1019,5 +1025,31 @@ export const DEMO_DATA_SOURCES: DataSourceStatus[] = [
     lastSync: "1 min ago",
     itemCount: DEMO_JIRA_ISSUES.length,
     icon: "ticket",
+  },
+  {
+    name: "Linear",
+    source: "linear",
+    connected: true,
+    lastSync: "2 min ago",
+    itemCount: DEMO_LINEAR_ISSUES.length,
+    icon: "git-branch",
+  },
+  {
+    name: "Confluence",
+    source: "confluence",
+    connected: true,
+    lastSync: "10 min ago",
+    itemCount: DEMO_CONFLUENCE_PAGES.length,
+    icon: "book-open",
+  },
+  {
+    name: "Pendo",
+    source: "pendo",
+    connected: true,
+    lastSync: "5 min ago",
+    itemCount:
+      (DEMO_PENDO_OVERVIEW.totalTrackedPages || 0) +
+      (DEMO_PENDO_OVERVIEW.totalTrackedFeatures || 0),
+    icon: "bar-chart-3",
   },
 ];
