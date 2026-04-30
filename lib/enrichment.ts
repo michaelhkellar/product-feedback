@@ -483,22 +483,50 @@ export async function extractCallSignals(
 ): Promise<AttentionCall[]> {
   const provider: AIProviderType = aiProvider || "gemini";
   const aiKey = resolveAIKey(provider, geminiKey, anthropicKey, openaiKey);
-  if (!getAIProvider(provider).isConfigured(aiKey)) return calls;
+  if (!getAIProvider(provider).isConfigured(aiKey)) {
+    if (calls.length > 0) {
+      console.log(`[call-signals] skipped: no ${provider} key configured (${calls.length} calls would otherwise be processed)`);
+    }
+    return calls;
+  }
 
   // Skip calls that:
   //  - already have signals populated (Attention path or prior Grain run)
   //  - have too little content to extract from reliably (<500 chars)
   //  - are older than 90 days (rare new value, conserve tokens)
   const ageCutoff = Date.now() - CALL_AGE_LIMIT_MS;
+  const reasons = { alreadyHasSignals: 0, tooShort: 0, tooOld: 0 };
   const needsExtraction = calls.filter((c) => {
-    if ((c.actionItems?.length ?? 0) > 0 || (c.keyMoments?.length ?? 0) > 0) return false;
+    if ((c.actionItems?.length ?? 0) > 0 || (c.keyMoments?.length ?? 0) > 0) {
+      reasons.alreadyHasSignals++;
+      return false;
+    }
     const text = (c.transcript || c.summary).trim();
-    if (text.length < CALL_MIN_CONTENT_CHARS) return false;
+    if (text.length < CALL_MIN_CONTENT_CHARS) {
+      reasons.tooShort++;
+      return false;
+    }
     const callTime = new Date(c.date).getTime();
-    if (Number.isFinite(callTime) && callTime < ageCutoff) return false;
+    if (Number.isFinite(callTime) && callTime < ageCutoff) {
+      reasons.tooOld++;
+      return false;
+    }
     return true;
   });
-  if (needsExtraction.length === 0) return calls;
+  const totalSkipped = reasons.alreadyHasSignals + reasons.tooShort + reasons.tooOld;
+  if (totalSkipped > 0) {
+    const parts: string[] = [];
+    if (reasons.alreadyHasSignals > 0) parts.push(`${reasons.alreadyHasSignals} already have signals`);
+    if (reasons.tooShort > 0) parts.push(`${reasons.tooShort} too short (<${CALL_MIN_CONTENT_CHARS} chars)`);
+    if (reasons.tooOld > 0) parts.push(`${reasons.tooOld} older than 90d`);
+    console.log(`[call-signals] skipping ${totalSkipped}/${calls.length} calls: ${parts.join(", ")}`);
+  }
+  if (needsExtraction.length === 0) {
+    if (calls.length > 0) {
+      console.log(`[call-signals] no eligible calls to extract from (all ${calls.length} skipped)`);
+    }
+    return calls;
+  }
 
   // Per-call cache lookup: previously a single batch-level key invalidated the whole set when
   // any call ID changed. With per-call keys, only newly-arrived calls hit the AI on subsequent
@@ -562,7 +590,29 @@ export async function extractCallSignals(
     });
   }
 
-  console.log(`[call-signals] done in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  // Aggregate result counts to make debugging "0 action items" easy.
+  let actionTotal = 0;
+  let momentTotal = 0;
+  let themeTotal = 0;
+  let zeroActionCalls = 0;
+  for (const r of aiResults.values()) {
+    actionTotal += r.actionItems.length;
+    momentTotal += r.keyMoments.length;
+    themeTotal += r.themes.length;
+    if (r.actionItems.length === 0) zeroActionCalls++;
+  }
+  console.log(
+    `[call-signals] done in ${((Date.now() - start) / 1000).toFixed(1)}s — ` +
+      `${aiResults.size} calls extracted: ${actionTotal} action items, ${momentTotal} key moments, ${themeTotal} themes ` +
+      `(${zeroActionCalls} call(s) returned 0 action items)`
+  );
+  if (aiResults.size > 0 && actionTotal === 0) {
+    console.warn(
+      `[call-signals] WARNING: AI returned 0 action items across all ${aiResults.size} calls. ` +
+        `Possible causes: (1) calls genuinely have no commitments (internal syncs, status checks); ` +
+        `(2) transcripts are pre-summary marketing/intro content; (3) AI provider issue (check above for batch failures).`
+    );
+  }
 
   // Combine cache hits + freshly-extracted results before applying.
   const all = new Map<string, CallSignalResult>(cachedResults);
