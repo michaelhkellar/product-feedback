@@ -11,10 +11,24 @@ import {
 
 // Synthetic demo data only. These names, companies, timelines, and business details
 // are intentionally fictionalized for safe public sharing and product demos.
+
+// ---- Demo date helpers ---------------------------------------------------
+//
+// Demo timestamps are computed relative to "today" so demo content always feels
+// fresh — a "last 2 weeks" query at any point in time finds the recent items.
+// Module-load is fine: server restarts pick up new dates; in-memory caches
+// expire at ttl boundaries.
+const DEMO_NOW = new Date();
+function daysAgo(n: number): string {
+  const d = new Date(DEMO_NOW);
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
 export const DEMO_FEEDBACK: FeedbackItem[] = [
   {
     id: "fb-001",
-    source: "zendesk",
+    source: "productboard",
     title: "Dashboard loading times are unacceptable",
     content:
       "This synthetic demo account is seeing dashboard load times of 15-20 seconds after a recent update. Multiple users reported the same slowdown, and it is disrupting a quarterly review workflow in the sample environment.",
@@ -22,13 +36,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "ExampleCorp",
     sentiment: "negative",
     themes: ["performance", "dashboard", "enterprise"],
-    date: "2026-02-28",
+    date: daysAgo(7),
     priority: "critical",
     metadata: { ticketId: "ZD-4521", plan: "Enterprise", userEmail: "avery@examplecorp.demo" },
   },
   {
     id: "fb-002",
-    source: "intercom",
+    source: "productboard",
     title: "Love the new reporting feature",
     content:
       "The new custom reporting builder is fantastic for this demo workspace. We already created a dozen reports that replaced manual spreadsheet work. The drag-and-drop interface feels intuitive, and scheduled email delivery would make it even better.",
@@ -36,13 +50,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Northwind Demo",
     sentiment: "positive",
     themes: ["reporting", "ux", "feature-request"],
-    date: "2026-02-27",
+    date: daysAgo(8),
     priority: "low",
     metadata: { plan: "Pro", userEmail: "jordan@northwind.demo" },
   },
   {
     id: "fb-003",
-    source: "slack",
+    source: "productboard",
     title: "SSO integration keeps breaking",
     content:
       "In this synthetic scenario, the SSO integration dropped for the third time this month. Users are getting locked out and the reconnect process takes hours for the IT team. This is framed as a security and productivity concern in the demo dataset.",
@@ -50,7 +64,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "SampleBank",
     sentiment: "negative",
     themes: ["sso", "authentication", "reliability", "churn-risk"],
-    date: "2026-02-26",
+    date: daysAgo(9),
     priority: "critical",
     metadata: { plan: "Enterprise", accountTier: "Strategic", userEmail: "casey@samplebank.demo" },
   },
@@ -64,7 +78,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoSync Labs",
     sentiment: "mixed",
     themes: ["api", "integration", "developer-experience"],
-    date: "2026-02-25",
+    date: daysAgo(10),
     priority: "high",
     metadata: { plan: "Enterprise", integration: "REST API", sourceUrl: "https://demo.productboard.com/notes/fb-004", userEmail: "morgan@demosync.demo" },
   },
@@ -78,13 +92,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoScale Co",
     sentiment: "negative",
     themes: ["onboarding", "ux", "training", "growth"],
-    date: "2026-02-24",
+    date: daysAgo(11),
     priority: "high",
     metadata: { callType: "QBR", accountSize: "200 seats", userEmail: "taylor@demoscale.demo" },
   },
   {
     id: "fb-006",
-    source: "zendesk",
+    source: "productboard",
     title: "Mobile app crashes on Android 14",
     content:
       "The mobile app consistently crashes when trying to view analytics on Android 14 devices in this demo account. The crash happens within seconds of opening a chart view, affecting a field team that relies on mobile access.",
@@ -92,13 +106,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Placeholder Field Ops",
     sentiment: "negative",
     themes: ["mobile", "bug", "android", "analytics"],
-    date: "2026-02-23",
+    date: daysAgo(12),
     priority: "critical",
     metadata: { ticketId: "ZD-4498", devices: "Android 14", userEmail: "jamie@fieldops.demo" },
   },
   {
     id: "fb-007",
-    source: "intercom",
+    source: "productboard",
     title: "Would pay more for advanced permissions",
     content:
       "We love the product in this synthetic example but need granular role-based access control. Right now it's admin or viewer; we need custom roles with field-level permissions. This is positioned as a likely upgrade trigger in the demo dataset.",
@@ -106,13 +120,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoMarket Solutions",
     sentiment: "mixed",
     themes: ["permissions", "rbac", "upsell", "enterprise"],
-    date: "2026-02-22",
+    date: daysAgo(13),
     priority: "medium",
     metadata: { plan: "Pro", potentialUpgrade: "Enterprise", userEmail: "riley@demomarket.demo" },
   },
   {
     id: "fb-008",
-    source: "slack",
+    source: "manual",
     title: "Competitor just launched AI summaries",
     content:
       "Synthetic internal note: lost a sample deal to Competitor Alpha. The prospect said AI-powered feedback summaries and auto-categorization were the deciding factor. This demo record is meant to simulate repeated competitive pressure around AI capabilities.",
@@ -120,7 +134,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Internal (Synthetic)",
     sentiment: "negative",
     themes: ["competitive", "ai", "product-gap", "churn-risk"],
-    date: "2026-02-21",
+    date: daysAgo(14),
     priority: "critical",
     metadata: { source: "internal-demo", dealsLost: "multiple" },
   },
@@ -134,7 +148,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "SampleBank",
     sentiment: "negative",
     themes: ["compliance", "export", "data", "enterprise", "churn-risk"],
-    date: "2026-02-20",
+    date: daysAgo(15),
     priority: "high",
     metadata: { plan: "Enterprise", renewalWindow: "Upcoming", sourceUrl: "https://demo.productboard.com/notes/fb-009", userEmail: "sam@samplebank.demo" },
   },
@@ -148,13 +162,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "SampleBank",
     sentiment: "positive",
     themes: ["expansion", "sso", "admin", "upsell"],
-    date: "2026-02-19",
+    date: daysAgo(16),
     priority: "high",
     metadata: { currentSeats: "Pilot", potentialSeats: "Multi-team", accountTier: "Strategic", userEmail: "parker@samplebank.demo" },
   },
   {
     id: "fb-011",
-    source: "zendesk",
+    source: "productboard",
     title: "Webhook delivery is unreliable",
     content:
       "We've set up webhooks for real-time sync in this demo scenario, but a noticeable share of events are never delivered. No retry mechanism is visible, which breaks downstream automation. The request is for reliable delivery, retries, and a dead letter queue.",
@@ -162,7 +176,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Demo Automations",
     sentiment: "negative",
     themes: ["webhooks", "reliability", "api", "integration"],
-    date: "2026-02-18",
+    date: daysAgo(17),
     priority: "high",
     metadata: { ticketId: "ZD-4467", failureRate: "noticeable", userEmail: "cameron@demoauto.demo" },
   },
@@ -176,13 +190,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Internal (Synthetic)",
     sentiment: "mixed",
     themes: ["churn", "ai", "onboarding", "permissions", "strategy"],
-    date: "2026-02-17",
+    date: daysAgo(18),
     priority: "critical",
     metadata: { source: "synthetic-board-meeting" },
   },
   {
     id: "fb-013",
-    source: "zendesk",
+    source: "productboard",
     title: "Search returns irrelevant results and is painfully slow",
     content:
       "Our team relies on search to find past feedback and feature requests across thousands of records. In this demo scenario, queries take 8-10 seconds and the results are often unrelated to what was typed. We need full-text search with filters for source, date range, and sentiment.",
@@ -190,13 +204,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Northwind Demo",
     sentiment: "negative",
     themes: ["search", "performance", "ux"],
-    date: "2026-03-02",
+    date: daysAgo(5),
     priority: "high",
     metadata: { ticketId: "ZD-4534", plan: "Pro", userEmail: "drew@northwind.demo" },
   },
   {
     id: "fb-014",
-    source: "intercom",
+    source: "productboard",
     title: "Notification overload — need better controls",
     content:
       "We get hundreds of notifications a day and there is no way to filter or customize them. In this demo scenario the team has started ignoring all notifications, which means critical alerts get missed. We need per-channel controls, digest mode, and severity-based routing.",
@@ -204,13 +218,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoScale Co",
     sentiment: "negative",
     themes: ["notifications", "ux", "productivity"],
-    date: "2026-03-03",
+    date: daysAgo(4),
     priority: "medium",
     metadata: { plan: "Growth", userEmail: "alex@demoscale.demo" },
   },
   {
     id: "fb-015",
-    source: "slack",
+    source: "manual",
     title: "Lost another deal — prospect wanted native Salesforce integration",
     content:
       "Synthetic internal note: prospect evaluated us against Competitor Beta. We scored higher on analytics and UI but lost because Competitor Beta has a native Salesforce integration and a marketplace with 40+ connectors. Our integration story is too thin for enterprise buyers.",
@@ -218,13 +232,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "Internal (Synthetic)",
     sentiment: "negative",
     themes: ["integrations", "competitive", "salesforce", "churn-risk"],
-    date: "2026-03-01",
+    date: daysAgo(6),
     priority: "high",
     metadata: { source: "internal-demo", competitor: "Competitor Beta" },
   },
   {
     id: "fb-016",
-    source: "intercom",
+    source: "productboard",
     title: "Need team collaboration — comments, @mentions, shared views",
     content:
       "Right now there is no way for our product and CS teams to collaborate inside the tool. In this demo scenario we are copying and pasting feedback into Slack threads, which loses context. We need inline comments, @mentions on feedback items, shared saved views, and activity logs.",
@@ -232,7 +246,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "ExampleCorp",
     sentiment: "mixed",
     themes: ["collaboration", "ux", "feature-request", "enterprise"],
-    date: "2026-03-04",
+    date: daysAgo(3),
     priority: "medium",
     metadata: { plan: "Enterprise", userEmail: "sage@examplecorp.demo" },
   },
@@ -246,13 +260,13 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoMarket Solutions",
     sentiment: "mixed",
     themes: ["customization", "workflows", "enterprise", "feature-request"],
-    date: "2026-03-05",
+    date: daysAgo(2),
     priority: "medium",
     metadata: { plan: "Pro", sourceUrl: "https://demo.productboard.com/notes/fb-017", userEmail: "quinn@demomarket.demo" },
   },
   {
     id: "fb-018",
-    source: "zendesk",
+    source: "productboard",
     title: "Charts are too basic — need scatter plots, funnels, cohort analysis",
     content:
       "The current chart types are limited to bar, line, and pie. In this demo scenario our data team needs scatter plots for correlation analysis, funnel charts for conversion tracking, and cohort analysis for retention. Without these, we export to Looker which defeats the purpose.",
@@ -260,7 +274,7 @@ export const DEMO_FEEDBACK: FeedbackItem[] = [
     company: "DemoSync Labs",
     sentiment: "negative",
     themes: ["analytics", "reporting", "data-visualization", "feature-request"],
-    date: "2026-03-06",
+    date: daysAgo(1),
     priority: "medium",
     metadata: { ticketId: "ZD-4547", plan: "Enterprise", userEmail: "rowan@demosync.demo" },
   },
@@ -373,7 +387,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-001",
     title: "QBR — DemoScale Co",
-    date: "2026-02-24",
+    date: daysAgo(11),
     duration: "45 min",
     participants: ["Taylor Placeholder (DemoScale)", "Our CSM: Avery Support"],
     summary:
@@ -419,7 +433,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-002",
     title: "Renewal Call — SampleBank",
-    date: "2026-02-19",
+    date: daysAgo(16),
     duration: "35 min",
     participants: ["Parker Demo (SampleBank)", "Our AE: Jordan Seller"],
     summary:
@@ -465,7 +479,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-003",
     title: "Competitive Loss Debrief — ProspectCo",
-    date: "2026-02-21",
+    date: daysAgo(14),
     duration: "20 min",
     participants: ["Internal: Sales AE Jordan Blake", "Sales Manager Pat Kim"],
     summary:
@@ -509,7 +523,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-004",
     title: "Support Escalation — ExampleCorp",
-    date: "2026-02-28",
+    date: daysAgo(7),
     duration: "25 min",
     participants: ["Avery Example (ExampleCorp)", "Support Lead: Morgan Support"],
     summary:
@@ -553,7 +567,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-005",
     title: "Upsell Discovery — DemoMarket Solutions",
-    date: "2026-03-04",
+    date: daysAgo(3),
     duration: "30 min",
     participants: ["Riley Sample (DemoMarket)", "Quinn Example (DemoMarket)", "Our AE: Sage Closer"],
     summary:
@@ -597,7 +611,7 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
   {
     id: "ac-006",
     title: "Post-Churn Interview — BrightPath Analytics",
-    date: "2026-03-07",
+    date: daysAgo(0),
     duration: "20 min",
     participants: ["Hayden Former (BrightPath)", "Our CSM: Alex Retention"],
     summary:
@@ -997,30 +1011,6 @@ export const DEMO_DATA_SOURCES: DataSourceStatus[] = [
     lastSync: "5 min ago",
     itemCount: DEMO_ATTENTION_CALLS.length,
     icon: "phone",
-  },
-  {
-    name: "Zendesk",
-    source: "zendesk",
-    connected: true,
-    lastSync: "1 min ago",
-    itemCount: DEMO_FEEDBACK.filter((f) => f.source === "zendesk").length,
-    icon: "headphones",
-  },
-  {
-    name: "Intercom",
-    source: "intercom",
-    connected: true,
-    lastSync: "3 min ago",
-    itemCount: DEMO_FEEDBACK.filter((f) => f.source === "intercom").length,
-    icon: "message-circle",
-  },
-  {
-    name: "Slack",
-    source: "slack",
-    connected: true,
-    lastSync: "30 sec ago",
-    itemCount: DEMO_FEEDBACK.filter((f) => f.source === "slack").length,
-    icon: "hash",
   },
   {
     name: "Jira",
