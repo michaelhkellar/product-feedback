@@ -303,6 +303,39 @@ const VALID_CALL_TYPES = new Set([
   "other",
 ]);
 
+/**
+ * Defensive denylist for AI-extracted theme strings — the prompt instructs the model NOT
+ * to use meeting-cadence labels in `themes` (callType is the right home for those), but
+ * LLMs occasionally violate. Any theme matching one of these patterns gets dropped.
+ * Lowercase comparison; hyphens and spaces both match.
+ */
+const MEETING_CADENCE_DENYLIST = new Set([
+  "weekly-sync",
+  "weekly sync",
+  "daily-sync",
+  "daily sync",
+  "dsu",
+  "stand-up",
+  "standup",
+  "qbr",
+  "1:1",
+  "one-on-one",
+  "team-meeting",
+  "team meeting",
+  "kickoff",
+  "kick-off",
+  "all-hands",
+  "all hands",
+  "monthly-sync",
+  "monthly sync",
+  "office-hours",
+  "office hours",
+]);
+
+function isMeetingCadenceTheme(theme: string): boolean {
+  return MEETING_CADENCE_DENYLIST.has(theme.toLowerCase().trim());
+}
+
 function callSignalCacheKey(ids: string[], modelId: string): string {
   const today = new Date().toISOString().slice(0, 10);
   return createHash("sha256")
@@ -409,7 +442,9 @@ JSON array:`;
           ? r.themes
               .slice(0, 5)
               .map((t) => String(t).trim().toLowerCase().slice(0, 60))
-              .filter((t) => t.length > 0)
+              // Drop meeting-cadence labels even if the model emitted them (the prompt
+              // tells it not to, but defensive filtering keeps clustering clean).
+              .filter((t) => t.length > 0 && !isMeetingCadenceTheme(t))
           : [];
         const rawCallType = typeof r.callType === "string" ? r.callType.toLowerCase().trim() : "";
         const callType = VALID_CALL_TYPES.has(rawCallType) ? rawCallType : "other";

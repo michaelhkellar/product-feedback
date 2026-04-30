@@ -44,23 +44,39 @@ function deriveCustomer(participants: string[]): DerivedCustomer {
   return { customer: cleaned[0] || "Unknown" };
 }
 
-/** Regex-based fallback for the no-AI-key path. Returns a display-friendly capitalized label. */
+/**
+ * Regex-based fallback for the no-AI-key path.
+ * Returns canonical kebab-case (matching the AI-extracted callType vocabulary)
+ * so downstream filters and metadata stay consistent regardless of which path produced the value.
+ */
 function inferCallType(title: string): string | undefined {
   const t = title.toLowerCase();
-  if (/\bqbr\b/.test(t)) return "QBR";
-  if (/\brenewal\b/.test(t)) return "Renewal";
-  if (/\bchurn|loss\b/.test(t)) return "Churn debrief";
-  if (/\bdiscovery\b/.test(t)) return "Discovery";
-  if (/\bdemo\b/.test(t)) return "Demo";
-  if (/\bonboard/.test(t)) return "Onboarding";
-  if (/\bescalat/.test(t)) return "Escalation";
+  if (/\bqbr\b/.test(t)) return "qbr";
+  if (/\brenewal\b/.test(t)) return "renewal";
+  if (/\bchurn|loss\b/.test(t)) return "churn-debrief";
+  if (/\bdiscovery\b/.test(t)) return "discovery";
+  if (/\bdemo\b/.test(t)) return "demo";
+  if (/\bonboard/.test(t)) return "onboarding";
+  if (/\bescalat/.test(t)) return "customer-support";
   return undefined;
 }
 
-/** AI-extracted callType is canonical kebab-case (e.g. "qbr"); falls back to title regex.
- * Prefers the canonical form when available so downstream filters can match consistently. */
+/** Both AI extraction and the regex fallback emit canonical kebab-case. */
 function effectiveCallType(call: { callType?: string; title: string }): string | undefined {
   return call.callType || inferCallType(call.title);
+}
+
+/**
+ * Pretty-print a canonical callType for UI display.
+ * "qbr" → "QBR", "churn-debrief" → "Churn debrief", "customer-support" → "Customer support"
+ */
+export function displayCallType(canonical: string | undefined): string | undefined {
+  if (!canonical) return undefined;
+  // Common acronyms keep all-caps treatment.
+  const acronyms = new Set(["qbr"]);
+  if (acronyms.has(canonical)) return canonical.toUpperCase();
+  const words = canonical.replace(/-/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function durationMin(duration: string): string | undefined {

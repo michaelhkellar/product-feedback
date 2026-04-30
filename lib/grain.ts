@@ -78,7 +78,15 @@ function formatDuration(ms?: number): string {
   return `${Math.round(ms / 60000)} min`;
 }
 
-const TRANSCRIPT_CAP = Number(process.env.GRAIN_MAX_TRANSCRIPT_CHARS) || 50_000;
+// Per-call transcript cap. Env-tunable, but bounded — a typo (e.g. 5_000_000) shouldn't
+// be able to allocate gigabytes of transcript per call across the data cache.
+const TRANSCRIPT_CAP_DEFAULT = 50_000;
+const TRANSCRIPT_CAP_HARD_LIMIT = 200_000;
+const TRANSCRIPT_CAP = (() => {
+  const raw = Number(process.env.GRAIN_MAX_TRANSCRIPT_CHARS);
+  if (!Number.isFinite(raw) || raw <= 0) return TRANSCRIPT_CAP_DEFAULT;
+  return Math.min(raw, TRANSCRIPT_CAP_HARD_LIMIT);
+})();
 
 /**
  * Gentle whitespace cleanup that preserves newlines (so timestamps and speaker turns stay
