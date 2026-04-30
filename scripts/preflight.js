@@ -41,17 +41,28 @@ function checkNodeVersion() {
 
 // Critical files we expect after a clean install. Partial extracts often leave the
 // package.json in place but drop sub-folders silently — that's why we check deep files.
+// Add new entries here when a new corruption mode surfaces in the wild.
 const REQUIRED_FILES = [
+  // Next.js core + SWC chain
   "node_modules/.bin/next",
+  "node_modules/next/dist/server/lib/router-server.js",
+  // React runtime
   "node_modules/react/cjs/react.development.js",
   "node_modules/react/cjs/react.production.js",
   "node_modules/react/jsx-runtime.js",
   "node_modules/react-dom/cjs/react-dom-client.development.js",
   "node_modules/react-dom/cjs/react-dom-client.production.js",
+  // Source-map machinery (used by both webpack and postcss)
   "node_modules/source-map-js/lib/source-map-generator.js",
   "node_modules/source-map-js/lib/source-map-consumer.js",
+  // styled-jsx
   "node_modules/styled-jsx/dist/index/index.js",
-  "node_modules/next/dist/server/lib/router-server.js",
+  // CSS build chain (postcss → tailwindcss → autoprefixer). All three have hit
+  // partial-extract corruption in the wild, manifesting as cryptic webpack errors
+  // like "Cannot find module '/.../tailwindcss/lib/index.js'".
+  "node_modules/postcss/lib/postcss.js",
+  "node_modules/tailwindcss/lib/index.js",
+  "node_modules/autoprefixer/lib/autoprefixer.js",
 ];
 
 function missingFiles() {
