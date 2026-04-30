@@ -13,6 +13,8 @@ interface GrainRecording {
   duration_ms?: number;
   participants?: { name?: string; email?: string }[];
   tags?: string[];
+  url?: string;
+  share_url?: string;
 }
 
 interface GrainListResponse {
@@ -76,6 +78,27 @@ function formatDuration(ms?: number): string {
   return `${Math.round(ms / 60000)} min`;
 }
 
+const TRANSCRIPT_CAP = Number(process.env.GRAIN_MAX_TRANSCRIPT_CHARS) || 50_000;
+
+/**
+ * Gentle whitespace cleanup that preserves newlines (so timestamps and speaker turns stay
+ * structured) and trims spaces/tabs. Used for the `transcript` field that downstream
+ * chunkers and citation logic read.
+ */
+function cleanTranscript(raw: string): string {
+  return raw.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Aggressive whitespace collapse for the UI `summary` snippet (single-line preview). */
+function snippetSummary(raw: string, max = 800): string {
+  return raw.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+/** Prefer Grain-provided URLs (workspace-aware) over a constructed fallback. */
+function recordingUrl(r: GrainRecording): string {
+  return r.url || r.share_url || `https://grain.com/recordings/${r.id}`;
+}
+
 export async function getGrainCalls(
   overrideKey?: string,
   useDemoFallback = true
@@ -98,17 +121,24 @@ export async function getGrainCalls(
   }
 
   return {
-    data: recordings.map((r) => ({
-      id: r.id,
-      title: r.title || "Untitled Call",
-      date: r.start_datetime || "",
-      duration: formatDuration(r.duration_ms),
-      participants: (r.participants ?? []).map((p) => p.name || p.email || "").filter(Boolean),
-      summary: (transcripts.get(r.id) ?? "").slice(0, 800).replace(/\s+/g, " ").trim(),
-      keyMoments: [],
-      actionItems: [],
-      themes: r.tags ?? [],
-    })),
+    data: recordings.map((r) => {
+      const rawTranscript = transcripts.get(r.id) ?? "";
+      const cleanedTranscript = cleanTranscript(rawTranscript).slice(0, TRANSCRIPT_CAP);
+      return {
+        id: r.id,
+        title: r.title || "Untitled Call",
+        date: r.start_datetime || "",
+        duration: formatDuration(r.duration_ms),
+        participants: (r.participants ?? []).map((p) => p.name || p.email || "").filter(Boolean),
+        summary: snippetSummary(rawTranscript),
+        transcript: cleanedTranscript || undefined,
+        url: recordingUrl(r),
+        keyMoments: [],
+        actionItems: [],
+        themes: r.tags ?? [],
+        // callType populated later by extractCallSignals when an AI provider is configured
+      };
+    }),
     isDemo: false,
   };
 }

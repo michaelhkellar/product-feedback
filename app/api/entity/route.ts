@@ -91,7 +91,14 @@ export async function POST(req: NextRequest) {
         lc(f.title).includes(lc(name)) ||
         lc(f.content).includes(lc(name))
       ));
-      calls.push(...allCalls.filter((c) => matchesTheme(c.themes, name) || lc(c.title).includes(lc(name)) || lc(c.summary).includes(lc(name))));
+      calls.push(...allCalls.filter((c) =>
+        matchesTheme(c.themes, name) ||
+        lc(c.title).includes(lc(name)) ||
+        lc(c.summary).includes(lc(name)) ||
+        // Match meeting cadence (e.g. clicking a "QBR" pill should surface QBR calls
+        // even though "qbr" is intentionally absent from content themes).
+        (c.callType ? lc(c.callType) === lc(name) || lc(c.callType).replace(/-/g, " ") === lc(name) : false)
+      ));
       tickets.push(
         ...data.jiraIssues.filter((j) => matchesTheme(j.labels, name) || lc(j.summary).includes(lc(name)) || lc(j.description).includes(lc(name))),
         ...data.linearIssues.filter((l) => matchesTheme(l.labels, name) || lc(l.title).includes(lc(name)) || lc(l.description).includes(lc(name))),

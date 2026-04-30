@@ -47,6 +47,16 @@ export interface AttentionCall {
   duration: string;
   participants: string[];
   summary: string;
+  /** Full transcript when available (Grain). Preserves newlines and inline timestamps so
+   * downstream chunkers and citation logic can quote with provenance. */
+  transcript?: string;
+  /** Deep-link to the recording (Grain web URL). Used for citation linkbacks in chat. */
+  url?: string;
+  /** Categorical meeting kind, populated by AI extraction. Lets the agent and entity
+   * drawer filter on cadence/audience without polluting `themes`.
+   * Allowed values: "qbr" | "renewal" | "demo" | "discovery" | "customer-support"
+   *                | "onboarding" | "churn-debrief" | "internal-sync" | "other" */
+  callType?: string;
   keyMoments: { timestamp: string; text: string; sentiment: Sentiment }[];
   actionItems: string[];
   themes: string[];
