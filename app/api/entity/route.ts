@@ -5,6 +5,7 @@ import { AIProviderType } from "@/lib/ai-provider";
 import { getRelevantPendoContext } from "@/lib/pendo";
 import { getRelevantAmplitudeContext } from "@/lib/amplitude";
 import { getRelevantPostHogContext } from "@/lib/posthog";
+import { sanitizeCallsForClient } from "@/lib/call-utils";
 
 function lc(s: string) {
   return s.toLowerCase();
@@ -154,7 +155,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       feedback: feedback.slice(0, 50),
-      calls: calls.slice(0, 20),
+      // Strip full transcript before serializing to client — it's server-only.
+      calls: sanitizeCallsForClient(calls.slice(0, 20)),
       tickets: tickets.slice(0, 30),
       sentimentCounts,
       totalFeedback: feedback.length,

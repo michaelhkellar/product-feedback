@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGrainCalls, isGrainConfigured } from "@/lib/grain";
+import { sanitizeCallsForClient } from "@/lib/call-utils";
 
 export async function GET(req: NextRequest) {
   const overrideKey = req.headers.get("x-grain-key") || undefined;
@@ -9,7 +10,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     connected: isGrainConfigured(overrideKey),
-    calls: calls.data,
+    // Strip full transcript before serializing to client — it's server-only.
+    calls: sanitizeCallsForClient(calls.data),
     callsIsDemo: calls.isDemo,
   });
 }

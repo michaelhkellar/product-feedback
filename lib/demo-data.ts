@@ -400,7 +400,21 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Set up sandbox environment pilot for DemoScale",
       "Schedule follow-up in 30 days",
     ],
-    themes: ["onboarding", "ux", "training", "growth", "renewal"],
+    themes: ["onboarding-friction", "training", "growth", "renewal-risk"],
+    url: "https://grain.com/recordings/demo-ac-001",
+    callType: "qbr",
+    transcript:
+      "[00:00] Avery Support: Hi Taylor, thanks for joining the QBR. How are things going on your end this quarter?\n" +
+      "[00:35] Taylor Placeholder: Generally good — but we doubled the team and the onboarding has been a real pain point.\n" +
+      "[05:30] Taylor Placeholder: We love the product but onboarding a wave of new hires was a nightmare. Each new user spends a week clicking around with no clear path.\n" +
+      "[08:10] Avery Support: That maps to other accounts we're hearing from. What would help most?\n" +
+      "[12:15] Taylor Placeholder: If you had guided tours, that would cut our ramp time in half. We've literally built our own internal Loom library because the in-app help isn't enough.\n" +
+      "[18:40] Avery Support: We have a sandbox environment in private beta — would your team be a good pilot candidate?\n" +
+      "[19:05] Taylor Placeholder: Yes, definitely. Send me the details.\n" +
+      "[22:00] Taylor Placeholder: Honestly, the other gap is role-based onboarding paths. Our analysts and our PMs have totally different needs.\n" +
+      "[28:00] Taylor Placeholder: We're committed to renewing but need to see onboarding improvements soon. The CFO is asking hard questions about what we're paying per seat.\n" +
+      "[35:00] Avery Support: Okay, here's what I'll commit to: I'll share our onboarding roadmap with you next sprint, set up the sandbox pilot, and we'll have a follow-up in 30 days.\n" +
+      "[40:30] Taylor Placeholder: Perfect. If we see real movement, this is an easy renewal.\n",
   },
   {
     id: "ac-002",
@@ -433,7 +447,20 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Draft expansion proposal for broader rollout",
       "Weekly check-in calls until SSO resolved",
     ],
-    themes: ["expansion", "sso", "admin", "upsell", "enterprise"],
+    themes: ["sso-reliability", "admin-console", "expansion-opportunity", "enterprise"],
+    url: "https://grain.com/recordings/demo-ac-002",
+    callType: "renewal",
+    transcript:
+      "[00:00] Jordan Seller: Parker, great to have you on. Walk me through where SampleBank's at heading into renewal.\n" +
+      "[03:00] Parker Demo: Leadership is bought in — we want this company-wide. Honestly the pilot blew the doors off.\n" +
+      "[07:25] Jordan Seller: That's terrific. What's the gating factor on a broader rollout?\n" +
+      "[15:45] Parker Demo: But the SSO dropping three times a month is a dealbreaker for IT. They've actually started flagging us in our security review.\n" +
+      "[18:30] Jordan Seller: I hear you. Anything else on the blocker list?\n" +
+      "[19:50] Parker Demo: Yeah — admin console. Right now I can't manage department-level users without a support ticket. That's not going to fly at company-scale.\n" +
+      "[22:30] Parker Demo: We have expansion budget approved if you fix the SSO and give us admin tools. That's a six-figure delta to the contract.\n" +
+      "[28:00] Jordan Seller: Understood. I'm escalating the SSO work to P0 today, and I'll have admin console mockups in your inbox within two weeks.\n" +
+      "[31:15] Parker Demo: One more thing — let's do weekly check-ins until SSO is solved. I want this on a tight loop.\n" +
+      "[34:00] Jordan Seller: Done. I'll draft the expansion proposal alongside.\n",
   },
   {
     id: "ac-003",
@@ -465,7 +492,19 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Create competitive battle card for Competitor Alpha",
       "Escalate AI feature priority to product leadership",
     ],
-    themes: ["competitive", "ai", "product-gap", "churn-risk"],
+    themes: ["competitive-loss", "ai-features", "auto-categorization", "feature-gap"],
+    url: "https://grain.com/recordings/demo-ac-003",
+    callType: "internal-sync",
+    transcript:
+      "[00:00] Pat Kim: Walk me through the loss. What did the prospect say in the close-out?\n" +
+      "[02:00] Jordan Blake: They showed the prospect auto-generated themes and sentiment analysis — we had nothing comparable. It was a side-by-side demo and we lost on that single feature.\n" +
+      "[05:30] Pat Kim: Was pricing a factor at all?\n" +
+      "[06:15] Jordan Blake: No. Pricing came up but the prospect was fine with our number.\n" +
+      "[08:30] Jordan Blake: The prospect said our product was stronger in other areas, but AI was the tiebreaker. They're under board pressure to show \"AI-powered\" something — and we don't have anything to put on a slide.\n" +
+      "[11:00] Pat Kim: This is the third one this quarter, right?\n" +
+      "[11:20] Jordan Blake: Fourth, actually. All same shape — auto-tagging, summary, sentiment.\n" +
+      "[14:00] Jordan Blake: We need to fast-track AI features or we're going to keep losing these deals. I can't keep walking into rooms knowing we're going to lose on this axis.\n" +
+      "[17:30] Pat Kim: Document everything. I'll take this up to product leadership directly. We need a battle card and a roadmap commitment.\n",
   },
   {
     id: "ac-004",
@@ -497,7 +536,19 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Daily status updates to ExampleCorp",
       "Post-mortem after fix deployed",
     ],
-    themes: ["performance", "dashboard", "enterprise", "escalation"],
+    themes: ["dashboard-performance", "regression", "enterprise-blocker"],
+    url: "https://grain.com/recordings/demo-ac-004",
+    callType: "customer-support",
+    transcript:
+      "[00:00] Morgan Support: Avery, I want to start by saying we know this is severe. Walk me through what's happening.\n" +
+      "[01:30] Avery Example: My entire team has stopped using the dashboards — we're back to spreadsheets. Our analysts gave up two days ago.\n" +
+      "[03:45] Morgan Support: When did this start?\n" +
+      "[04:00] Avery Example: Right after your last release. Friday afternoon. Loads went from instant to 15-20 seconds.\n" +
+      "[07:30] Avery Example: The board review dashboards are the most affected. Those are the highest-cardinality views, which we know is hard, but they were fine before.\n" +
+      "[10:00] Avery Example: We have an important review coming up and we need this fixed before then. I have CFO eyes on these dashboards on Tuesday.\n" +
+      "[14:20] Morgan Support: Let me be direct: we're committing to a hotfix this sprint. I'll give you daily status updates. Engineering is already on it.\n" +
+      "[20:00] Avery Example: If you can fix this, we're still planning to expand to the marketing team. Don't blow that goodwill — we like the product.\n" +
+      "[23:15] Morgan Support: Got it. I'll commit to a post-mortem after the fix lands so you can share it with your team.\n",
   },
   {
     id: "ac-005",
@@ -529,7 +580,19 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Share custom fields roadmap with both department leads",
       "Schedule Enterprise upgrade scoping call for next week",
     ],
-    themes: ["permissions", "rbac", "customization", "upsell", "enterprise"],
+    themes: ["rbac", "custom-fields", "multi-team", "enterprise-tier"],
+    url: "https://grain.com/recordings/demo-ac-005",
+    callType: "discovery",
+    transcript:
+      "[00:00] Sage Closer: Riley, Quinn — thanks for making time. Walk me through how DemoMarket is using us today.\n" +
+      "[01:30] Riley Sample: We're on the Pro plan but it's getting awkward. Three departments now use it.\n" +
+      "[04:00] Quinn Example: We have 3 departments using this tool and everyone sees everything — it's chaos. Product is looking at CS data they shouldn't, CS is looking at our pipeline.\n" +
+      "[09:00] Sage Closer: That's exactly what RBAC solves. We have a beta available.\n" +
+      "[14:30] Riley Sample: Product team needs different fields and views than CS — one size doesn't fit all. We need custom fields, badly.\n" +
+      "[17:00] Quinn Example: Right, and we want different default views per role. CS wants sentiment-first. Product wants priority-first.\n" +
+      "[20:00] Sage Closer: Both are on the Enterprise tier roadmap. Let me share the timeline.\n" +
+      "[25:00] Riley Sample: If you can give us custom roles and per-team views, we'll upgrade to Enterprise this quarter. That's a real commitment.\n" +
+      "[28:30] Sage Closer: Great. I'll send the RBAC beta access details, the custom fields roadmap to both of you, and we'll book the scoping call for next week.\n",
   },
   {
     id: "ac-006",
@@ -561,7 +624,19 @@ export const DEMO_ATTENTION_CALLS: AttentionCall[] = [
       "Document churn reasons for product leadership review",
       "Include Salesforce integration in competitive gap analysis",
     ],
-    themes: ["churn", "onboarding", "ai", "integrations", "competitive"],
+    themes: ["onboarding-friction", "ai-categorization", "salesforce-integration", "win-back-candidate"],
+    url: "https://grain.com/recordings/demo-ac-006",
+    callType: "churn-debrief",
+    transcript:
+      "[00:00] Alex Retention: Hayden, I appreciate you taking this call. We want to learn from this honestly.\n" +
+      "[03:00] Hayden Former: We loved the core product but couldn't get new team members up to speed fast enough. We hired six analysts in two quarters and onboarding was just brutal.\n" +
+      "[06:30] Alex Retention: Was that the primary driver?\n" +
+      "[07:00] Hayden Former: It was one of three. The bigger one really was the AI gap.\n" +
+      "[09:00] Hayden Former: Manually categorizing 200+ feedback items a week just wasn't sustainable — Competitor Alpha auto-tags everything. My team got 12 hours a week back.\n" +
+      "[12:30] Alex Retention: Anything on integrations?\n" +
+      "[13:00] Hayden Former: Yeah. We use Salesforce for everything customer-facing. The lack of a connector meant data was always slightly out of date in your tool. Small thing, but daily annoyance.\n" +
+      "[16:00] Hayden Former: If you ship AI categorization and a Salesforce connector, honestly we'd come back. Our team likes the UX better than where we are now.\n" +
+      "[18:30] Alex Retention: That's good to hear. I'm going to put BrightPath on the win-back list and document everything you've shared for product leadership.\n",
   },
 ];
 

@@ -98,25 +98,35 @@ export class InMemoryVectorStore {
     this.docById.set(doc.id, doc);
   }
 
+  /**
+   * Chunk a long text and emit search documents.
+   *
+   * @param chunkPrefix optional text prepended to *every* chunk's `text`. Use this for
+   * source-anchor hints (e.g. `[Source: URL]\n`) so any chunk retrieved later still
+   * carries a back-pointer, not just the first one.
+   */
   private addChunked(
     item: { id: string },
     fullText: string,
-    parentDoc: Omit<VectorDocument, "id" | "text" | "parentId" | "chunkIndex">
+    parentDoc: Omit<VectorDocument, "id" | "text" | "parentId" | "chunkIndex">,
+    chunkPrefix: string = ""
   ): void {
     const chunks = chunkText(fullText);
     if (chunks.length === 1) {
       // Short enough to keep as a single document
-      this.addDoc({ ...parentDoc, id: item.id, text: chunks[0] });
+      this.addDoc({ ...parentDoc, id: item.id, text: chunkPrefix + chunks[0] });
     } else {
       // Store the parent doc for hydration; add chunks to search index
-      const parent: VectorDocument = { ...parentDoc, id: item.id, text: fullText };
+      const parent: VectorDocument = { ...parentDoc, id: item.id, text: chunkPrefix + fullText };
       this.parentDocs.set(item.id, parent);
       this.docById.set(item.id, parent);
       for (let i = 0; i < chunks.length; i++) {
         this.addDoc({
           ...parentDoc,
           id: `${item.id}#c${i}`,
-          text: chunks[i],
+          // Re-inject prefix on every chunk so retrieval results from any position in the
+          // document (not just the opening) carry the source back-pointer.
+          text: chunkPrefix + chunks[i],
           parentId: item.id,
           chunkIndex: i,
         });
@@ -164,10 +174,10 @@ export class InMemoryVectorStore {
       // Prefer the full transcript when available so quotes from the middle and end of calls
       // are searchable, not just opening pleasantries.
       const body = c.transcript || c.summary;
-      // Inline source anchor preserved through chunking so excerpts retain a back-pointer
-      // for citation linkbacks. The agent system prompt instructs the model to use these.
-      const sourcePrefix = c.url ? `[Source: ${c.url}]\n` : "";
-      const fullText = `${c.title}\n${sourcePrefix}${body}\n${moments}\n${c.actionItems.join(" ")}\n${c.themes.join(" ")}\n${c.callType || ""}`;
+      const fullText = `${c.title}\n${body}\n${moments}\n${c.actionItems.join(" ")}\n${c.themes.join(" ")}\n${c.callType || ""}`;
+      // Source anchor injected per-chunk via chunkPrefix so every retrieved chunk —
+      // not just the opening one — carries a URL back-pointer for citation linkbacks.
+      const chunkPrefix = c.url ? `[Source: ${c.url}]\n` : "";
       this.addChunked(c, fullText, {
         type: "call",
         themes: c.themes,
@@ -177,7 +187,7 @@ export class InMemoryVectorStore {
           url: c.url || "",
           callType: c.callType || "",
         },
-      });
+      }, chunkPrefix);
     }
   }
 
