@@ -45,6 +45,10 @@ import {
   Settings,
   Loader2,
   Search,
+  Ticket,
+  GitBranch,
+  BookOpen,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +58,10 @@ const SOURCE_ICONS: Record<string, typeof ClipboardList> = {
   headphones: Headphones,
   "message-circle": MessageCircle,
   hash: Hash,
+  ticket: Ticket,
+  "git-branch": GitBranch,
+  "book-open": BookOpen,
+  "bar-chart-3": BarChart3,
 };
 
 interface SourcePanelProps {
