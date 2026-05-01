@@ -63,10 +63,104 @@ const REQUIRED_FILES = [
   "node_modules/postcss/lib/postcss.js",
   "node_modules/tailwindcss/lib/index.js",
   "node_modules/autoprefixer/lib/autoprefixer.js",
+  // jiti (TypeScript runtime) — pulled in transitively by tailwindcss; hit corruption
+  // in the form "Cannot find module '/.../jiti/lib/index.js'" during dev.
+  "node_modules/jiti/lib/index.js",
 ];
 
 function missingFiles() {
   return REQUIRED_FILES.filter((f) => !fs.existsSync(path.join(ROOT, f)));
+}
+
+/**
+ * Systematic check: for every top-level package in node_modules, verify its
+ * advertised `main` entry actually exists on disk. Catches the long tail of
+ * partial-extract corruption that a static spot-check list can't anticipate
+ * (e.g. transitive deps like jiti getting half-extracted).
+ *
+ * Cheap to run — ~300 existsSync calls, each microseconds. Returns the first
+ * 5 broken packages so logs stay readable when something's wrong.
+ */
+function findBrokenPackages(maxReport = 5) {
+  const broken = [];
+  const modulesDir = path.join(ROOT, "node_modules");
+  if (!fs.existsSync(modulesDir)) return broken;
+  let entries;
+  try {
+    entries = fs.readdirSync(modulesDir, { withFileTypes: true });
+  } catch {
+    return broken;
+  }
+  for (const entry of entries) {
+    if (broken.length >= maxReport) break;
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith("@")) {
+      // Scoped packages: descend one level
+      let scoped;
+      try {
+        scoped = fs.readdirSync(path.join(modulesDir, entry.name), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const s of scoped) {
+        if (broken.length >= maxReport) break;
+        if (!s.isDirectory()) continue;
+        const result = checkPackageMain(modulesDir, `${entry.name}/${s.name}`);
+        if (result) broken.push(result);
+      }
+    } else {
+      const result = checkPackageMain(modulesDir, entry.name);
+      if (result) broken.push(result);
+    }
+  }
+  return broken;
+}
+
+/**
+ * Resolve a package's `main` entry the way Node's loader does:
+ * try the literal path, then path + .js / .cjs / .mjs / .json,
+ * then path/index.js / index.cjs / index.mjs / index.json.
+ * Returns true if any candidate exists. Avoids false positives from packages
+ * that declare `main: "index"` or `main: "dist/foo"` (no extension).
+ */
+function mainEntryExists(basePath) {
+  const candidates = [
+    basePath,
+    basePath + ".js",
+    basePath + ".cjs",
+    basePath + ".mjs",
+    basePath + ".json",
+    path.join(basePath, "index.js"),
+    path.join(basePath, "index.cjs"),
+    path.join(basePath, "index.mjs"),
+    path.join(basePath, "index.json"),
+  ];
+  return candidates.some((p) => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  });
+}
+
+function checkPackageMain(modulesDir, pkgName) {
+  const pkgDir = path.join(modulesDir, pkgName);
+  const pkgJsonPath = path.join(pkgDir, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) return null; // not a real package, skip
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+  } catch {
+    return null;
+  }
+  // Only check `main`. `exports` is more complex and many packages don't ship a
+  // file at the resolved path until require()'d — false positives aren't worth it.
+  if (!pkg.main || typeof pkg.main !== "string") return null;
+  const mainPath = path.join(pkgDir, pkg.main);
+  if (mainEntryExists(mainPath)) return null;
+  return { pkg: pkgName, missing: path.relative(ROOT, mainPath) };
 }
 
 // Next ships its SWC compiler as platform-specific native binaries. If the wrong
@@ -129,11 +223,12 @@ if (nodeProblem) {
   process.exit(1);
 }
 
-// 2. Health check — files + SWC binary.
+// 2. Health check — files + SWC binary + systematic main-entry walk.
 let missing = missingFiles();
 let swcProblem = missing.length === 0 ? missingSwcBinary() : null;
-if (missing.length === 0 && !swcProblem && !isNextCacheCorrupt()) {
-  process.exit(0); // happy path, ~50ms
+let brokenPkgs = (missing.length === 0 && !swcProblem) ? findBrokenPackages() : [];
+if (missing.length === 0 && !swcProblem && brokenPkgs.length === 0 && !isNextCacheCorrupt()) {
+  process.exit(0); // happy path, ~50-150ms
 }
 
 if (missing.length > 0) {
@@ -143,12 +238,17 @@ if (missing.length > 0) {
 if (swcProblem) {
   console.log(`[preflight] SWC binary issue: ${swcProblem}`);
 }
+if (brokenPkgs.length > 0) {
+  console.log(`[preflight] ${brokenPkgs.length} package(s) have a broken "main" entry (partial extract):`);
+  for (const b of brokenPkgs) console.log(`  - ${b.pkg}: missing ${b.missing}`);
+}
 
 // 3. Try plain npm install (incremental, ~1-3s).
 run("npm install --no-fund --no-audit");
 missing = missingFiles();
 swcProblem = missing.length === 0 ? missingSwcBinary() : null;
-if (missing.length === 0 && !swcProblem) {
+brokenPkgs = findBrokenPackages();
+if (missing.length === 0 && !swcProblem && brokenPkgs.length === 0) {
   console.log("[preflight] resolved by `npm install`");
   process.exit(0);
 }
@@ -159,7 +259,8 @@ nukeNodeModules();
 run("npm ci --no-fund --no-audit");
 missing = missingFiles();
 swcProblem = missing.length === 0 ? missingSwcBinary() : null;
-if (missing.length === 0 && !swcProblem) {
+brokenPkgs = (missing.length === 0 && !swcProblem) ? findBrokenPackages() : [];
+if (missing.length === 0 && !swcProblem && brokenPkgs.length === 0) {
   console.log("[preflight] resolved by `npm ci`");
   process.exit(0);
 }
@@ -171,7 +272,13 @@ if (missing.length > 0) {
   for (const f of missing) console.error(`  - ${f}`);
 }
 if (swcProblem) console.error(`[preflight] ${swcProblem}`);
+if (brokenPkgs.length > 0) {
+  console.error("[preflight] Packages with broken main entries:");
+  for (const b of brokenPkgs) console.error(`  - ${b.pkg}: missing ${b.missing}`);
+}
 console.error("");
 console.error("[preflight] Try: npm run repair");
 console.error("[preflight] (nukes node_modules + .next + lockfile + npm cache, then reinstalls)");
+console.error("[preflight] If `npm run repair` doesn't fix it either, the underlying issue is a poisoned");
+console.error("[preflight] global npm cache. Run: npm cache clean --force (then npm install)");
 process.exit(1);
