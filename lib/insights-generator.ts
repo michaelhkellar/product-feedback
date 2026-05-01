@@ -393,23 +393,32 @@ function companyInsights(feedback: FeedbackItem[], now: string): Insight[] {
 function callInsights(calls: AttentionCall[], now: string): Insight[] {
   const insights: Insight[] = [];
 
-  if (calls.length > 0) {
-    const totalActionItems = calls.reduce((sum, c) => sum + c.actionItems.length, 0);
-    insights.push({
-      id: "gen-call-summary",
-      type: "trend",
-      title: `${calls.length} Calls Tracked with ${totalActionItems} Action Items`,
-      description: `Across ${calls.length} recorded calls, there are ${totalActionItems} action items. Recent: ${calls
-        .slice(0, 3)
-        .map((c) => `"${c.title}" (${c.date})`)
-        .join(", ")}.`,
-      confidence: 0.9,
-      relatedFeedbackIds: calls.slice(0, 5).map((c) => c.id),
-      themes: ["calls", "follow-up"],
-      impact: totalActionItems > 10 ? "high" : "medium",
-      createdAt: now,
-    });
-  }
+  if (calls.length === 0) return insights;
+
+  const callsWithItems = calls.filter((c) => c.actionItems.length > 0).length;
+  const totalActionItems = calls.reduce((sum, c) => sum + c.actionItems.length, 0);
+
+  // Suppress the insight entirely when extraction has produced 0 items across the
+  // board. Surfacing "N Calls Tracked with 0 Action Items" reads as a customer-process
+  // gap, but in practice it's almost always an extraction gap (Grain not configured,
+  // AI not configured, transcript fetch silently failing). Better to show nothing
+  // than to misattribute a tooling problem to the customer relationship.
+  if (totalActionItems === 0) return insights;
+
+  // Coverage-first phrasing: tells the user when most calls have items vs when
+  // extraction is patchy. Volume alone (the old phrasing) was misleading.
+  const recent = calls.slice(0, 3).map((c) => `"${c.title}" (${c.date})`).join(", ");
+  insights.push({
+    id: "gen-call-summary",
+    type: "trend",
+    title: `${callsWithItems}/${calls.length} calls have logged action items (${totalActionItems} total)`,
+    description: `Across ${calls.length} recorded calls, ${callsWithItems} have one or more action items captured (${totalActionItems} total). Recent calls: ${recent}.`,
+    confidence: 0.9,
+    relatedFeedbackIds: calls.slice(0, 5).map((c) => c.id),
+    themes: ["calls", "follow-up"],
+    impact: totalActionItems > 10 ? "high" : "medium",
+    createdAt: now,
+  });
 
   return insights;
 }
