@@ -193,6 +193,12 @@ function injectEntitySpans(
     }
     if (React.isValidElement(child) && child.props) {
       const el = child as React.ReactElement<{ children?: React.ReactNode }>;
+      // Don't recurse into buttons or anchors — HTML forbids nesting an interactive
+      // element inside another, and `enrich` is invoked at multiple component
+      // levels (p, li, td) by ReactMarkdown depth-first, so the same string
+      // would otherwise be wrapped twice when a child component runs first
+      // and then a parent component runs `enrich` on the already-wrapped subtree.
+      if (el.type === "button" || el.type === "a") return child;
       const newChildren = injectEntitySpans(el.props.children, entities, openEntity);
       if (newChildren !== el.props.children) {
         return React.cloneElement(el, {}, newChildren);
@@ -218,6 +224,9 @@ function injectCitations(children: React.ReactNode, sources: MsgSource[]): React
     // Recurse into React elements so [n] inside <strong>, <em>, <code>, etc. is processed
     if (React.isValidElement(child) && child.props) {
       const el = child as React.ReactElement<{ children?: React.ReactNode }>;
+      // Skip nested buttons/anchors for the same reason as injectEntitySpans —
+      // enrich is invoked at multiple component levels and we'd otherwise double-process.
+      if (el.type === "button" || el.type === "a") return child;
       const newChildren = injectCitations(el.props.children, sources);
       if (newChildren !== el.props.children) {
         return React.cloneElement(el, {}, newChildren);
