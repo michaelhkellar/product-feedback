@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Hide the Next.js dev tools indicator (the floating "N" badge in the corner
+  // during dev mode). It can still be re-enabled per-developer by removing this.
+  devIndicators: false,
   async headers() {
     return [
       {
