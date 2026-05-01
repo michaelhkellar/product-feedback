@@ -72,6 +72,17 @@ export async function getLinearTeams(
   }
 }
 
+/**
+ * Parse the `teamId` arg into an array of trimmed, non-empty IDs.
+ * Accepts either a single ID, or a comma-separated list (the multi-select UI
+ * stores the chosen team IDs as a comma-separated string in the same field).
+ * Empty / undefined → empty array (= no team filter, fetch all teams).
+ */
+function parseTeamIds(raw?: string): string[] {
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 export async function getLinearIssues(
   overrideKey?: string,
   teamId?: string,
@@ -83,6 +94,7 @@ export async function getLinearIssues(
     return { data: [], isDemo: false };
   }
 
+  const teamIds = parseTeamIds(teamId);
   const allIssues: LinearIssue[] = [];
   let cursor: string | null = null;
 
@@ -109,21 +121,36 @@ export async function getLinearIssues(
   try {
     for (let page = 0; allIssues.length < MAX_ISSUES && page < 5; page++) {
       const variables: Record<string, unknown> = { after: cursor };
-      if (teamId) variables.teamId = teamId;
 
-      const query = teamId
-        ? `query IssuesFiltered($after: String, $teamId: ID!) {
-            issues(first: 250, orderBy: updatedAt, after: $after, filter: { team: { id: { eq: $teamId } } }) {
-              nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
-              pageInfo { hasNextPage endCursor }
-            }
-          }`
-        : `query Issues($after: String) {
-            issues(first: 250, orderBy: updatedAt, after: $after) {
-              nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
-              pageInfo { hasNextPage endCursor }
-            }
-          }`;
+      // Pick the simplest query that satisfies the selection:
+      //   - 0 team IDs → no filter (fastest path)
+      //   - 1 team ID  → `id: { eq }`
+      //   - 2+ IDs     → `id: { in }` (Linear's filter spec supports this)
+      let query: string;
+      if (teamIds.length === 0) {
+        query = `query Issues($after: String) {
+          issues(first: 250, orderBy: updatedAt, after: $after) {
+            nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`;
+      } else if (teamIds.length === 1) {
+        variables.teamId = teamIds[0];
+        query = `query IssuesFiltered($after: String, $teamId: ID!) {
+          issues(first: 250, orderBy: updatedAt, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+            nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`;
+      } else {
+        variables.teamIds = teamIds;
+        query = `query IssuesFiltered($after: String, $teamIds: [ID!]!) {
+          issues(first: 250, orderBy: updatedAt, after: $after, filter: { team: { id: { in: $teamIds } } }) {
+            nodes { id identifier title description state { name } priority assignee { name } labels { nodes { name } } createdAt updatedAt team { name } url }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`;
+      }
 
       const data: IssuesPage = await linearFetch<IssuesPage>(apiKey, query, variables);
 

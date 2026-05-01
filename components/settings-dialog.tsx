@@ -234,9 +234,8 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       if (res.ok) {
         const data = await res.json();
         setLinearTeams(data.teams || []);
-        if (data.teams?.length > 0 && !keys.linearTeamId) {
-          setKey("linearTeamId", data.teams[0].id);
-        }
+        // Don't auto-select a team. Empty value = "All teams" (unfiltered fetch),
+        // which is what most users want; multi-select UI lets them narrow if needed.
       }
     } catch { /* ignore */ }
     setLoadingLinearTeams(false);
@@ -543,20 +542,63 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 : "atlassian")) === "linear" && (
               <>
                 {renderKeyField("linearKey", "Linear API Key", "lin_api_...", "Personal API key from Linear Settings > API")}
-                {linearTeams.length > 0 && (
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground">Team</label>
-                    <select
-                      value={keys.linearTeamId || ""}
-                      onChange={(e) => setKey("linearTeamId", e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-border bg-card text-xs focus:outline-none focus:ring-2 focus:ring-primary/20">
-                      <option value="">Select a team...</option>
-                      {linearTeams.map((t) => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                {linearTeams.length > 0 && (() => {
+                  const selectedIds = new Set(
+                    (keys.linearTeamId || "").split(",").map((s) => s.trim()).filter(Boolean)
+                  );
+                  const allSelected = selectedIds.size === 0; // empty = all teams (unfiltered query)
+                  const toggleTeam = (id: string) => {
+                    const next = new Set(selectedIds);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    // If user selected every team explicitly, collapse back to "" (use unfiltered query)
+                    if (next.size === linearTeams.length) {
+                      setKey("linearTeamId", "");
+                    } else {
+                      setKey("linearTeamId", Array.from(next).join(","));
+                    }
+                  };
+                  return (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] text-muted-foreground">
+                        Teams {allSelected ? "(all)" : `(${selectedIds.size}/${linearTeams.length})`}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setKey("linearTeamId", "")}
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-medium border transition-colors",
+                            allSelected
+                              ? "bg-primary/10 border-primary/30 text-primary"
+                              : "bg-card border-border text-muted-foreground hover:text-foreground"
+                          )}
+                          title="Include issues from all teams (unfiltered query, fastest)"
+                        >
+                          All teams
+                        </button>
+                        {linearTeams.map((t) => {
+                          const active = !allSelected && selectedIds.has(t.id);
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => toggleTeam(t.id)}
+                              className={cn(
+                                "px-2 py-1 rounded-full text-[10px] font-medium border transition-colors",
+                                active
+                                  ? "bg-primary/10 border-primary/30 text-primary"
+                                  : "bg-card border-border text-muted-foreground hover:text-foreground"
+                              )}
+                            >
+                              {t.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 {loadingLinearTeams && (
                   <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                     <Loader2 className="w-3 h-3 animate-spin" />Loading teams...
