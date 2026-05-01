@@ -276,8 +276,10 @@ interface CachedCallSignals {
 }
 
 const callSignalCache = new Map<string, CachedCallSignals>();
-// v2 — schema bump invalidates v1 entries that lacked themes + callType
-const CALL_SIGNAL_SCHEMA_VERSION = "v2";
+// v3 — bump invalidates v2 entries which may have cached empty actionItems
+// from the period before Grain native action items were used and the AI prompt
+// was loosened. Forces a one-time re-extraction.
+const CALL_SIGNAL_SCHEMA_VERSION = "v3";
 const CALL_SIGNAL_BATCH_SIZE = 5;
 const CALL_SIGNAL_MAX_CONCURRENT = 3;
 const CALL_SIGNAL_TOTAL_TIMEOUT_MS = 60_000;
@@ -377,7 +379,7 @@ async function extractSignalsBatch(
 {"id":"<id>","actionItems":["<short imperative phrase>"],"keyMoments":[{"timestamp":"MM:SS or empty string","text":"<quoted or paraphrased ≤280 chars>","sentiment":"positive|negative|neutral|mixed"}],"themes":["<2–5 short product/topic phrases>"],"callType":"<one allowed value>"}
 
 Rules:
-- actionItems: ≤6 entries, each starts with a verb ("Schedule…", "Investigate…", "Send…"). Skip generic items like "follow up".
+- actionItems: ≤6 entries. Capture concrete commitments, owner-assigned tasks, or specific next steps the team owes the customer. They typically appear after phrases like "next step", "action item", "I'll", "we'll", "we need to", or in the closing minutes of the call. Be liberal — if someone agreed to do X, that's an action item, regardless of phrasing. Phrase concisely (verb-led when natural; noun-phrased like "SSO patch share" or "Roadmap walkthrough" is fine when that's how it was discussed). Skip vague filler like "follow up" or "check in" with no substance.
 - keyMoments: ≤6 entries, only sentiment-bearing customer statements. Skip neutral filler. Prefer pain points, praise, deal-breakers, and quotes that name a feature.
 - timestamp: extract from transcript like "[12:34]" if present, otherwise empty string.
 - themes: 2–5 entries, kebab-case or short noun phrases describing what the call was ABOUT.
